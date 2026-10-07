@@ -1,5 +1,7 @@
 # Implementation handover
 
+> Historical handover at commit `6d65054`. Implementation has since resumed; the status and missing-file lists below describe that checkpoint. Consult the current README, repository and commit history before reusing these assumptions.
+
 ## Start here
 
 Implementation is **paused**, not finished. The full approved specification is [project-plan.md](project-plan.md). Resume that scope; do not replace it with a smaller chatbot or declare the drafts working.

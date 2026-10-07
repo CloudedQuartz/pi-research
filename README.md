@@ -6,13 +6,13 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Implementation is paused for handover. Only the package setup and shared data/model/reporting modules exist. Acquisition, persistence, retrieval and the controller are not implemented; this is not a loadable research extension yet. Unfinished integration/evaluation code is preserved as non-runnable drafts under `docs/drafts/`. Start the next session with [the handover](docs/handover.md); [the implementation plan](docs/project-plan.md) remains the full specification.
+Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, and immutable source storage with active-path restoration. Retrieval, operational accounting, acquisition and engine integration are still being implemented or verified; this is not yet a verified loadable research extension. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
 
 ## Development setup
 
 - Node **24.13.1 or newer** (the planned ledger will use the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks the current shared modules only; drafts are excluded by their `.txt` extensions. No tests, demo or evaluation commands are registered until their implementations exist.
+- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. Integration imports may be temporarily unresolved while their assigned components are in progress. No tests, demo or evaluation commands are registered until their implementations exist.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
 After implementing and validating the entry point, restore package extension registration and load explicitly from this repository (this command does not work yet):
@@ -52,7 +52,8 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 - Public-source acquisition must respect robots rules, hostname delays, redirect policy and public-address checks. No authenticated fetching, browser cookies or paywall bypass.
 - Source snapshots are immutable; active Pi-branch manifests determine corpus membership. Orphan blobs are invisible to retrieval.
 - Search invocations, page-fetch attempts, HTTP attempts and model usage are separate counters. Provider-hidden operations and unreported costs remain unknown.
-- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap.
+- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation.
+- Choose non-personal research topics and screen sources before distributing corpora; fetched public pages can contain incidental personal metadata. No privacy-filtering guarantee is claimed.
 
 ## Evaluation and submission
 

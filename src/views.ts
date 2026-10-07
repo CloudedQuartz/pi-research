@@ -27,8 +27,19 @@ export function researchMap(state: Investigation): string {
   return safeText(lines.join('\n'));
 }
 
-export function sourceList(state: Investigation): string {
-  return safeText(state.candidates.map(c => `${c.id} [${c.status}] ${c.title}\n  ${c.url}\n  ${c.provider} / ${c.rankingKind}${c.rank ? ` rank ${c.rank}` : ''} · query: ${c.query}${c.error ? `\n  ${c.error}` : ''}`).join('\n\n') || 'No discovered sources.');
+export function sourceList(state: Investigation, snapshots: Snapshot[] = []): string {
+  const visible = snapshots.filter(s => state.snapshotIds.includes(s.id));
+  const hosts = new Map<string, number>();
+  for (const snapshot of visible) {
+    let host: string;
+    try { host = new URL(snapshot.finalUrl).hostname; }
+    catch { throw new Error(`Invalid URL in visible source ${snapshot.id}`); }
+    hosts.set(host, (hosts.get(host) ?? 0) + 1);
+  }
+  const warnings = [...hosts].filter(([, count]) => visible.length > 1 && count / visible.length > 0.6)
+    .map(([host, count]) => `Source concentration: ${count}/${visible.length} acquired snapshot records are from ${host}. This is not credibility or factual confidence.`);
+  const sources = state.candidates.map(c => `${c.id} [${c.status}] ${c.title}\n  ${c.url}\n  ${c.provider} / ${c.rankingKind}${c.rank ? ` rank ${c.rank}` : ''} · query: ${c.query}${c.error ? `\n  ${c.error}` : ''}`).join('\n\n') || 'No discovered sources.';
+  return safeText([...warnings, 'Discovery metadata is not original evidence; snapshot/domain counts are not confidence.', '', sources].join('\n'));
 }
 
 export function inspectState(state: Investigation, id: string, snapshots: Snapshot[]): Inspection {

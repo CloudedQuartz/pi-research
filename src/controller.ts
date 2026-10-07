@@ -60,7 +60,7 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
       return (1 + pooled.successful) / (2 + pooled.completed);
     };
     const utility = (kind: ActionKind, novelty: number) => branch.priority * deficit * probability(kind) * novelty / costs[kind];
-    const explain = (kind: ActionKind, novelty: number) => `priority=${branch.priority.toFixed(3)}, unmet=${deficit.toFixed(3)}, useful-yield estimate=${probability(kind).toFixed(3)}, novelty=${novelty.toFixed(3)}, estimated cost=${costs[kind].toFixed(3)}`;
+    const explain = (kind: ActionKind, novelty: number) => `priority=${branch.priority.toFixed(3)}, unmet=${deficit.toFixed(3)}, useful-yield estimate=${probability(kind).toFixed(3)}, novelty=${novelty.toFixed(3)}, estimated scheduling cost=${costs[kind].toFixed(3)} relative units (not money)`;
     if (state.passages.length && branch.retrievalKey !== retrievalKey(state, branch)) proposals.push({
       branchId: branch.id, kind: 'retrieve', query: branch.anchor, score: utility('retrieve', 1),
       reason: `Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before acquisition. ${explain('retrieve', 1)}`,
