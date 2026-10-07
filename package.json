@@ -8,7 +8,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:ir": "tsx test/core-ir.test.ts"
+    "test:ir": "tsx test/core-ir.test.ts",
+    "test:engine": "tsx test/engine-retrieval.test.ts && tsx test/engine-coverage.test.ts"
   },
   "keywords": [
     "pi-package",
