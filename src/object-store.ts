@@ -649,6 +649,7 @@ export class ObjectStore {
     const path = this.pathFor(join('snapshots', `${validated}.json`), 'loadSnapshot');
     const what = `loadSnapshot: snapshot ${validated}`;
     const record = readSnapshotJson(path, what);
+    if (record.id !== validated) throw new Error(`${what}: stored snapshot ID does not match the requested record`);
     const actual = digest(record.text);
     if (actual !== record.textHash) {
       throw new Error(`${what}: extracted text hashes to ${actual}, not textHash ${record.textHash}`);

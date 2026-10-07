@@ -121,7 +121,12 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     try { url = new URL(s.finalUrl); }
     catch { throw new Error(`Invalid URL in source snapshot ${s.id}`); }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid citation URL');
-    lines.push(`[^${key}]: ${md(s.title || s.finalUrl)} — ${url.href.replace(/[<>\s]/g, c => encodeURIComponent(c))} — fetched ${s.fetchedAt}; snapshot \`${s.id}\`; passage \`${p.id}\`; extracted-text offsets ${p.start + span.start}–${p.start + span.end}${p.page ? `; page ${p.page}` : ''}.`, '');
+    const start = p.start + span.start, end = p.start + span.end;
+    const first = s.pages?.find(page => page.start <= start && start < page.end);
+    const last = s.pages?.find(page => page.start <= end - 1 && end - 1 < page.end);
+    let location = '';
+    if (first && last) location = first.page === last.page ? `; page ${first.page}` : `; pages ${first.page}–${last.page}`;
+    lines.push(`[^${key}]: ${md(s.title || s.finalUrl)} — ${url.href.replace(/[<>\s]/g, c => encodeURIComponent(c))} — fetched ${s.fetchedAt}; snapshot \`${s.id}\`; passage \`${p.id}\`; extracted-text offsets ${start}–${end}${location}.`, '');
   }
   return { id: randomUUID(), objectiveId: objective.id, corpusRevision: state.corpusRevision, createdAt: new Date().toISOString(), sections, unresolved, changes, markdown: lines.join('\n'), fallback };
 }
