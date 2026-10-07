@@ -9,7 +9,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:ir": "tsx test/core-ir.test.ts",
-    "test:engine": "tsx test/engine-retrieval.test.ts && tsx test/engine-coverage.test.ts"
+    "test:engine": "tsx test/engine-retrieval.test.ts && tsx test/engine-coverage.test.ts",
+    "test:sdk": "tsx test/sdk-load.test.ts",
+    "test": "npm run test:ir && npm run test:engine && npm run test:sdk"
   },
   "keywords": [
     "pi-package",
@@ -18,6 +20,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "pi": {
+    "extensions": ["./src/extension.ts"]
+  },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
     "ipaddr.js": "2.5.0",

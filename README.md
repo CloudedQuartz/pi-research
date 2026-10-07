@@ -6,17 +6,17 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, immutable source storage, bounded robots-aware acquisition, the non-rewinding allowance ledger, and weighted positional BM25/duplicate-aware MMR. Engine and Pi integration are undergoing offline verification; this is not yet a verified loadable research extension. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
+Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, immutable source storage, bounded robots-aware acquisition, the non-rewinding allowance ledger, and weighted positional BM25/duplicate-aware MMR. The engine and Pi entry point are implemented and verified offline, including actual SDK/package loading and cancellation/recovery checks. Live provider dispatch, interactive end-to-end behavior and human evaluation remain unverified. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
 
 ## Development setup
 
 - Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
 - `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. Demo and evaluation commands remain unregistered until their implementations exist.
-- `npm run test:ir` runs deterministic offline IR regressions; it makes no model or network calls.
+- `npm test` runs the permanent offline IR, engine and SDK/package-loading regressions. `test:ir`, `test:engine` and `test:sdk` can also run separately. No real model or network calls are made.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
-Package extension registration remains disabled pending integration acceptance. Explicit loading on the installed Pi host is still unverified:
+The package registers `src/extension.ts`. SDK loading is tested against Pi 1.0.4; interactive research still requires an available model and discovery provider. To load explicitly:
 
 ```sh
 pi --extension ./src/extension.ts
@@ -24,7 +24,7 @@ pi --extension ./src/extension.ts
 
 Load the web-access extension in the same Pi session. Select one authorized provider and the registered search tool name at `/research` startup; names may have been customized. No global Pi settings are changed by this project.
 
-## Intended workflow
+## Workflow
 
 ```text
 /research Why do ML models perform well offline but fail in production?
@@ -53,7 +53,7 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 - Public-source acquisition must respect robots rules, hostname delays, redirect policy and public-address checks. No authenticated fetching, browser cookies or paywall bypass.
 - Source snapshots are immutable; active Pi-branch manifests determine corpus membership. Orphan blobs are invisible to retrieval.
 - Search invocations, page-fetch attempts, HTTP attempts and model usage are separate counters. Provider-hidden operations and unreported costs remain unknown.
-- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation. The adapter marks incomplete/unreported usage explicitly; ledger/engine propagation is under verification. Pi-native money figures are model-rate estimates, not confirmed invoices.
+- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation. The adapter marks incomplete/unreported usage explicitly; offline tests exercise conservative unknown-usage propagation. Pi-native money figures are model-rate estimates, not confirmed invoices.
 - Choose non-personal research topics and screen sources before distributing corpora; fetched public pages can contain incidental personal metadata. No privacy-filtering guarantee is claimed.
 
 ## Evaluation and submission
