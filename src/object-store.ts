@@ -194,12 +194,21 @@ const branch = (raw: unknown, path: string): Branch => {
       const need = object(n, `${path}.needs[${i}]`);
       const needStatus = need.status;
       if (needStatus !== 0 && needStatus !== 0.5 && needStatus !== 1) throw new Error(`${path}.needs[${i}].status: expected 0 | 0.5 | 1`);
-      return {
+      const parsed: Branch['needs'][number] = {
         id: str(need.id, `${path}.needs[${i}].id`, LIMIT.id),
         question: str(need.question, `${path}.needs[${i}].question`, LIMIT.question),
         weight: nonNegative(need.weight, `${path}.needs[${i}].weight`),
         status: needStatus,
       };
+      if (need.assessment !== undefined) {
+        const a = object(need.assessment, `${path}.needs[${i}].assessment`);
+        const passageIds = list(a.passageIds, `${path}.needs[${i}].assessment.passageIds`, COUNT.spans).map(id => str(id, 'assessment passage ID', LIMIT.id));
+        if (!passageIds.length || new Set(passageIds).size !== passageIds.length) throw new Error('Need assessment requires distinct passage witnesses');
+        parsed.assessment = { passageIds, reason: str(a.reason, 'need assessment reason', LIMIT.prose),
+          corpusRevision: integer(a.corpusRevision, 'need assessment corpus revision', 0, Number.MAX_SAFE_INTEGER),
+          createdAt: time(a.createdAt, 'need assessment time') };
+      }
+      return parsed;
     }),
     aliases: list(v.aliases, `${path}.aliases`, COUNT.aliases).map((a, i) => str(a, `${path}.aliases[${i}]`, LIMIT.short, true)),
     queries: list(v.queries, `${path}.queries`, COUNT.queries).map((q, i) => str(q, `${path}.queries[${i}]`, LIMIT.short, true)),
@@ -491,6 +500,9 @@ export function validateInvestigation(value: unknown): Investigation {
   branches.forEach((b, i) => {
     if (!objectiveIds.has(b.objectiveId)) throw new Error(`branches[${i}].objectiveId: unknown objective "${b.objectiveId}"`);
     checkSpans(b.introducing, `branches[${i}].introducing`);
+    for (const need of b.needs) if (need.assessment) {
+      if (need.assessment.corpusRevision > corpusRevision || need.assessment.passageIds.some(id => !passagesById.has(id))) throw new Error('Need assessment references an unknown passage or future corpus revision');
+    }
   });
   candidates.forEach((c, i) => {
     if (!branchIds.has(c.branchId)) throw new Error(`candidates[${i}].branchId: unknown branch "${c.branchId}"`);

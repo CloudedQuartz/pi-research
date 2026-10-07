@@ -24,7 +24,13 @@ export function feedback(input: Investigation, targetId: string, kind: Feedback[
       for (const c of affected) {
         const need = state.branches.find(b => b.id === c.branchId)?.needs.find(n => n.id === c.needId);
         // Other passages may still address the need; cached re-assessment, not guessing, restores coverage.
-        if (need) need.status = 0;
+        if (need) { need.status = 0; delete need.assessment; }
+      }
+      // A fresh coverage witness can reuse a ledger key without creating a new contribution.
+      for (const branch of state.branches.filter(b => b.objectiveId === state.activeObjectiveId)) {
+        for (const need of branch.needs) if (need.assessment?.passageIds.includes(targetId)) {
+          need.status = 0; delete need.assessment;
+        }
       }
     }
   } else {

@@ -43,7 +43,7 @@ function candidateRelevance(candidate: SourceCandidate, branch: Branch): number 
 /** Pure routing policy; dispatch, ownership, hard allowances and commits live elsewhere. */
 export function chooseAction(state: Investigation, options: ControllerOptions = {}): ProposedAction | undefined {
   const branches = state.branches.filter(b => b.objectiveId === state.activeObjectiveId &&
-    (b.status === 'active' || b.status === 'cooldown') && b.priority > 0 && unmetMass(b) > 0);
+    (b.status === 'active' || b.status === 'cooldown') && b.priority > 0);
   if (!branches.length) return undefined;
   const costs = { retrieve: 0.1, fetch: 2, search: 7, ...options.costs };
   for (const value of Object.values(costs)) if (!Number.isFinite(value) || value <= 0) throw new Error('Controller costs must be positive finite scheduling estimates');
@@ -65,6 +65,7 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
       branchId: branch.id, kind: 'retrieve', query: branch.anchor, score: utility('retrieve', 1),
       reason: `Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before acquisition. ${explain('retrieve', 1)}`,
     });
+    if (deficit <= 0) continue; // Changed-context reuse is allowed; addressed needs earn no extra acquisition.
     const unread = state.candidates.filter(c => c.status === 'unread').map(c => ({ candidate: c, relevance: candidateRelevance(c, branch) })).filter(c => c.relevance > 0);
     unread.sort((a, b) => b.relevance - a.relevance ||
       (a.candidate.rankingKind === 'ranked' && b.candidate.rankingKind === 'ranked' ? (a.candidate.rank ?? Infinity) - (b.candidate.rank ?? Infinity) : 0) ||

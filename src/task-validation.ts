@@ -54,7 +54,21 @@ export function parseAssessment(value: unknown, branch: Branch, hits: SearchHit[
     keys.add(key);
     return { passageId, needId, role: item.role, status: item.status, assessment: string(item.assessment, 'assessment') } satisfies EvidenceAssessment['contributions'][number];
   });
-  return { relevantPassageIds, contributions };
+  const coverageUpdates = result.coverageUpdates === undefined ? undefined
+    : array(result.coverageUpdates, 'coverage updates', branch.needs.length).map(raw => {
+      const item = record(raw, 'Coverage update');
+      const needId = string(item.needId, 'need ID', 150);
+      const need = branch.needs.find(n => n.id === needId);
+      if (!need || (item.status !== 0 && item.status !== 0.5 && item.status !== 1)) throw new Error('Invalid coverage need/status');
+      const witnesses = array(item.passageIds, 'coverage witnesses', hits.length, 1).map(v => string(v, 'passage ID', 150));
+      unique(witnesses, 'coverage witnesses');
+      const linked = contributions.filter(c => c.needId === needId && witnesses.includes(c.passageId));
+      if (witnesses.some(id => !relevant.has(id) || !linked.some(c => c.passageId === id))) throw new Error('Coverage witness is outside current relevant same-need evidence');
+      if (item.status < need.status && !linked.some(c => c.role === 'qualification' || c.role === 'contradiction')) throw new Error('Coverage downgrade requires explicit qualifying or contradicting evidence');
+      return { needId, status: item.status, passageIds: witnesses, assessment: string(item.assessment, 'coverage explanation') } satisfies NonNullable<EvidenceAssessment['coverageUpdates']>[number];
+    });
+  if (coverageUpdates) unique(coverageUpdates.map(u => u.needId), 'coverage need updates');
+  return { relevantPassageIds, contributions, ...(coverageUpdates ? { coverageUpdates } : {}) };
 }
 
 export function parseDecisions(value: unknown, concepts: Concept[]): ConceptDecision[] {

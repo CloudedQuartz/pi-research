@@ -6,7 +6,10 @@ export interface Objective {
   id: string; parentId?: string; input: string; question: string;
   constraints: string[]; createdAt: string;
 }
-export interface Need { id: string; question: string; weight: number; status: 0 | 0.5 | 1; }
+export interface Need {
+  id: string; question: string; weight: number; status: 0 | 0.5 | 1;
+  assessment?: { passageIds: string[]; reason: string; corpusRevision: number; createdAt: string };
+}
 export interface Branch {
   id: string; objectiveId: string; question: string; anchor: string;
   parentId?: string; origin: 'initial' | 'evidence'; introducing: Span[];
@@ -97,6 +100,8 @@ export interface PlanResult {
 export interface EvidenceAssessment {
   contributions: { passageId: string; needId: string; role: EvidenceRole; status: 0.5 | 1; assessment: string }[];
   relevantPassageIds: string[];
+  /** Explicit evidence-backed current coverage, independent of contribution novelty. */
+  coverageUpdates?: { needId: string; status: Need['status']; passageIds: string[]; assessment: string }[];
 }
 export interface ConceptDecision {
   conceptId: string; classification: NonNullable<Concept['classification']>;

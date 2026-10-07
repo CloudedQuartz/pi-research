@@ -31,6 +31,11 @@ export function reportEvidence(state: Investigation, snapshots: Snapshot[]): Pas
   const latestFeedback = new Map<string, 'useful' | 'irrelevant'>();
   for (const f of state.feedback) if (f.kind === 'useful' || f.kind === 'irrelevant') latestFeedback.set(f.targetId, f.kind);
   const ids = new Set(state.contributions.filter(c => c.objectiveId === state.activeObjectiveId && branches.has(c.branchId) && latestFeedback.get(c.passageId) !== 'irrelevant').map(c => c.passageId));
+  for (const branch of state.branches) if (branches.has(branch.id)) {
+    for (const need of branch.needs) for (const id of need.assessment?.passageIds ?? []) {
+      if (latestFeedback.get(id) !== 'irrelevant') ids.add(id);
+    }
+  }
   return state.passages.filter(p => ids.has(p.id) && visible.has(p.snapshotId));
 }
 
