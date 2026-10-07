@@ -6,16 +6,16 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Implementation is in progress. The package setup and shared data/model/reporting contracts exist; acquisition, persistence, retrieval and controller integration are being added in focused commits. The extension is not yet verified end to end. See [the implementation plan](docs/project-plan.md) for scope, dependencies and acceptance criteria.
+Implementation is paused for handover. Only the package setup and shared data/model/reporting modules exist. Acquisition, persistence, retrieval and the controller are not implemented; this is not a loadable research extension yet. Unfinished integration/evaluation code is preserved as non-runnable drafts under `docs/drafts/`. Start the next session with [the handover](docs/handover.md); [the implementation plan](docs/project-plan.md) remains the full specification.
 
 ## Development setup
 
-- Node **24.13.1 or newer** (uses the experimental built-in `node:sqlite`).
+- Node **24.13.1 or newer** (the planned ledger will use the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks TypeScript once the component imports are complete.
+- `npm run typecheck` checks the current shared modules only; drafts are excluded by their `.txt` extensions. No tests, demo or evaluation commands are registered until their implementations exist.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
-When integration is ready, load explicitly from this repository:
+After implementing and validating the entry point, restore package extension registration and load explicitly from this repository (this command does not work yet):
 
 ```sh
 pi --extension ./src/extension.ts
@@ -43,7 +43,7 @@ Other controls:
 
 External work requires explicit command authorization in TUI or RPC mode. Model-callable tools cannot grant themselves allowance. Resuming or forking does not restore spent allowance.
 
-## Evidence and accounting boundaries
+## Required evidence and accounting boundaries
 
 - Search answers and snippets are discovery metadata, **never indexed source evidence**.
 - Only actual fetched and deterministically extracted source text enters the passage corpus.
@@ -62,6 +62,6 @@ The course submission also needs the report of at most eight pages, a 5–8-minu
 
 ## Dependencies and AI assistance
 
-Extraction uses Mozilla Readability, LinkeDOM and unpdf; robots rules use robots-parser; address classification uses ipaddr.js. Pi provides the host, model abstraction and terminal UI. Version pins and transitive dependencies are in `package-lock.json`; each dependency retains its own license.
+The approved extraction dependencies are Mozilla Readability, LinkeDOM and unpdf; robots-parser and ipaddr.js are installed for the planned acquisition service. Pi supplies model and terminal contracts. Version pins and transitive dependencies are in `package-lock.json`; each dependency retains its own license.
 
 AI assistance was used to research integration contracts, develop the implementation plan and generate/review code. Source-level inspection and automated checks must be distinguished from live end-to-end verification. Final evaluation judgments, team contributions and demonstrated behavior require human confirmation.

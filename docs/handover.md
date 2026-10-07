@@ -1,0 +1,184 @@
+# Implementation handover
+
+## Start here
+
+Implementation is **paused**, not finished. The full approved specification is [project-plan.md](project-plan.md). Resume that scope; do not replace it with a smaller chatbot or declare the drafts working.
+
+The user intends to change the existing **Implement** agent configuration to **DeepSeek v4.1 Flash** before the next session. Do not edit that global configuration on their behalf. Read the agent definitions at startup and use their configured model/thinking settings without overrides.
+
+## User instructions for the next session
+
+- Delegate concrete implementation units with clear file ownership and fixed interfaces.
+- Use the existing agent configurations; no model or thinking overrides.
+- A stall or interrupted worker is not permission to switch providers, duplicate work, or discard its progress. The configured Implement provider returned explicit 429 errors before executing the latest assignments; do not confuse that with an ordinary stall.
+- Commit focused milestones continuously. Do not wait for the entire application before committing useful code.
+- Prioritize actual implementation. Keep verification proportional to each component; do not spend an implementation turn building a large test suite or repeatedly probing an already-known environment.
+- Preserve pre-existing changes. Use targeted `edit` on existing files; whole-file replacement needs approval.
+- Project-local dependency downloads were explicitly approved. Global installation, paid live research calls, and changes to user configuration were not authorized.
+
+## Repository state
+
+### Implemented shared modules
+
+| File | Current responsibility |
+|---|---|
+| `src/types.ts` | Domain contracts for objectives, branches/needs, snapshots/passages, concepts, contributions, actions, reports, limits and engine-host interfaces |
+| `src/pi-model.ts` | Tool-free structured model-task adapter, usage aggregation, and normalization of structured discovery results; preserves observed usage on parse/stop failures |
+| `src/report.ts` | Structurally validated passage-cited report construction and an explicitly extractive fallback outline |
+| `src/views.ts` | Plain-text research map, source list, evidence inspection and BM25 score rendering with terminal-control sanitization |
+
+These are shared components, **not a working research engine**. No live web, nested-tool or end-to-end application test has been performed. A successful TypeScript check establishes type consistency only.
+
+### Preserved unfinished drafts
+
+| File | Why it is a draft |
+|---|---|
+| `docs/drafts/extension.ts.txt` | Pi commands, authorization and tool wiring reference foundations that do not exist yet. Lifecycle/concurrency and complete tool exposure still need review. |
+| `docs/drafts/evaluate.ts.txt` | Frozen-corpus metric/ablation harness depends on the missing IR engine. It has not been run against human judgments. |
+
+The drafts are original partial implementation work preserved for reuse, not verified templates. Their `.txt` extensions intentionally keep them out of compilation and extension loading. Promote them only after reviewing and integrating them; do not copy blindly.
+
+### Missing components
+
+No implementations exist for:
+
+- `src/core-ir.ts`
+- `src/object-store.ts`
+- `src/allowance.ts`
+- `src/acquisition.ts`
+- `src/engine.ts`
+- a runnable `src/extension.ts`
+- tests, a demo script, a runnable evaluation script or evaluation judgments/results
+
+The interrupted workers did not deliver these modules. Check the filesystem again rather than assuming a prior task completed.
+
+### Package and verification state
+
+- Node 24.13.1; npm 11.12.1 were checked.
+- `package.json` and `tsconfig.json` were generated with `npm init --yes` and `tsc --init`, then edited.
+- Approved dependencies are installed locally and pinned in `package-lock.json`: Readability, LinkeDOM, unpdf, robots-parser, ipaddr.js, TypeScript, tsx, Node types and the Pi contracts. Pi packages and TypeBox are declared as peers with development copies for checking.
+- Built-in `node:sqlite` is available; use it for transactional operational accounting, not retrieval.
+- `npm run typecheck` passed after the incomplete integration/evaluation files were moved to drafts, including after the small boundary fixes. It checks the four current shared modules only. An additional active LSP probe timed out for all four files and is inconclusive, not proof of clean diagnostics.
+- `npm install --package-lock-only --ignore-scripts` synchronized the cleaned manifest and reported zero known vulnerabilities for that installation. This is not a general security audit.
+- Runnable extension registration and test/demo/evaluation scripts were removed because their referenced files did not exist. Restore each only when its implementation exists.
+- No implementation behavior tests were run or written. No paid live research calls were made.
+- An independent configured Review worker was asked to inspect the shared modules. Do not claim its review passed unless its actual result is available; it was still running at handover preparation.
+
+## Resume in dependency order
+
+### 1. Shared-module review and focused fixes
+
+First inspect the current shared modules and any retained Review findings. Small boundary fixes were made during cleanup: citation offsets now require JSON numbers and valid passage/snapshot bounds; absent provider metadata now gives unknown ranking, and contradictory/multiple identity bindings are rejected. These changes have not been behavior-tested.
+
+Remaining areas to verify before trusting runtime inputs:
+
+- Citation support is only mechanical; the missing contextual evidence assessment must establish semantic relevance.
+- Domain IDs, snapshot URLs and all rehydrated state require validation at their persistence boundary. No immutable-store implementation exists yet.
+
+The shared contracts/adapters are committed as their own unit after a bounded TypeScript check; this does not make the system runnable. Apply subsequent review fixes in focused commits.
+
+### 2. Independent foundation ownership
+
+Delegate these as separate concrete units, not oversized all-in-one workers:
+
+1. **IR:** `src/core-ir.ts` — positional index, BM25 explanations, passage segmentation, duplicates, MMR, provenance-bearing TF-IDF candidates and anchored expansion.
+2. **Object storage:** `src/object-store.ts` — immutable content-addressed blobs and snapshots; active-path manifest rehydration.
+3. **Accounting:** `src/allowance.ts` — transactional grants, command authorization, request claims, operation reservations/settlement and shared hostname scheduling.
+
+Each worker reads `src/types.ts` and the relevant plan section, implements its module first, then performs a bounded check and reports concrete evidence. Parent integrates and commits each coherent result. Add focused regression tests alongside real code, without letting test scaffolding substitute for implementation.
+
+### 3. Acquisition after storage/accounting
+
+Implement `src/acquisition.ts` with Readability/LinkeDOM and unpdf, a real robots parser, a shared hostname delay queue and pinned public-address HTTP(S) transport. DNS checks must govern the actual socket. Redirects, robots requests and retries must all obey policy and accounting. Bound bytes and extraction time; worker-based extraction must be terminable. Do not relax SSRF policy to make localhost fixtures pass.
+
+### 4. Controller and reports
+
+Implement `src/engine.ts` against those fixed interfaces: initial planning, corpus acquisition, contextual assessment, grounded expansion, action utility, complete search episodes, yield ledger, stopping, follow-up objective revisions, report synthesis and fallback. Model output cannot grant budget or provide authoritative progress/confidence. Commit this as an integrated engine milestone.
+
+### 5. Pi integration
+
+Review/promote the extension draft once its imports are real. Required outstanding integration work includes:
+
+- Strong state/schema validation and branch-specific corpus membership.
+- Durable request ownership and generation/session/objective guards on **every** mutation, including feedback; the draft's feedback writes bypass durable writer ownership.
+- Ledger cleanup that does not invalidate late operational settlement.
+- Protected synthesis reservations and elapsed-time checks.
+- Exact structured tool result schemas/content for programmatic callers.
+- Complete planned tool operations, including policy-controlled source acquisition, without bypass paths.
+- Safe cancellation and interrupted-request reconciliation without automatic redispatch.
+- Per-call discovery tool activation and validated structured results.
+- Runtime smoke testing with Pi 1.0.4 and pi-web-access 0.37.0, only with authorization for live usage.
+
+Restore package `pi.extensions` registration after the entry point is runnable, not before.
+
+### 6. Evaluation/demo/submission
+
+Promote and validate the evaluation draft; collect actual human passage judgments, never generated benchmark results. Add deterministic replay for regression use, not as a substitute for the live course demo. Finish the README with real commands/results and documented limitations. Course report, video and actual work division remain human deliverables.
+
+## Proposed interfaces already briefed
+
+These interfaces are coordination decisions, not existing code. Keep names stable where reasonable; settle consequential changes with the parent before implementation.
+
+### IR (`core-ir.ts`)
+
+```text
+tokenize(text): Token[]
+segment(snapshot): Passage[]
+PassageIndex.add(passages), get(id), all(), stats, rank(query, limit=30, phrases?)
+mmr(hits, count=8, lambda=.75): SearchHit[]
+concepts(hits, branch, feedback, limit=12): Concept[]
+expandedQuery(anchor, concepts, negativePassages?): Record<string, number>
+```
+
+Stopwords remain in the positional stream; scoring normalization is separate. Incremental and rebuilt indexes must agree. Exact duplicates score once while aliases retain branch-visible provenance; near duplicates remain inspectable and do not imply factual equivalence.
+
+### Object storage (`object-store.ts`)
+
+```text
+ObjectStore(root)
+put(bytes|string): hash
+read(hash): Buffer
+saveSnapshot(snapshot): void
+loadSnapshot(id): Snapshot
+rehydrate(chronologicalActivePathEntries): Investigation | undefined
+```
+
+Write blobs before manifests. No scanning to discover corpus membership. Identical blobs can back distinct immutable retrieval records with different URLs/times. Only the active path's latest validated manifest is authoritative.
+
+### Accounting (`allowance.ts`)
+
+```text
+Ledger(path)
+authorize(limits, synthesisReserve, authorizationId): allowanceId
+addGrant(allowanceId, increments, authorizationId)
+authorizeRequest(request), getRequest(id)
+claimRequest(id, owner), finishRequest(id, owner, completed|interrupted)
+owns(requestId, owner), interruptInvestigation(id)
+reserve(allowanceId, operationId, payload, amount, work|synthesis): boolean
+dispatched(operationId), settle(operationId, observedUsage, metadata?)
+snapshot(allowanceId), waitForHost(hostname, delayMs, signal), close()
+```
+
+`AuthorizedRequest` includes ID, allowance/investigation/session identity, expected logical revision, kind (`start|continue|report`), question, provider, search tool and storage root. IDs bind immutable payloads. Reservations and claims are atomic across runtimes; unknown outcomes remain reserved, and repeated IDs never redispatch. Explicit user-confirmed recovery can revoke an old writer without freeing uncertain spending. Synthesis has a separate protected lane. Model token control is estimated; confirmed usage and unresolved exposure are distinct.
+
+### Engine (`engine.ts`)
+
+```text
+newInvestigation({id, allowanceId, storageRoot, question}): Investigation
+ResearchEngine({state, ledger, store, host, requestId, owner, signal, options?})
+run(input, start|continue|report): Promise<Investigation>
+feedback(state, targetId, kind): Investigation
+```
+
+`EngineHost` and model task schemas are defined in `src/types.ts` and `src/pi-model.ts`. Acquisition saves immutable snapshots; engine should verify persistence before manifest publication. Every logical commit uses a cloned state/new revision ID and requires both current-generation guards and ledger ownership. Stale completions settle usage but never commit evidence.
+
+## Commit discipline
+
+Existing commits before the final handover commit:
+
+- `3a12fc8` — complete implementation plan.
+- `75f2289` — generated package/scaffold and pinned approved dependencies.
+- `7c2ea25` — development documentation and evidence boundaries.
+- `d636043` — shared research contracts, model/discovery adapters, report construction and text inspectors (TypeScript check passed; behavior unverified).
+
+The handover commit preserves shared source modules and unfinished drafts while removing misleading runnable registration. Next session: start with `git status`, preserve anything added since this handover, then commit one coherent component at a time. Do not mix unrelated setup, multiple worker implementations and evaluation changes into a single final commit.

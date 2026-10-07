@@ -6,16 +6,8 @@
   "engines": {
     "node": ">=24.13.1"
   },
-  "pi": {
-    "extensions": [
-      "./src/extension.ts"
-    ]
-  },
   "scripts": {
-    "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit",
-    "demo": "tsx scripts/demo.ts",
-    "evaluate": "tsx scripts/evaluate.ts"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "pi-package",

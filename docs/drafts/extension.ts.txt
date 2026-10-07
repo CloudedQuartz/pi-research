@@ -1,0 +1,262 @@
+import { randomUUID } from 'node:crypto';
+import { join, resolve } from 'node:path';
+import { Type } from 'typebox';
+import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ExtensionToolContext } from '@earendil-works/pi-coding-agent';
+import type { Usage as PiUsage } from '@earendil-works/pi-ai';
+import { Ledger } from './allowance.js';
+import type { AuthorizedRequest } from './allowance.js';
+import { ObjectStore, rehydrate } from './object-store.js';
+import { PassageIndex, mmr } from './core-ir.js';
+import { AcquisitionService } from './acquisition.js';
+import { ResearchEngine, newInvestigation, feedback } from './engine.js';
+import { combineUsage, makeModelHost, normalizeDiscovery } from './pi-model.js';
+import { inspectState, rankText, researchMap, safeText, sourceList } from './views.js';
+import type { Feedback, Investigation, Limits } from './types.js';
+
+const STATE_TYPE = 'pi-research/state';
+const DEFAULT_LIMITS: Limits = { searches: 8, fetches: 18, http: 72, modelCalls: 40, modelTokens: 180_000, elapsedMs: 480_000 };
+const SYNTHESIS = { modelCalls: 2, modelTokens: 10_000 };
+const RequestParams = Type.Object({ requestId: Type.String({ description: 'One-use ID authorized by a research command; never invent one.' }) });
+const FeedbackParams = Type.Object({ targetId: Type.String(), kind: Type.Union(['useful', 'irrelevant', 'accept', 'reject', 'prioritize'].map(v => Type.Literal(v))) });
+
+export default function researchExtension(pi: ExtensionAPI): void {
+  let state: Investigation | undefined;
+  let generation = 0;
+  let abort: AbortController | undefined;
+  let ledger: Ledger | undefined;
+  let ledgerRoot: string | undefined;
+
+  const rootFor = (ctx: ExtensionContext) => join(ctx.sessionManager.getSessionDir(), 'pi-research');
+  const accounting = (ctx: ExtensionContext) => {
+    const root = rootFor(ctx);
+    if (!ledger || ledgerRoot !== root) {
+      ledger?.close();
+      ledger = new Ledger(join(root, 'allowances.sqlite'));
+      ledgerRoot = root;
+    }
+    return ledger;
+  };
+  const current = () => {
+    if (!state) throw new Error('No investigation on the active branch. Use /research first.');
+    return state;
+  };
+  const restore = (ctx: ExtensionContext) => {
+    generation++;
+    abort?.abort(new Error('Session or branch changed'));
+    state = rehydrate(ctx.sessionManager.getBranch());
+    ctx.ui.setStatus('pi-research', state ? `Research paused · ${state.snapshotIds.length} sources` : undefined);
+  };
+  const invalidate = () => { generation++; abort?.abort(new Error('Research interrupted')); };
+  pi.on('session_start', (_event, ctx) => restore(ctx));
+  pi.on('session_tree', (_event, ctx) => restore(ctx));
+  pi.on('session_before_switch', () => { invalidate(); });
+  pi.on('session_before_fork', () => { invalidate(); });
+  pi.on('session_before_tree', () => { invalidate(); });
+  pi.on('session_shutdown', () => { invalidate(); /* Active calls settle before their ledger is closed. */ });
+
+  const show = async (title: string, body: string, ctx: ExtensionContext) => {
+    const clean = safeText(body);
+    if (ctx.mode !== 'tui') {
+      pi.sendMessage({ customType: 'pi-research/view', content: `${title}\n\n${clean}`, display: true }, { triggerTurn: false });
+      return;
+    }
+    await ctx.ui.custom<void>((tui, _theme, _keys, done) => {
+      let offset = 0;
+      const lines = `${title}\n\n${clean}\n\nEscape: close · ↑/↓: scroll`.split('\n');
+      return {
+        render(width: number) { return lines.slice(offset, offset + 24).map(line => truncateToWidth(line, width)); },
+        invalidate() {},
+        handleInput(input: string) {
+          if (matchesKey(input, 'escape') || matchesKey(input, 'ctrl+c')) done();
+          if (matchesKey(input, 'up')) offset = Math.max(0, offset - 1);
+          if (matchesKey(input, 'down')) offset = Math.min(Math.max(0, lines.length - 24), offset + 1);
+          tui.requestRender();
+        },
+      };
+    });
+  };
+
+  const authorize = async (kind: AuthorizedRequest['kind'], question: string, ctx: ExtensionCommandContext) => {
+    if (!ctx.hasUI) throw new Error('Research acquisition requires explicit command confirmation in TUI or RPC mode.');
+    await ctx.waitForIdle();
+    const db = accounting(ctx);
+    const old = kind === 'start' ? undefined : current();
+    let provider: string;
+    let searchTool: string;
+    if (kind === 'start') {
+      provider = (await ctx.ui.input('One discovery provider (e.g. brave, gemini, openai)', 'brave'))?.trim() ?? '';
+      searchTool = (await ctx.ui.input('Registered search tool name', 'web_search'))?.trim() ?? '';
+      if (!provider || provider === 'auto' || provider === 'all' || /[,\s]/.test(provider)) throw new Error('Choose one explicit provider.');
+      if (!pi.getAllTools().some(t => t.name === searchTool && t.exposure !== 'hidden' && t.exposure !== 'model-only')) throw new Error(`Search tool ${searchTool} is not registered/callable. Load pi-web-access first.`);
+    } else {
+      // Configuration is authorization metadata, not inferred from generated source text.
+      const entries = ctx.sessionManager.getBranch();
+      let config: { provider: string; searchTool: string } | undefined;
+      for (const e of entries) if (e.type === 'custom' && e.customType === 'pi-research/config' && e.data && typeof e.data === 'object') {
+        const c = e.data as Record<string, unknown>;
+        if (typeof c.provider === 'string' && typeof c.searchTool === 'string') config = { provider: c.provider, searchTool: c.searchTool };
+      }
+      if (!config) throw new Error('Investigation provider configuration is missing.');
+      ({ provider, searchTool } = config);
+    }
+    const summary = old ? JSON.stringify(db.snapshot(old.allowanceId), null, 2) : JSON.stringify(DEFAULT_LIMITS);
+    if (!(await ctx.ui.confirm('Authorize research?', `${kind}: ${question || old?.originalQuestion}\nProvider: ${provider}\n${summary}\nModel token control is estimated. Hidden provider operations/costs are unknown; this is not a guaranteed total monetary cap. Continue only if you accept the selected provider/model charges.`))) return;
+    const allowanceId = old?.allowanceId ?? db.authorize(DEFAULT_LIMITS, SYNTHESIS, randomUUID());
+    const id = randomUUID();
+    const investigationId = old?.id ?? randomUUID();
+    // Explicit continuation is the recovery boundary; uncertain operations are never replayed.
+    if (old) db.interruptInvestigation(old.id);
+    const request: AuthorizedRequest = { id, allowanceId, investigationId, expectedRevision: old?.revisionId,
+      sessionId: ctx.sessionManager.getSessionId(), kind, question, provider, searchTool, storageRoot: old?.storageRoot ?? rootFor(ctx) };
+    db.authorizeRequest(request);
+    if (kind === 'start') pi.appendEntry('pi-research/config', { provider, searchTool });
+    pi.sendUserMessage(`Call research_run exactly once with requestId ${id}. This is the authorized ${kind} research request. Do not substitute ordinary web/model calls, invent another request ID, or grant additional allowance.`, { expandPromptTemplates: false });
+  };
+
+  const executeRun = async (requestId: string, signal: AbortSignal | undefined, ctx: ExtensionToolContext,
+    update?: (message: string) => void) => {
+    const db = accounting(ctx);
+    const request = db.getRequest(requestId);
+    if (!request || request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error('Request is absent or belongs to another session.');
+    if (request.expectedRevision && (state?.revisionId !== request.expectedRevision || state.id !== request.investigationId)) throw new Error('Request targets a stale logical revision. Authorize continuation again.');
+    if (resolve(request.storageRoot) !== resolve(rootFor(ctx))) throw new Error('Request storage root is not the current workspace session storage.');
+    if (abort) throw new Error('Research is already running.');
+    const owner = randomUUID();
+    db.claimRequest(requestId, owner);
+    const initial = request.kind === 'start' ? newInvestigation({ id: request.investigationId, allowanceId: request.allowanceId, storageRoot: request.storageRoot, question: request.question }) : structuredClone(current());
+    const capturedGeneration = generation;
+    const sessionId = ctx.sessionManager.getSessionId();
+    const controller = new AbortController();
+    abort = controller;
+    const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const usage: PiUsage[] = [];
+    const store = new ObjectStore(request.storageRoot);
+    const isCurrent = () => generation === capturedGeneration && sessionId === ctx.sessionManager.getSessionId() && db.owns(requestId, owner);
+    const acquisition = new AcquisitionService({ store,
+      beforeHttp: async url => {
+        if (!isCurrent()) throw new Error('Obsolete research request');
+        combinedSignal.throwIfAborted();
+        const op = randomUUID();
+        if (!db.reserve(request.allowanceId, op, { requestId, url }, { http: 1 })) throw new Error('HTTP operation already reserved');
+        db.dispatched(op);
+        // Dispatch-attempt counters are known even if the response is lost.
+        db.settle(op, { http: 1 });
+      },
+      scheduleHost: (host, delay, s) => db.waitForHost(host, delay, s),
+    });
+    try {
+      const engine = new ResearchEngine({ state: initial, ledger: db, store, requestId, owner, signal: combinedSignal, host: {
+        model: makeModelHost(ctx, u => usage.push(u)),
+        discover: async (query, s) => {
+          if (!isCurrent()) throw new Error('Obsolete research request');
+          const tool = pi.getAllTools().find(t => t.name === request.searchTool);
+          if (!tool || tool.exposure === 'hidden' || tool.exposure === 'model-only') throw new Error('Configured discovery tool unavailable');
+          if (!ctx.tools.some(t => t.name === request.searchTool)) pi.setActiveTools([...new Set([...pi.getActiveTools(), request.searchTool])]);
+          const outcome = await ctx.executeTool(request.searchTool, { query, provider: request.provider, numResults: 8, workflow: 'none', includeContent: false }, { signal: s });
+          if (outcome.isError) throw new Error(outcome.result.content.filter(c => c.type === 'text').map(c => c.text).join('\n'));
+          return normalizeDiscovery(outcome.result.structuredContent, query, request.provider);
+        },
+        acquire: (url, s) => acquisition.acquire(url, s),
+        commit: next => {
+          if (!isCurrent()) throw new Error('Stale research state cannot be committed');
+          state = structuredClone(next);
+          pi.appendEntry(STATE_TYPE, state);
+        },
+        isCurrent,
+        progress: (message, next) => {
+          if (!isCurrent()) return;
+          update?.(safeText(message));
+          if (ctx.hasUI) { ctx.ui.setStatus('pi-research', safeText(message).slice(0, 100)); ctx.ui.setWidget('pi-research', researchMap(next).split('\n').slice(0, 8)); }
+        },
+      } });
+      const result = await engine.run(request.question, request.kind);
+      db.finishRequest(requestId, owner, combinedSignal.aborted || !isCurrent() ? 'interrupted' : 'completed');
+      return { result, usage: combineUsage(usage) };
+    } catch (error) {
+      db.finishRequest(requestId, owner, 'interrupted');
+      // Preserve model accounting even when the orchestration fails.
+      return { error: error instanceof Error ? error.message : String(error), usage: combineUsage(usage) };
+    } finally {
+      if (abort === controller) abort = undefined;
+      if (isCurrent()) ctx.ui.setStatus('pi-research', state ? `Research ${state.status} · ${state.snapshotIds.length} sources` : undefined);
+    }
+  };
+
+  pi.registerTool({ name: 'research_run', label: 'Progressive research', exposure: 'model-only', executionMode: 'sequential',
+    description: 'Execute one command-authorized research request under the persisted allowance. Only valid request IDs from /research, /research-continue or /research-report may run.',
+    parameters: RequestParams,
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const outcome = await executeRun(params.requestId, signal, ctx, message => onUpdate?.({ content: [{ type: 'text', text: message }], details: { phase: message } }));
+      if (outcome.error) return { isError: true, content: [{ type: 'text', text: outcome.error }], details: { error: outcome.error }, usage: outcome.usage };
+      const result = outcome.result!;
+      return { content: [{ type: 'text', text: result.reports.at(-1)?.markdown ?? researchMap(result) }], details: { investigationId: result.id, objectiveId: result.activeObjectiveId, revisionId: result.revisionId }, usage: outcome.usage };
+    },
+  });
+  pi.registerTool({ name: 'research_retrieve', label: 'Research retrieval', description: 'Retrieve visible indexed passages with positional BM25 explanations and optional MMR. No external calls.',
+    parameters: Type.Object({ query: Type.String(), diversify: Type.Optional(Type.Boolean()) }), annotations: { readOnlyHint: true, openWorldHint: false },
+    async execute(_id, params) {
+      const s = current(); const index = new PassageIndex(); index.add(s.passages);
+      const hits = index.rank(params.query, 30); const selected = params.diversify === false ? hits.slice(0, 8) : mmr(hits);
+      return { content: [{ type: 'text', text: rankText(selected) }], details: { hits: selected } };
+    },
+  });
+  pi.registerTool({ name: 'research_inspect', label: 'Evidence inspector', description: 'Inspect a branch-visible passage, concept, source or action and provenance. No external calls.',
+    parameters: Type.Object({ id: Type.String() }), annotations: { readOnlyHint: true, openWorldHint: false },
+    async execute(_id, params) {
+      const s = current(); const store = new ObjectStore(s.storageRoot);
+      const inspection = inspectState(s, params.id, s.snapshotIds.map(id => store.loadSnapshot(id)));
+      return { content: [{ type: 'text', text: safeText(JSON.stringify(inspection, null, 2)) }], details: { inspection } };
+    },
+  });
+  pi.registerTool({ name: 'research_report', label: 'Research report', exposure: 'model-only', executionMode: 'sequential', description: 'Display the current report. To synthesize a new version, request user authorization through /research-report update.',
+    parameters: Type.Object({}), annotations: { readOnlyHint: true, openWorldHint: false },
+    async execute() { const report = current().reports.at(-1); return { content: [{ type: 'text', text: report?.markdown ?? 'No report yet.' }], details: { report } }; },
+  });
+  pi.registerTool({ name: 'research_feedback', label: 'Research feedback', exposure: 'model-only', executionMode: 'sequential', description: 'Apply explicit user feedback after confirmation. It cannot grant budget or make external calls.', parameters: FeedbackParams,
+    async execute(_id, params, _signal, _update, ctx) {
+      if (abort) throw new Error('Pause research before changing feedback.');
+      if (!ctx.hasUI || !(await ctx.ui.confirm('Apply feedback?', `${params.kind}: ${params.targetId}`))) throw new Error('User feedback not authorized');
+      const s = current();
+      const next = feedback(s, params.targetId, params.kind as Feedback['kind']);
+      state = next; pi.appendEntry(STATE_TYPE, next);
+      return { content: [{ type: 'text', text: 'Feedback recorded; no external calls started.' }], details: { revisionId: next.revisionId } };
+    },
+  });
+
+  const command = (name: string, description: string, handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>) => pi.registerCommand(name, {
+    description, handler: async (args, ctx) => { try { await handler(args, ctx); } catch (error) { ctx.ui.notify(safeText(error instanceof Error ? error.message : String(error)), 'error'); } },
+  });
+  command('research', 'Start a bounded progressive research investigation', async (args, ctx) => {
+    if (!args.trim()) throw new Error('Usage: /research <question>'); await authorize('start', args.trim(), ctx);
+  });
+  command('research-continue', 'Refine or resume using existing evidence and remaining allowance', async (args, ctx) => {
+    await authorize('continue', args.trim() || current().objectives.at(-1)?.question || current().originalQuestion, ctx);
+  });
+  command('research-map', 'Inspect branches, concepts, needs and routing decisions', async (_args, ctx) => show('Research map', researchMap(current()), ctx));
+  command('research-sources', 'Inspect discovered/fetched/failed sources', async (_args, ctx) => show('Research sources', sourceList(current()), ctx));
+  command('research-report', 'Display a report or authorize synthesis with update', async (args, ctx) => {
+    if (args.trim() === 'update') await authorize('report', '', ctx);
+    else await show('Research report', current().reports.at(-1)?.markdown ?? 'No report yet.', ctx);
+  });
+  command('research-feedback', 'Record explicit feedback: <kind> <target-id>', async (args, ctx) => {
+    await ctx.waitForIdle();
+    const [kind, id] = args.trim().split(/\s+/);
+    if (!id || !['useful', 'irrelevant', 'accept', 'reject', 'prioritize'].includes(kind ?? '')) throw new Error('Usage: /research-feedback useful|irrelevant|accept|reject|prioritize <id>');
+    state = feedback(current(), id, kind as Feedback['kind']); pi.appendEntry(STATE_TYPE, state);
+    ctx.ui.notify('Feedback recorded. Continue explicitly to apply it to research.', 'info');
+  });
+  command('research-budget', 'Inspect spending or explicitly add allowance: add searches=2 fetches=6', async (args, ctx) => {
+    const s = current(); const db = accounting(ctx);
+    if (!args.trim()) { await show('Research allowance', JSON.stringify(db.snapshot(s.allowanceId), null, 2), ctx); return; }
+    if (!ctx.hasUI || !args.startsWith('add ')) throw new Error('Usage: /research-budget [add searches=N fetches=N http=N modelCalls=N modelTokens=N elapsedMs=N]');
+    const grant: Partial<Limits> = {};
+    for (const token of args.slice(4).trim().split(/\s+/)) {
+      const [key, amount] = token.split('='); const value = Number(amount);
+      if (!key || !(key in DEFAULT_LIMITS) || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid allowance increment');
+      grant[key as keyof Limits] = value;
+    }
+    if (await ctx.ui.confirm('Authorize additional allowance?', `${JSON.stringify(grant)}\nThis does not start external calls; provider-hidden costs remain unknown.`)) db.addGrant(s.allowanceId, grant, randomUUID());
+  });
+  command('research-stop', 'Cancel further research and retain committed evidence', async (_args, ctx) => { abort?.abort(new Error('Stopped by user')); ctx.ui.notify('Research cancellation requested.', 'info'); });
+}
