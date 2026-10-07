@@ -6,16 +6,16 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, and immutable source storage with active-path restoration. Retrieval, operational accounting, acquisition and engine integration are still being implemented or verified; this is not yet a verified loadable research extension. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
+Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, immutable source storage, bounded robots-aware acquisition, the non-rewinding allowance ledger, and weighted positional BM25/duplicate-aware MMR. Engine and Pi integration are undergoing offline verification; this is not yet a verified loadable research extension. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
 
 ## Development setup
 
-- Node **24.13.1 or newer** (the planned ledger will use the experimental built-in `node:sqlite`).
+- Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. Integration imports may be temporarily unresolved while their assigned components are in progress. No tests, demo or evaluation commands are registered until their implementations exist.
+- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. No tests, demo or evaluation commands are registered until their implementations exist.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
-After implementing and validating the entry point, restore package extension registration and load explicitly from this repository (this command does not work yet):
+Package extension registration remains disabled pending integration acceptance. Explicit loading on the installed Pi host is still unverified:
 
 ```sh
 pi --extension ./src/extension.ts
@@ -41,7 +41,7 @@ Other controls:
 - `/research-report update` authorizes new synthesis.
 - `/research-stop` requests cancellation while preserving committed evidence.
 
-External work requires explicit command authorization in TUI or RPC mode. Model-callable tools cannot grant themselves allowance. Resuming or forking does not restore spent allowance.
+External work requires explicit command authorization in TUI or RPC mode. Model-callable tools cannot grant themselves allowance. Resuming or forking does not restore spent allowance. Only one writer per investigation is supported, including across copied forks; explicit recovery revokes old requests permanently without refunding uncertain reservations.
 
 ## Required evidence and accounting boundaries
 
@@ -52,7 +52,7 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 - Public-source acquisition must respect robots rules, hostname delays, redirect policy and public-address checks. No authenticated fetching, browser cookies or paywall bypass.
 - Source snapshots are immutable; active Pi-branch manifests determine corpus membership. Orphan blobs are invisible to retrieval.
 - Search invocations, page-fetch attempts, HTTP attempts and model usage are separate counters. Provider-hidden operations and unreported costs remain unknown.
-- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation.
+- Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation. The adapter marks incomplete/unreported usage explicitly; ledger/engine propagation is under verification. Pi-native money figures are model-rate estimates, not confirmed invoices.
 - Choose non-personal research topics and screen sources before distributing corpora; fetched public pages can contain incidental personal metadata. No privacy-filtering guarantee is claimed.
 
 ## Evaluation and submission
@@ -63,6 +63,6 @@ The course submission also needs the report of at most eight pages, a 5–8-minu
 
 ## Dependencies and AI assistance
 
-The approved extraction dependencies are Mozilla Readability, LinkeDOM and unpdf; robots-parser and ipaddr.js are installed for the planned acquisition service. Pi supplies model and terminal contracts. Version pins and transitive dependencies are in `package-lock.json`; each dependency retains its own license.
+The approved extraction dependencies are Mozilla Readability, LinkeDOM and unpdf; robots-parser and ipaddr.js implement acquisition policy checks. Pi supplies model and terminal contracts. Version pins and transitive dependencies are in `package-lock.json`; each dependency retains its own license.
 
 AI assistance was used to research integration contracts, develop the implementation plan and generate/review code. Source-level inspection and automated checks must be distinguished from live end-to-end verification. Final evaluation judgments, team contributions and demonstrated behavior require human confirmation.
