@@ -39,8 +39,10 @@ export function reportEvidence(state: Investigation, snapshots: Snapshot[]): Pas
   return state.passages.filter(p => ids.has(p.id) && visible.has(p.snapshotId));
 }
 
-/** Invalid or unavailable synthesis becomes an explicitly extractive outline. */
-export function buildReport(state: Investigation, snapshots: Snapshot[], modelValue?: unknown): Report {
+/** Invalid or unavailable synthesis becomes an explicitly extractive outline.
+ * Optional packet IDs restrict model citations; the deterministic outline uses visible evidence.
+ */
+export function buildReport(state: Investigation, snapshots: Snapshot[], modelValue?: unknown, allowedPassageIds?: ReadonlySet<string>): Report {
   const objective = state.objectives.find(o => o.id === state.activeObjectiveId);
   if (!objective) throw new Error('Cannot report without an objective');
   const visible = new Map(snapshots.filter(s => state.snapshotIds.includes(s.id)).map(s => [s.id, s]));
@@ -67,7 +69,7 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
             const s = object(rawSpan);
             const id = text(s.passageId, 150);
             const p = evidence.get(id);
-            if (!p) throw new Error('Unknown/currently irrelevant passage');
+            if (!p || (allowedPassageIds !== undefined && !allowedPassageIds.has(id))) throw new Error('Passage was not in the supplied synthesis packet');
             if (typeof s.start !== 'number' || typeof s.end !== 'number') throw new Error('Citation offsets must be JSON numbers');
             const span: Span = { passageId: id, start: s.start, end: s.end };
             validateSpan(span, p, visible.get(p.snapshotId)!);
@@ -83,7 +85,10 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
   }
   if (fallback) {
     sections = state.branches.filter(b => b.objectiveId === objective.id && b.status !== 'rejected' && b.status !== 'archived').map(branch => {
-      const ids = [...new Set(state.contributions.filter(c => c.objectiveId === objective.id && c.branchId === branch.id).map(c => c.passageId))].filter(id => evidence.has(id)).slice(0, 5);
+      const contributions = state.contributions.filter(c => c.objectiveId === objective.id && c.branchId === branch.id);
+      const witnesses = branch.needs.flatMap(n => n.assessment?.passageIds ?? []);
+      const qualifications = contributions.filter(c => c.role !== 'support').map(c => c.passageId);
+      const ids = [...new Set([...witnesses, ...qualifications, ...contributions.map(c => c.passageId)])].filter(id => evidence.has(id)).slice(0, 5);
       return { title: branch.question, statements: ids.map(id => {
         const p = evidence.get(id)!;
         const span = spanFor(id);
