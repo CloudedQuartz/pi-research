@@ -12,8 +12,8 @@ Implementation has resumed. Committed components include shared contracts, struc
 
 - Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. Demo and evaluation commands remain unregistered until their implementations exist.
-- `npm test` runs the permanent offline IR, engine and SDK/package-loading regressions. `test:ir`, `test:engine` and `test:sdk` can also run separately. No real model or network calls are made.
+- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. The evaluation CLI is available; the replay demo is still being integrated.
+- `npm test` runs the permanent offline IR, engine, SDK/package-loading and evaluation regressions. `test:ir`, `test:engine`, `test:sdk` and `test:evaluate` can also run separately. No real model or network calls are made.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
 The package registers `src/extension.ts`. SDK loading is tested against Pi 1.0.4; interactive research still requires an available model and discovery provider. To load explicitly:
@@ -58,7 +58,18 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 
 ## Evaluation and submission
 
-The plan specifies fixed-corpus BM25 baselines and PRF/MMR ablations, budget-matched research-policy comparison, follow-up reuse/constraint judgments and citation assessments. Human relevance judgments and measured results must be collected; no benchmark outcomes are claimed here.
+### Frozen-corpus retrieval evaluation
+
+`npm run --silent evaluate -- <judged-dataset.json>` compares BM25, anchored lexical PRF and PRF+MMR on one frozen passage index. The JSON input contains `passages` (the `Passage` schema in `src/types.ts`) and `queries`, each with a unique `id`, `text` and `judgments` mapping actual passage IDs to integer grades 0–3. Passage offsets are UTF-16 units with `end - start === text.length`.
+
+1. Freeze development parameters before held-out evaluation. The plan targets two development and eight held-out conversations, each with an initial request and two follow-ups.
+2. Pool competing methods' retrieved passages, then collect **human** relevance grades: 0 irrelevant, 1 marginal/contextual, 2 useful, 3 directly addresses the request. Keep near variants separately judged; remove exact-text aliases and recheck judgments for retained IDs. The CLI rejects corpora whose shared index folds aliases.
+3. Double-judge a subset and record disagreements. Judge answer needs, evidence roles and semantic citation support separately; duplicate groups are not equivalence or confidence labels.
+4. Run every method against the same frozen corpus/qrels. Report per-query scores and equal-query macro averages, including zero-positive-qrel queries. Outputs include fixed-denominator P@5/P@10, exponential-gain nDCG@10, **pooled recall** and index-group redundancy. Unjudged passages count as zero, not as verified irrelevant.
+
+This CLI uses lexical feedback, not live contextual assessment. It does **not** measure research-policy allocation, conversational quality or citation faithfulness. For those planned comparisons, match provider, model, extraction and resource caps; preserve each run's manifests/snapshots and record actual consumption plus unresolved exposure. Human judgments must assess useful contributions, discovered needs, wasted queries/fetches, standalone-request fidelity, constraint satisfaction, relevant reuse and obsolete report statements. Replay is not a fair unrestricted-web benchmark.
+
+No human-judged corpus or benchmark outcomes are claimed yet.
 
 The course submission also needs the report of at most eight pages, a 5–8-minute live demonstration video, actual team work division, dependency/source credits and an AI-use declaration. A recorded fixture replay is a regression aid, not a substitute for a live demo.
 

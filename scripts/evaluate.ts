@@ -1,0 +1,190 @@
+/**
+ * Frozen-corpus retrieval ablation over one shared index.
+ *
+ * Compares three retrieval methods on the same human-judged passage pool:
+ * BM25 with the query, anchored lexical pseudo-relevance feedback, and PRF
+ * followed by MMR@10 diversification. Reporting is retrieval-only:
+ * unjudged passages count as zero, `pooledRecall10` is recall relative to the
+ * judged pool (never recall over the web), the heuristic PRF is not the live
+ * contextual model assessment, and nothing here evaluates research policy,
+ * allocation, conversation or report quality.
+ *
+ * Dataset (JSON), matching src/types.ts Passage:
+ *   { passages: Passage[], queries: [{ id, text, judgments: { passageId: 0|1|2|3 } }] }
+ * Exact-text aliases are rejected, not folded: deduplicate them and re-verify
+ * the human judgments for the retained IDs. Near variants stay distinct.
+ *
+ * CLI: tsx scripts/evaluate.ts <judged-dataset.json>
+ * Prints the evaluation JSON to stdout; any error goes to stderr with exit 1.
+ * Judgments are human input only; this tool fabricates no results.
+ */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { PassageIndex, concepts, expandedQuery, mmr } from '../src/core-ir.js';
+import type { Branch, Passage, SearchHit } from '../src/types.js';
+
+export type Grade = 0 | 1 | 2 | 3;
+export interface JudgedQuery { id: string; text: string; judgments: Record<string, Grade>; }
+export interface Dataset { passages: Passage[]; queries: JudgedQuery[]; }
+export interface Metrics {
+  p5: number; p10: number; ndcg10: number; pooledRecall10: number; redundancy10: number;
+}
+export type Method = 'bm25' | 'lexicalPRF' | 'prfMMR';
+export const METHODS: readonly Method[] = ['bm25', 'lexicalPRF', 'prfMMR'];
+
+function fail(message: string): never { throw new Error(message); }
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Validate a judged dataset without inventing, folding or regrading any judgment. */
+export function parseDataset(value: unknown): Dataset {
+  if (!isRecord(value)) fail('Dataset must be a JSON object');
+  const { passages, queries } = value;
+  if (!Array.isArray(passages) || !Array.isArray(queries)) fail('Dataset requires passages[] and queries[]');
+  if (!passages.length || !queries.length) fail('Dataset passages[] and queries[] must be non-empty');
+  const passageIds = new Set<string>();
+  const parsedPassages = passages.map((raw, at): Passage => {
+    if (!isRecord(raw)) fail(`passages[${at}] must be an object`);
+    const { id, snapshotId, text, start, end, duplicateGroup } = raw;
+    if (typeof id !== 'string' || !id.trim()) fail(`passages[${at}].id must be a non-blank string`);
+    if (passageIds.has(id)) fail(`passages[${at}] repeats passage id ${JSON.stringify(id)}`);
+    if (typeof snapshotId !== 'string' || !snapshotId.trim()) fail(`passage ${id} requires a non-blank snapshotId`);
+    if (typeof text !== 'string' || !text.trim()) fail(`passage ${id} requires non-blank text`);
+    if (typeof start !== 'number' || typeof end !== 'number' || !Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) || start < 0 || end <= start || end - start !== text.length) {
+      fail(`passage ${id} requires safe-integer UTF-16 offsets with end - start === text.length`);
+    }
+    if (duplicateGroup !== undefined && (typeof duplicateGroup !== 'string' || !duplicateGroup.trim())) {
+      fail(`passage ${id} duplicateGroup must be a non-blank string when present`);
+    }
+    passageIds.add(id);
+    // duplicateGroup is derived by the shared index; an input value is only schema-checked.
+    return { id, snapshotId, start, end, text, duplicateGroup: duplicateGroup ?? id };
+  });
+  const queryIds = new Set<string>();
+  const parsedQueries = queries.map((raw, at): JudgedQuery => {
+    if (!isRecord(raw)) fail(`queries[${at}] must be an object`);
+    const { id, text, judgments } = raw;
+    if (typeof id !== 'string' || !id.trim()) fail(`queries[${at}].id must be a non-blank string`);
+    if (queryIds.has(id)) fail(`queries[${at}] repeats query id ${JSON.stringify(id)}`);
+    if (typeof text !== 'string' || !text.trim()) fail(`query ${id} requires non-blank text`);
+    if (!isRecord(judgments)) fail(`query ${id} requires judgments as { passageId: 0|1|2|3 }`);
+    const grades: Record<string, Grade> = Object.create(null);
+    for (const [passageId, grade] of Object.entries(judgments)) {
+      if (!passageIds.has(passageId)) fail(`query ${id} grades passage ${passageId}, which is not in the corpus`);
+      if (typeof grade !== 'number' || !Number.isInteger(grade) || grade < 0 || grade > 3) {
+        fail(`query ${id} grade for passage ${passageId} must be an integer 0..3`);
+      }
+      grades[passageId] = grade as Grade;
+    }
+    queryIds.add(id);
+    return { id, text, judgments: grades };
+  });
+  return { passages: parsedPassages, queries: parsedQueries };
+}
+
+/** Per-query metrics for one ranking. P@5 and P@10 use fixed denominators 5 and 10. */
+export function metrics(hits: SearchHit[], judgments: Record<string, number>): Metrics {
+  const grade = (hit: SearchHit): number =>
+    Object.hasOwn(judgments, hit.passage.id) ? (judgments[hit.passage.id] ?? 0) : 0;
+  const relevant = (hit: SearchHit): boolean => grade(hit) > 0;
+  const top = hits.slice(0, 10);
+  const gain = (grades: number[]): number =>
+    grades.reduce((sum, value, index) => sum + (2 ** value - 1) / Math.log2(index + 2), 0);
+  const ideal = gain(Object.values(judgments).sort((a, b) => b - a).slice(0, 10));
+  const positives = Object.values(judgments).filter(value => value > 0).length;
+  const groups = new Set(top.map(hit => hit.passage.duplicateGroup || hit.passage.id));
+  return {
+    p5: hits.slice(0, 5).filter(relevant).length / 5,
+    p10: top.filter(relevant).length / 10,
+    ndcg10: ideal > 0 ? gain(top.map(grade)) / ideal : 0,
+    pooledRecall10: positives > 0 ? top.filter(relevant).length / positives : 0,
+    redundancy10: top.length > 0 ? 1 - groups.size / top.length : 0,
+  };
+}
+
+const rankIds = (hits: SearchHit[]): string[] => hits.slice(0, 10).map(hit => hit.passage.id);
+const mean = (values: number[]): number => values.reduce((sum, value) => sum + value, 0) / values.length;
+
+/** Score all methods on one index. Throws before scoring if the index folds exact-text aliases. */
+export function evaluate(dataset: Dataset) {
+  const index = new PassageIndex();
+  index.add(dataset.passages);
+  const stats = index.stats;
+  if (stats.aliases > 0) {
+    fail(`${stats.aliases} exact-text alias(es) share a body with a canonical passage. ` +
+      'Deduplicate exact-text aliases and re-verify the human judgments for the retained IDs; ' +
+      'grades are never folded or guessed automatically, and near variants must stay distinct.');
+  }
+  const perQuery = dataset.queries.map(query => {
+    const branch: Branch = {
+      id: query.id, objectiveId: query.id, question: query.text, anchor: query.text,
+      origin: 'initial', introducing: [], priority: 1, status: 'active', needs: [],
+      aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+    };
+    const bm25 = index.rank(query.text, 30);
+    // No qrel leakage: PRF concepts come only from the ranked corpus pool and the
+    // anchor. This lexical ablation never reads query.judgments or any human grade.
+    const lexicalPRF = index.rank(expandedQuery(query.text, concepts(bm25, branch, [], 12, index)), 30);
+    const prfMMR = mmr(lexicalPRF, 10);
+    return {
+      queryId: query.id,
+      text: query.text,
+      judgedPositive: Object.values(query.judgments).filter(grade => grade > 0).length,
+      rankings: { bm25: rankIds(bm25), lexicalPRF: rankIds(lexicalPRF), prfMMR: rankIds(prfMMR) },
+      metrics: {
+        bm25: metrics(bm25, query.judgments),
+        lexicalPRF: metrics(lexicalPRF, query.judgments),
+        prfMMR: metrics(prfMMR, query.judgments),
+      },
+    };
+  });
+  const macro = {} as Record<Method, Metrics>;
+  for (const method of METHODS) {
+    const rows = perQuery.map(query => query.metrics[method]);
+    macro[method] = {
+      p5: mean(rows.map(row => row.p5)),
+      p10: mean(rows.map(row => row.p10)),
+      ndcg10: mean(rows.map(row => row.ndcg10)),
+      pooledRecall10: mean(rows.map(row => row.pooledRecall10)),
+      redundancy10: mean(rows.map(row => row.redundancy10)),
+    };
+  }
+  return {
+    scope: {
+      corpus: 'one frozen index shared by all three methods; every query is judged over the same pool',
+      unjudged: 'passages without a human grade count as zero relevance',
+      recall: 'pooledRecall10 is relative to the human-judged pool, not recall over the web',
+      lexicalPRF: 'anchored corpus-derived lexical feedback, not the live contextual model assessment',
+      excluded: 'this ablation does not evaluate research policy, allocation, conversation or report quality',
+      judgments: 'all judgments are human-supplied input; this tool fabricates no results',
+    },
+    methods: METHODS,
+    corpus: {
+      passages: dataset.passages.length,
+      queries: dataset.queries.length,
+      zeroPositiveQrelQueries: perQuery.filter(query => query.judgedPositive === 0).length,
+      index: stats,
+    },
+    perQuery,
+    macro,
+  };
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';
+if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) {
+  const filename = process.argv[2];
+  if (!filename) {
+    console.error('Usage: tsx scripts/evaluate.ts <judged-dataset.json>');
+    process.exitCode = 1;
+  } else {
+    try {
+      const value: unknown = JSON.parse(readFileSync(filename, 'utf8'));
+      process.stdout.write(`${JSON.stringify(evaluate(parseDataset(value)), null, 2)}\n`);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  }
+}
