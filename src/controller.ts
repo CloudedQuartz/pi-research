@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
+import { expandedQuery } from './core-ir.js';
 import type { ActionKind, Branch, Investigation, SourceCandidate } from './types.js';
 
 export interface ProposedAction {
   branchId: string; kind: ActionKind; query?: string; candidateId?: string;
   score: number; reason: string;
 }
-export interface ControllerOptions { mode?: 'adaptive' | 'round-robin'; costs?: Partial<Record<ActionKind, number>>; }
+export interface ControllerOptions { mode?: 'adaptive' | 'round-robin'; costs?: Partial<Record<ActionKind, number>>; expand?: boolean; }
 const normalize = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const terms = (text: string) => new Set(normalize(text).split(' ').filter(Boolean));
 function overlap(a: Set<string>, b: Set<string>): number {
@@ -18,11 +19,28 @@ export function unmetMass(branch: Branch): number {
   return total ? branch.needs.reduce((sum, need) => sum + need.weight * (1 - need.status), 0) / total : 0;
 }
 
-export function retrievalKey(state: Investigation, branch: Branch): string {
+/** One query construction path for routing and the actual ranking operation. */
+export function rankingQuery(state: Investigation, branch: Branch, expand = true): string | Record<string, number> {
+  const anchor = branch.anchor.trim() || branch.question;
+  if (!expand) return anchor;
+  try {
+    const candidates = state.concepts.filter(c => c.branchId === branch.id &&
+      (c.classification === undefined || c.classification === 'alias' || c.classification === 'branch'));
+    if (!candidates.length) return anchor;
+    const latest = new Map<string, string>();
+    for (const f of state.feedback) if (f.kind === 'useful' || f.kind === 'irrelevant') latest.set(f.targetId, f.kind);
+    const query = expandedQuery(anchor, candidates, state.passages.filter(p => latest.get(p.id) === 'irrelevant'));
+    return Object.keys(query).length ? query : anchor;
+  } catch { return anchor; }
+}
+
+export function retrievalKey(state: Investigation, branch: Branch, expand = true): string {
+  const query = rankingQuery(state, branch, expand);
+  const canonicalQuery = typeof query === 'string' ? query : Object.entries(query).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   return createHash('sha256').update(JSON.stringify({ objective: state.activeObjectiveId, corpus: state.corpusRevision,
-    anchor: branch.anchor, aliases: branch.aliases,
-    concepts: state.concepts.filter(c => c.branchId === branch.id && (c.classification === 'alias' || c.classification === 'branch')).map(c => c.id).sort(),
-    feedback: state.feedback.length })).digest('hex');
+    question: branch.question, anchor: branch.anchor,
+    needs: branch.needs.map(n => ({ id: n.id, question: n.question })),
+    query: canonicalQuery, feedback: state.feedback.length })).digest('hex');
 }
 
 /** Each web-query variant is tied to an objective need or a passage-derived alias. */
@@ -61,7 +79,7 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
     };
     const utility = (kind: ActionKind, novelty: number) => branch.priority * deficit * probability(kind) * novelty / costs[kind];
     const explain = (kind: ActionKind, novelty: number) => `priority=${branch.priority.toFixed(3)}, unmet=${deficit.toFixed(3)}, useful-yield estimate=${probability(kind).toFixed(3)}, novelty=${novelty.toFixed(3)}, estimated scheduling cost=${costs[kind].toFixed(3)} relative units (not money)`;
-    if (state.passages.length && branch.retrievalKey !== retrievalKey(state, branch)) proposals.push({
+    if (state.passages.length && branch.retrievalKey !== retrievalKey(state, branch, options.expand ?? true)) proposals.push({
       branchId: branch.id, kind: 'retrieve', query: branch.anchor, score: utility('retrieve', 1),
       reason: `Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before acquisition. ${explain('retrieve', 1)}`,
     });
