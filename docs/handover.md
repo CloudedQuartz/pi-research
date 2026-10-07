@@ -1,6 +1,31 @@
 # Implementation handover
 
-> Historical handover at commit `6d65054`. Implementation has since resumed; the status and missing-file lists below describe that checkpoint. Consult the current README, repository and commit history before reusing these assumptions.
+## Current checkpoint — implementation resumed
+
+The full approved scope remains [project-plan.md](project-plan.md); the application is **not yet complete**. Do not repeat scaffolding or replace unfinished owners because of stalls.
+
+Recent verified milestones:
+
+- `e9b7000`: allowance ledger, investigation-wide writer exclusion, terminal interrupted requests, conservative residual accounting. Delegated offline checks: 17 accounting + 21 ownership/recovery assertions.
+- `90a65e9`: positional weighted BM25, distinct-document DF, surface phrase matching, corpus-based MMR and ordinary duplicate-group suppression. Delegated offline checks: 19 IR regressions plus the shared-interface suite.
+- `eb3bda1`: validated explicit coverage updates, persisted current passage witnesses, changed-context local reuse for addressed needs, report witness inclusion, and negative-feedback invalidation. Delegated interface suite: 10 cases; full-project typecheck passed.
+- Acquisition and immutable snapshot/citation fixes are committed in `1776157` and `f83c753`. Their checks were offline, not real-provider or real-socket end-to-end trials.
+
+Uncommitted integration work remains in `src/engine.ts`, `src/extension.ts` and `test/`. Package extension registration is still disabled. The real extension passed seven delegated lifecycle cases with fake Pi/model hosts, but installed-host loading and live nested discovery remain unverified.
+
+Active file ownership at this checkpoint:
+
+- Implement `d0cdaad7-5f1d-4e7`: only `src/engine.ts`; finishing changed-key reassessment, explicit coverage updates independent of novel yield, and bounded separately labelled near-duplicate context. PRF uses ordinary group-distinct representatives only.
+- Implement `b42d1992-d6ce-43a`: only new `test/core-ir.test.ts`; compact persistent offline regressions.
+- Parent owns adapter integration and commits. Shared coverage interfaces are already committed; do not overwrite them.
+
+Useful existing offline checks: `/tmp/core-ir.test.ts`, `/tmp/allowance-check.mts`, `/tmp/allowance-recovery-check.mts`, `/tmp/verify-mmr-parent.test.ts`, `/tmp/ext-verify/extension-auth.test.mts`, and `/tmp/engine-smoke/smoke.ts`. The older engine smoke passed before investigation-wide claim exclusion; its sequential fixtures need explicit finish/recovery before another request claims the same investigation. Do not relax the production invariant to pass fixtures. No green post-reassessment engine smoke has been recorded at this checkpoint.
+
+Next: finish and verify the current engine owner; commit it separately; verify/register the adapter; promote evaluation tooling with actual human judgments. Paid live calls, global configuration changes, human benchmark results and submission details remain unauthorized or unresolved. Keep model-rate estimates distinct from provider-reported costs, and answer coverage distinct from factual confidence.
+
+## Historical checkpoint
+
+> The remaining sections describe commit `6d65054`, not the current filesystem. Preserve them as history; use the current checkpoint above and repository state when resuming.
 
 ## Start here
 
