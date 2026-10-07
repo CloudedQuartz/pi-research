@@ -77,8 +77,15 @@ export interface Limits {
 }
 export type Resource = Exclude<keyof Limits, 'elapsedMs'>;
 export type Usage = Partial<Record<Resource, number>>;
-export interface ModelUsage { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens?: number; cost?: number; }
-export interface ModelResponse { value: unknown; usage?: ModelUsage; }
+export interface ModelUsage {
+  input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens?: number;
+  cost?: number; costKind?: 'model-estimate' | 'provider-reported';
+}
+export interface ModelResponse {
+  value: unknown; usage?: ModelUsage;
+  /** Explicitly complete token accounting; absent means unresolved, not confirmed zero. */
+  usageComplete?: boolean;
+}
 export interface DiscoveryResult {
   responseId?: string; query: string; provider: string; rankingKind: RankingKind;
   results: { url: string; title: string; snippet: string; rank?: number }[];
