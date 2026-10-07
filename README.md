@@ -12,7 +12,7 @@ Implementation has resumed. Committed components include shared contracts, struc
 
 - Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. The evaluation CLI is available; the replay demo is still being integrated.
+- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. The evaluation CLI and offline replay demo are available.
 - `npm test` runs the permanent offline IR, engine, SDK/package-loading and evaluation regressions. `test:ir`, `test:engine`, `test:sdk` and `test:evaluate` can also run separately. No real model or network calls are made.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
@@ -55,6 +55,12 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 - Search invocations, page-fetch attempts, HTTP attempts and model usage are separate counters. Provider-hidden operations and unreported costs remain unknown.
 - Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation. The adapter marks incomplete/unreported usage explicitly; offline tests exercise conservative unknown-usage propagation. Pi-native money figures are model-rate estimates, not confirmed invoices.
 - Choose non-personal research topics and screen sources before distributing corpora; fetched public pages can contain incidental personal metadata. No privacy-filtering guarantee is claimed.
+
+## Offline replay demo
+
+`npm run demo` exercises the real engine, index, immutable store and SQLite ledger with synthetic `example.org` sources and fake model/discovery/acquisition hosts. It prints source → TF-IDF candidate → branch/alias → selected action, BM25 contributions, follow-up corpus reuse, revised citation spans and simulated-operation counters. Its checks fail with a nonzero exit code. No real model or network calls are made; HTTP transport is not exercised. Random UUIDs can change tied action order; the canonicalized behavior digest is stable.
+
+This three-source replay is a reproducibility aid, **not a live web demo or retrieval benchmark**. For the course video, use an explicitly authorized live provider/model, show the actual intermediate IR trace and follow-up, inspect a citation, and present measured human evaluation plus a real limitation. The proposed seven-minute sequence is in [the plan](docs/project-plan.md#9-demonstration-that-exposes-the-contribution).
 
 ## Evaluation and submission
 
