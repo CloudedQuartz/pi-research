@@ -22,7 +22,7 @@ export function makeModelHost(ctx: ExtensionToolContext, observe: (usage: Usage)
         messages: [{ role: 'user', content: JSON.stringify({ task, input }), timestamp: Date.now() }],
       }, { signal: options.signal, maxTokens: options.maxOutputTokens }).result();
       observe(response.usage);
-      const usage: ModelUsage = { input: response.usage.input, output: response.usage.output, cacheRead: response.usage.cacheRead, cacheWrite: response.usage.cacheWrite, cost: response.usage.cost.total };
+      const usage: ModelUsage = { input: response.usage.input, output: response.usage.output, cacheRead: response.usage.cacheRead, cacheWrite: response.usage.cacheWrite, totalTokens: response.usage.totalTokens, cost: response.usage.cost.total };
       if (['error', 'aborted', 'length', 'toolUse', 'deferred', 'pending'].includes(response.stopReason)) {
         throw new ModelCallError(response.errorMessage ?? `Model stopped with ${response.stopReason}`, usage);
       }

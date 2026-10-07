@@ -77,7 +77,7 @@ export interface Limits {
 }
 export type Resource = Exclude<keyof Limits, 'elapsedMs'>;
 export type Usage = Partial<Record<Resource, number>>;
-export interface ModelUsage { input: number; output: number; cacheRead: number; cacheWrite: number; cost?: number; }
+export interface ModelUsage { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens?: number; cost?: number; }
 export interface ModelResponse { value: unknown; usage?: ModelUsage; }
 export interface DiscoveryResult {
   responseId?: string; query: string; provider: string; rankingKind: RankingKind;

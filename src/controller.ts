@@ -52,12 +52,18 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
     const deficit = unmetMass(branch);
     const probability = (kind: ActionKind) => {
       const history = branch.stats[kind];
-      return (1 + (history?.successful ?? 0)) / (2 + (history?.completed ?? 0));
+      if (history?.completed) return (1 + history.successful) / (2 + history.completed);
+      const pooled = state.branches.reduce((sum, b) => ({
+        completed: sum.completed + (b.stats[kind]?.completed ?? 0),
+        successful: sum.successful + (b.stats[kind]?.successful ?? 0),
+      }), { completed: 0, successful: 0 });
+      return (1 + pooled.successful) / (2 + pooled.completed);
     };
     const utility = (kind: ActionKind, novelty: number) => branch.priority * deficit * probability(kind) * novelty / costs[kind];
+    const explain = (kind: ActionKind, novelty: number) => `priority=${branch.priority.toFixed(3)}, unmet=${deficit.toFixed(3)}, useful-yield estimate=${probability(kind).toFixed(3)}, novelty=${novelty.toFixed(3)}, estimated cost=${costs[kind].toFixed(3)}`;
     if (state.passages.length && branch.retrievalKey !== retrievalKey(state, branch)) proposals.push({
       branchId: branch.id, kind: 'retrieve', query: branch.anchor, score: utility('retrieve', 1),
-      reason: 'Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before spending on acquisition.',
+      reason: `Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before acquisition. ${explain('retrieve', 1)}`,
     });
     const unread = state.candidates.filter(c => c.status === 'unread').map(c => ({ candidate: c, relevance: candidateRelevance(c, branch) })).filter(c => c.relevance > 0);
     unread.sort((a, b) => b.relevance - a.relevance ||
@@ -65,12 +71,12 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
       a.candidate.id.localeCompare(b.candidate.id));
     const candidate = unread[0];
     if (candidate) proposals.push({ branchId: branch.id, kind: 'fetch', candidateId: candidate.candidate.id,
-      score: utility('fetch', candidate.relevance), reason: 'A relevant discovered source remains unread; metadata relevance estimates usefulness, not factual support.' });
+      score: utility('fetch', candidate.relevance), reason: `A relevant discovered source remains unread; metadata relevance estimates usefulness, not factual support. ${explain('fetch', candidate.relevance)}` });
     const query = nextQuery(branch, state.actions.flatMap(a => a.kind === 'search' && a.query ? [a.query] : []));
     if (branch.status === 'active' && query) {
       const novelty = branch.queries.length ? 1 - Math.max(...branch.queries.map(q => overlap(terms(q), terms(query)))) : 1;
       proposals.push({ branchId: branch.id, kind: 'search', query, score: utility('search', novelty),
-        reason: `Unmet answer needs remain; grounded query novelty ${novelty.toFixed(3)}. Search cost estimates include source evaluation.` });
+        reason: `Unmet answer needs remain; grounded query. Search cost estimates include source evaluation. ${explain('search', novelty)}` });
     }
   }
   // Local-first is an eligibility policy, not a fabricated zero external cost.
