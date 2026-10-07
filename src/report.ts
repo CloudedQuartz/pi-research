@@ -24,14 +24,22 @@ export function validateSpan(span: Span, passage: Passage, snapshot: Snapshot): 
   }
 }
 
+/** Only current, non-rejected branches and the latest passage feedback authorize evidence. */
+export function reportEvidence(state: Investigation, snapshots: Snapshot[]): Passage[] {
+  const visible = new Set(snapshots.filter(s => state.snapshotIds.includes(s.id)).map(s => s.id));
+  const branches = new Set(state.branches.filter(b => b.objectiveId === state.activeObjectiveId && b.status !== 'rejected' && b.status !== 'archived').map(b => b.id));
+  const latestFeedback = new Map<string, 'useful' | 'irrelevant'>();
+  for (const f of state.feedback) if (f.kind === 'useful' || f.kind === 'irrelevant') latestFeedback.set(f.targetId, f.kind);
+  const ids = new Set(state.contributions.filter(c => c.objectiveId === state.activeObjectiveId && branches.has(c.branchId) && latestFeedback.get(c.passageId) !== 'irrelevant').map(c => c.passageId));
+  return state.passages.filter(p => ids.has(p.id) && visible.has(p.snapshotId));
+}
+
 /** Invalid or unavailable synthesis becomes an explicitly extractive outline. */
 export function buildReport(state: Investigation, snapshots: Snapshot[], modelValue?: unknown): Report {
   const objective = state.objectives.find(o => o.id === state.activeObjectiveId);
   if (!objective) throw new Error('Cannot report without an objective');
   const visible = new Map(snapshots.filter(s => state.snapshotIds.includes(s.id)).map(s => [s.id, s]));
-  const rejected = new Set(state.feedback.filter(f => f.kind === 'irrelevant').map(f => f.targetId));
-  const allowedIds = new Set(state.contributions.filter(c => c.objectiveId === objective.id && !rejected.has(c.passageId)).map(c => c.passageId));
-  const evidence = new Map(state.passages.filter(p => allowedIds.has(p.id) && visible.has(p.snapshotId)).map(p => [p.id, p]));
+  const evidence = new Map(reportEvidence(state, snapshots).map(p => [p.id, p]));
   const spanFor = (id: string): Span => {
     const passage = evidence.get(id);
     if (!passage) throw new Error('Citation was not in the current evidence packet');
