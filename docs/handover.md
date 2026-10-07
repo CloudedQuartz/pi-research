@@ -62,7 +62,7 @@ The interrupted workers did not deliver these modules. Check the filesystem agai
 - `npm install --package-lock-only --ignore-scripts` synchronized the cleaned manifest and reported zero known vulnerabilities for that installation. This is not a general security audit.
 - Runnable extension registration and test/demo/evaluation scripts were removed because their referenced files did not exist. Restore each only when its implementation exists.
 - No implementation behavior tests were run or written. No paid live research calls were made.
-- An independent configured Review worker was asked to inspect the shared modules. Do not claim its review passed unless its actual result is available; it was still running at handover preparation.
+- The configured Review worker subsequently completed: no blocking findings within the four shared modules; project and standalone TypeScript checks passed. Its provider-metadata finding concerns the earlier implementation and was already addressed during cleanup. It performed no behavior tests and did not verify the application end to end.
 
 ## Resume in dependency order
 
@@ -74,6 +74,8 @@ Remaining areas to verify before trusting runtime inputs:
 
 - Citation support is only mechanical; the missing contextual evidence assessment must establish semantic relevance.
 - Domain IDs, snapshot URLs and all rehydrated state require validation at their persistence boundary. No immutable-store implementation exists yet.
+- The reviewer noted that an invalid cited snapshot URL aborts report construction outside the model fallback path. Keep fail-closed behavior or explicitly design safe degradation; acquisition/storage must guarantee valid public HTTP(S) URLs.
+- The reviewer also noted that `irrelevant` feedback currently filters passage IDs only. Define evidence feedback as passage-targeted, or explicitly propagate other target kinds when implementing the controller; do not silently accept ineffective feedback.
 
 The shared contracts/adapters are committed as their own unit after a bounded TypeScript check; this does not make the system runnable. Apply subsequent review fixes in focused commits.
 
