@@ -7,7 +7,8 @@
     "node": ">=24.13.1"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:ir": "tsx test/core-ir.test.ts"
   },
   "keywords": [
     "pi-package",

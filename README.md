@@ -12,7 +12,8 @@ Implementation has resumed. Committed components include shared contracts, struc
 
 - Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
 - Run `npm ci` to install the pinned dependencies.
-- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. No tests, demo or evaluation commands are registered until their implementations exist.
+- `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. Demo and evaluation commands remain unregistered until their implementations exist.
+- `npm run test:ir` runs deterministic offline IR regressions; it makes no model or network calls.
 - The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
 
 Package extension registration remains disabled pending integration acceptance. Explicit loading on the installed Pi host is still unverified:
