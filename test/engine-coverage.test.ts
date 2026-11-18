@@ -5,18 +5,21 @@
  * A same-key partial->adequate update yields 0 with one row; B a changed-key
  * zero-deficit contradiction earns yield without downgrading; C an explicit
  * downgrade reopens coverage with its witness; D one real PRF follow-up then a
- * stable key with no repeats. Run: npx tsx test/engine-coverage.test.ts
+ * stable key with no repeats; E fetch-allowance exhaustion truncates an episode
+ * without skipping evaluation or certifying saturation.
+ * Run: npx tsx test/engine-coverage.test.ts
  */
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ResearchEngine, newInvestigation } from '../src/engine.js';
+import type { EngineOptions } from '../src/engine.js';
 import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
-import type { EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
+import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
 const check = (label: string, condition: boolean, detail = ''): void => {
@@ -44,6 +47,7 @@ interface Ctx {
   commits: number; modelCalls: Record<string, number>; assessInputs: any[];
   assess: (input: any) => unknown;
   acquire: (url: string) => Snapshot;
+  discover: (query: string) => Promise<DiscoveryResult>;
 }
 
 function fixtureSnapshot(store: ObjectStore, url: string, text: string): Snapshot {
@@ -58,11 +62,11 @@ function fixtureSnapshot(store: ObjectStore, url: string, text: string): Snapsho
   return snapshot;
 }
 
-function createCtx(): Ctx {
+function createCtx(limits = LIMITS): Ctx {
   const root = mkdtempSync(join(tmpdir(), 'engine-coverage-perm-'));
   const store = new ObjectStore(root);
   const ledger = new Ledger(join(root, 'ledger.sqlite'));
-  const allowanceId = ledger.authorize(LIMITS, SYNTHESIS, `auth-${randomUUID()}`);
+  const allowanceId = ledger.authorize(limits, SYNTHESIS, `auth-${randomUUID()}`);
   const requestId = randomUUID();
   const state = newInvestigation({ id: `inv-${randomUUID()}`, allowanceId, storageRoot: root, question: 'Quantum foxberry taxonomy survey methods' });
   ledger.authorizeRequest({ id: requestId, allowanceId, investigationId: state.id, sessionId: `session-${requestId}`,
@@ -70,10 +74,11 @@ function createCtx(): Ctx {
   ledger.claimRequest(requestId, OWNER);
   return { root, store, ledger, requestId, state, commits: 0, modelCalls: {}, assessInputs: [],
     assess: () => ({ relevantPassageIds: [], contributions: [] }),
-    acquire: url => fixtureSnapshot(store, url, longParagraph('beta')) };
+    acquire: url => fixtureSnapshot(store, url, longParagraph('beta')),
+    discover: async query => ({ query, provider: 'brave', rankingKind: 'ranked', results: [] }) };
 }
 
-function engineFor(ctx: Ctx, state: Investigation = ctx.state): ResearchEngine {
+function engineFor(ctx: Ctx, state: Investigation = ctx.state, options: EngineOptions = { maxActions: 12 }): ResearchEngine {
   const host: EngineHost = {
     model: {
       async complete(task, input) {
@@ -83,17 +88,17 @@ function engineFor(ctx: Ctx, state: Investigation = ctx.state): ResearchEngine {
         throw new Error(`unexpected model task ${task}`);
       },
     },
-    discover: async query => ({ query, provider: 'brave', rankingKind: 'ranked', results: [] }), acquire: async url => ctx.acquire(url),
+    discover: async query => ctx.discover(query), acquire: async url => ctx.acquire(url),
     commit: state => { ctx.state = state; ctx.commits += 1; },
     isCurrent: () => true,
     progress: () => { /* progress not under test */ },
   };
   return new ResearchEngine({ state, ledger: ctx.ledger, store: ctx.store, host, requestId: ctx.requestId,
-    owner: OWNER, signal: new AbortController().signal, options: { maxActions: 12 } });
+    owner: OWNER, signal: new AbortController().signal, options });
 }
 
-function makeFixture(seed: string) {
-  const ctx = createCtx();
+function makeFixture(seed: string, limits = LIMITS) {
+  const ctx = createCtx(limits);
   const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}`, longParagraph(seed));
   const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
   const branch: Investigation['branches'][number] = {
@@ -233,9 +238,62 @@ async function casePrfFollowUp(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+// ------------- E: fetch-allowance exhaustion truncates the episode, not the evaluation
+interface ExhaustedEpisode { ctx: Ctx; final: Investigation; }
+
+/**
+ * Two credited fetches are all the allowance admits: the first fails at DNS (still
+ * accounted), the second commits passages, and a third eligible source must never be
+ * attempted. The episode must then evaluate committed evidence instead of unwinding.
+ */
+async function runExhaustedEpisode(seed: string, assess: (input: any) => unknown): Promise<ExhaustedEpisode> {
+  const f = makeFixture(seed, { ...LIMITS, fetches: 2 });
+  const traffic = [
+    `https://dns-failure.example.org/${seed}`,
+    `https://committed.example.org/${seed}`,
+    `https://never-attempted.example.org/${seed}`,
+  ];
+  f.ctx.assess = assess;
+  f.ctx.discover = async query => ({ query, provider: 'brave', rankingKind: 'ranked',
+    results: traffic.map((url, rank) => ({ url, title: `result ${rank}`, snippet: `quantum foxberry taxonomy ${seed}`, rank })) });
+  f.ctx.acquire = url => {
+    if (url.includes('dns-failure')) throw new Error('getaddrinfo ENOTFOUND dns-failure.example.org');
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-source`));
+  };
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1 }).run();
+  return { ctx: f.ctx, final };
+}
+
+async function caseEpisodeFetchExhaustion(): Promise<void> {
+  const zero = await runExhaustedEpisode('truncated-zero', () => ({ relevantPassageIds: [], contributions: [] }));
+  try {
+    const search = zero.final.actions.filter(a => a.kind === 'search');
+    const fetches = zero.final.actions.filter(a => a.kind === 'fetch');
+    const branch = zero.final.branches[0]!;
+    check('E truncated episode still evaluates committed evidence once', zero.ctx.modelCalls.assess === 1, `assess=${zero.ctx.modelCalls.assess}`);
+    check('E truncated episode closes as completed (not interrupted)', search.length === 1 && search[0]!.status === 'completed', JSON.stringify(search.map(a => a.status)));
+    check('E action error states the fetch-allowance truncation', /fetch allowance exhausted/.test(search[0]!.error ?? '') && /2\/3/.test(search[0]!.error ?? ''), String(search[0]?.error));
+    check('E no fetch is attempted without credit', fetches.length === 2, `fetches=${fetches.length}`);
+    check('E zero-yield truncation earns no saturation credit or cooldown', branch.zeroYieldEpisodes === 0 && branch.status === 'active', `zeroYield=${branch.zeroYieldEpisodes} status=${branch.status}`);
+  } finally { retire(zero.ctx); }
+
+  const productive = await runExhaustedEpisode('truncated-yield', input => {
+    const passageId = input.passages[0].passageId as string;
+    return { relevantPassageIds: [passageId], contributions: [
+      { passageId, needId: input.branch.needs[0].id as string, role: 'support', status: 1, assessment: 'committed evidence supports the need' }] };
+  });
+  try {
+    const search = productive.final.actions.filter(a => a.kind === 'search');
+    const branch = productive.final.branches[0]!;
+    check('E assessed yield from committed evidence reaches the truncated episode', search.length === 1 && search[0]!.yield === 1, JSON.stringify(search.map(a => [a.status, a.yield])));
+    check('E search credit records one completed, successful episode', branch.stats.search?.completed === 1 && branch.stats.search?.successful === 1, JSON.stringify(branch.stats.search));
+  } finally { retire(productive.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
+  await caseEpisodeFetchExhaustion();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

@@ -603,6 +603,14 @@ export class ResearchEngine {
     return attempted;
   }
 
+  /**
+   * Whether the work lane can still reserve one fetch. Exhaustion is not a StopRun
+   * inside an episode: committed evidence is evaluated before dispatch stops.
+   */
+  private hasFetchCredit(): boolean {
+    return (this.ledger.snapshot(this.state.allowanceId).lanes.work.remaining.fetches ?? 0) >= 1;
+  }
+
   private async searchEpisode(proposal: ProposedAction): Promise<void> {
     const query = proposal.query;
     if (!query) throw new StopRun('Discovery proposal carried no query.');
@@ -672,14 +680,19 @@ export class ResearchEngine {
       .slice(0, this.options.maxFetchesPerEpisode);
     let attempts = 0;
     let ingested = 0;
+    let truncated = false;
     for (const candidate of eligible) {
+      // Never dispatch a fetch without credit: the episode closes truncated and still
+      // evaluates the evidence already committed by its successful attempts.
+      if (!this.hasFetchCredit()) { truncated = true; break; }
       const outcome = await this.fetchCandidate(candidate, { nextAction: proposal });
       attempts += 1;
       if (outcome === 'fetched') ingested += 1;
     }
 
     const evaluation = await this.evaluateBranch(proposal.branchId);
-    const saturated = evaluation.ok && !(attempts > 0 && ingested === 0);
+    // A truncated episode did not explore its planned sources: it can never certify saturation.
+    const saturated = evaluation.ok && !truncated && !(attempts > 0 && ingested === 0);
     this.commit(draft => {
       const branch = draft.branches.find(b => b.id === proposal.branchId);
       const action = draft.actions.find(a => a.id === actionId);
@@ -687,7 +700,10 @@ export class ResearchEngine {
         action.status = 'completed';
         action.completedAt = now();
         action.yield = evaluation.yield;
-        if (!evaluation.ok) action.error = 'contextual assessment failed';
+        const notes: string[] = [];
+        if (!evaluation.ok) notes.push('contextual assessment failed');
+        if (truncated) notes.push(`fetch allowance exhausted; episode truncated after ${attempts}/${eligible.length} planned source attempt(s)`);
+        if (notes.length) action.error = short(notes.join('; '));
       }
       if (branch) {
         if (evaluation.yield > 0) { branch.zeroYieldEpisodes = 0; if (branch.status === 'cooldown') branch.status = 'active'; }
@@ -699,7 +715,7 @@ export class ResearchEngine {
       }
       ResearchEngine.credit(draft, proposal.branchId, 'search', evaluation.yield);
     });
-    this.progress(`Episode completed: ${ingested}/${attempts} sources ingested, ${evaluation.yield} new contribution(s).`);
+    this.progress(`Episode ${truncated ? 'truncated' : 'completed'}: ${ingested}/${attempts} sources ingested, ${evaluation.yield} new contribution(s).`);
     this.noteEvaluation(evaluation);
   }
 
