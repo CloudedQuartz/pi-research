@@ -6,7 +6,7 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Implementation has resumed. Committed components include shared contracts, structured-task validation, deterministic routing, report/evidence filtering, inspectors, immutable source storage, bounded robots-aware acquisition, the non-rewinding allowance ledger, and weighted positional BM25/duplicate-aware MMR. The engine and Pi entry point are implemented and verified offline, including actual SDK/package loading and cancellation/recovery checks. Live provider dispatch, interactive end-to-end behavior and human evaluation remain unverified. The non-runnable drafts in `docs/drafts/` and [the earlier handover](docs/handover.md) are historical reference, not proof of current completeness. [The implementation plan](docs/project-plan.md) remains the full specification.
+Native Pi RPC runs verified command authorization, nested DeepSeek planning, Exa discovery, public HTML acquisition, and corpus reuse on a follow-up with no new search or fetch. With the 12,000-token report ceiling now in the code, a live report update on a retained Google ML Crash Course snapshot produced a synthesized answer with five resolving citations. The answer was limited by source coverage: it explained the production-system context but did not establish a definition of training-serving skew or a label-free detection method. An earlier live follow-up reused two snapshots with no new search or fetch; its report used the extractive fallback. Offline regression checks and the [human-judged retrieval benchmark](#cisi-benchmark-result) cover separate parts of the system. See the [handover](docs/handover.md) and [implementation plan](docs/project-plan.md) for scope and limitations.
 
 ## Development setup
 
@@ -14,7 +14,7 @@ Implementation has resumed. Committed components include shared contracts, struc
 - Run `npm ci` to install the pinned dependencies.
 - `npm run typecheck` checks active TypeScript modules; drafts are excluded by their `.txt` extensions. The current modules pass typechecking; this establishes type consistency, not live behavior. The evaluation CLI and offline replay demo are available.
 - `npm test` runs the permanent offline IR, engine, SDK/package-loading and evaluation regressions. `test:ir`, `test:engine`, `test:sdk` and `test:evaluate` can also run separately. No real model or network calls are made.
-- The installed Pi **1.0.4** host and **pi-web-access 0.37.0** supply conversation/model access and discovery. This project does not import private web-provider implementation modules.
+- Tests pin Pi SDK **1.0.4**. Live RPC checks used Pi **1.5.2** and **pi-web-access 0.48.0**. The integration uses registered tools rather than private web-provider modules.
 
 The package registers `src/extension.ts`. SDK loading is tested against Pi 1.0.4; interactive research still requires an available model and discovery provider. To load explicitly:
 

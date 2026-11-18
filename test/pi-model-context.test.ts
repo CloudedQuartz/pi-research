@@ -152,8 +152,8 @@ const mapped = await call({
 }, 5000);
 check('a mapped-but-supported low level is still requested', mapped.reasoning === 'low');
 
-check('reserved output ceilings: assess 8000, classify 2500, report 5000, plan 3000',
-  OUTPUT_TOKENS.assess === 8000 && OUTPUT_TOKENS.classify === 2500 && OUTPUT_TOKENS.report === 5000 &&
+check('reserved output ceilings: assess 8000, classify 2500, report 12000, plan 3000',
+  OUTPUT_TOKENS.assess === 8000 && OUTPUT_TOKENS.classify === 2500 && OUTPUT_TOKENS.report === 12000 &&
   OUTPUT_TOKENS.plan === 3000, JSON.stringify(OUTPUT_TOKENS));
 
 if (failures.length) {

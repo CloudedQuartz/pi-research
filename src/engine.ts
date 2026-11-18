@@ -56,10 +56,11 @@ export interface ResearchEngineArgs {
 
 /**
  * Output-token ceilings reserved per model task; the caller's ledger reservation uses these
- * values. Assess carries the extra room long live assessments needed; classify and report
- * stay capped and rely on concise-response instructions instead of larger ceilings.
+ * values. Assess carries the extra room long live assessments needed; report needs enough
+ * room for a complete cited answer because 5000 was repeatedly truncated in live synthesis.
+ * Classify stays capped and relies on concise-response instructions.
  */
-export const OUTPUT_TOKENS: Record<TaskName, number> = { plan: 3000, assess: 8000, classify: 2500, report: 5000 };
+export const OUTPUT_TOKENS: Record<TaskName, number> = { plan: 3000, assess: 8000, classify: 2500, report: 12000 };
 /** Framing allowance on top of estimated input bytes when reserving model capacity. */
 const FRAMING_TOKENS = 512;
 const REPORT_MAX_PASSAGES = 40;

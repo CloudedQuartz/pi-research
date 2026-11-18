@@ -17,7 +17,7 @@ import { validateSpan } from './report.js';
 import type { EngineHost, Feedback, Investigation, Limits } from './types.js';
 
 const DEFAULT_LIMITS: Limits = { searches: 8, fetches: 18, http: 72, modelCalls: 40, modelTokens: 180_000, elapsedMs: 480_000 };
-const SYNTHESIS = { modelCalls: 2, modelTokens: 24_000 };
+const SYNTHESIS = { modelCalls: 2, modelTokens: 48_000 };
 const RequestParams = Type.Object({ requestId: Type.String({ minLength: 1, maxLength: 150, description: 'One-use ID authorized by a research command; never invent one.' }) });
 const Output = Type.Object({ ok: Type.Boolean(), data: Type.Optional(Type.Unknown()), error: Type.Optional(Type.String()) });
 interface Details { data?: JsonValue; phase?: string; error?: string; }
