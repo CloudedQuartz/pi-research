@@ -2,14 +2,14 @@
  * Offline regression for the public src/core-ir.ts surface: distinct-document
  * DF under high TF, weighted-map mass and score scaling, surface phrase
  * adjacency, incremental/rebuilt equivalence, duplicate-group MMR selection
- * with retained index variants, and corpus-basis vs pool-basis MMR fallback
- * without input mutation.
+ * with retained index variants, corpus-basis vs pool-basis MMR fallback
+ * without input mutation, and bounded paragraph segmentation with exact spans.
  *
  * Run: ./node_modules/.bin/tsx test/core-ir.test.ts   (exit 1 on any failed check)
  */
 import assert from 'node:assert/strict';
-import { PassageIndex, expandedQuery, mmr } from '../src/core-ir.js';
-import type { Concept, Passage, SearchHit } from '../src/types.js';
+import { PassageIndex, expandedQuery, mmr, segment, tokenize } from '../src/core-ir.js';
+import type { Concept, Passage, SearchHit, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
 const check = (label: string, run: () => void): void => {
@@ -22,6 +22,42 @@ const check = (label: string, run: () => void): void => {
 
 const P = (id: string, snapshotId: string, text: string): Passage =>
   ({ id, snapshotId, start: 0, end: text.length, text, duplicateGroup: id });
+
+const S = (text: string, pages?: Snapshot['pages']): Snapshot => ({
+  id: 'seg', requestedUrl: 'https://example.org/a', finalUrl: 'https://example.org/a',
+  canonicalUrl: 'https://example.org/a', fetchedAt: '2024-01-01T00:00:00.000Z',
+  contentHash: 'content', textHash: 'text', rawBlob: 'raw', textBlob: 'text-blob',
+  mime: 'text/html', status: 200, title: 'Example', extraction: 'readability', extractionVersion: '1',
+  text, ...(pages ? { pages } : {}),
+});
+
+/** One unbroken prose paragraph of the reported live shape (~11.9k chars, ~1.1k tokens). */
+function giantParagraph(chars = 11962): string {
+  const words: string[] = [];
+  for (let i = 0; words.join(' ').length < chars; i++) words.push(i % 37 === 0 ? 'attribution.' : `feature${i}`);
+  const cut = words.join(' ').slice(0, chars);
+  const last = cut.lastIndexOf(' ');
+  return cut.slice(0, last > 0 ? last : cut.length);
+}
+
+/** Asserts span truthfulness, ordering and whitespace-only separation; returns token counts. */
+function assertSpans(snapshot: Snapshot, passages: Passage[]): number[] {
+  let cursor = 0;
+  const counts: number[] = [];
+  for (const passage of passages) {
+    assert.equal(passage.snapshotId, snapshot.id);
+    assert.equal(passage.id, `${snapshot.id}:${passage.start}`, 'passage id is the source start offset');
+    assert.equal(passage.end - passage.start, passage.text.length, `${passage.id} span matches text length`);
+    assert.equal(snapshot.text.slice(passage.start, passage.end), passage.text, `${passage.id} is an exact slice`);
+    assert.ok(passage.start >= cursor, `${passage.id} starts after the previous passage`);
+    assert.ok(/^\s*$/.test(snapshot.text.slice(cursor, passage.start)), `${passage.id} leaves only whitespace before it`);
+    cursor = passage.end;
+    counts.push(tokenize(passage.text).length);
+  }
+  assert.ok(/^\s*$/.test(snapshot.text.slice(cursor)), 'the remainder after the last passage is whitespace only');
+  return counts;
+}
+
 const close = (actual: number, expected: number, label: string): void =>
   assert.ok(Math.abs(actual - expected) < 1e-9, `${label}: ${actual} !~ ${expected}`);
 const termOf = (hit: SearchHit, term: string) => hit.terms.find(entry => entry.term === term)!;
@@ -140,6 +176,54 @@ check('mmr prefers corpus vectors for fresh hits, pool vectors for copies, witho
   const again = mmr(full, 2);
   assert.deepEqual(again.map(entry => entry.passage.id), full.map(entry => entry.passage.id), 'transferred basis keeps selection');
   close(again[1]!.mmr!, full[1]!.mmr!, 'transferred basis reproduces the value');
+});
+
+check('an oversized unbroken paragraph splits into bounded 180-300 token passages', () => {
+  const paragraph = giantParagraph();
+  assert.ok(tokenize(paragraph).length > 1000, `fixture reproduces the live shape: ${tokenize(paragraph).length} tokens`);
+  const text = `Feature attributions\n\n${paragraph}`;
+  const snapshot = S(text, [{ page: 1, start: 0, end: 30 }, { page: 2, start: 30, end: text.length }]);
+  const passages = segment(snapshot);
+  assert.ok(passages.length >= 4, `expected a split, got ${passages.length} passage(s) of ${passages.map(p => p.text.length)} chars`);
+  const counts = assertSpans(snapshot, passages);
+  for (let i = 0; i < passages.length; i++) {
+    const passage = passages[i]!;
+    assert.ok(counts[i]! >= 180 && counts[i]! <= 300, `${passage.id} has ${counts[i]} tokens`);
+    assert.ok(passage.text.length <= 4000, `${passage.id} has ${passage.text.length} chars`);
+    assert.ok(passage.text.length < text.length, `${passage.id} is not the whole page`);
+    assert.equal(passage.section, 'Feature attributions', `${passage.id} keeps its section`);
+    assert.equal(passage.page, passage.start < 30 ? 1 : 2, `${passage.id} keeps its page`);
+  }
+  for (const passage of passages.slice(0, -1)) {
+    assert.ok(passage.text.endsWith('.'), `${passage.id} breaks at a sentence: ${JSON.stringify(passage.text.slice(-24))}`);
+  }
+  assert.deepEqual(
+    segment(snapshot).map(passage => [passage.id, passage.start, passage.end, passage.text]),
+    passages.map(passage => [passage.id, passage.start, passage.end, passage.text]),
+    'segmentation is deterministic in ids, order and spans',
+  );
+});
+
+check('a pathological single token is bounded by the passage text cap', () => {
+  const text = 'x'.repeat(12000);
+  const snapshot = S(text);
+  const passages = segment(snapshot);
+  assert.ok(passages.length >= 3, `expected the run to split, got ${passages.length} passage(s)`);
+  assertSpans(snapshot, passages);
+  for (const passage of passages) {
+    assert.ok(passage.text.length <= 4000, `${passage.id} has ${passage.text.length} chars`);
+    assert.ok(passage.end <= text.length, `${passage.id} stays inside the source`);
+  }
+});
+
+check('ordinary paragraph packing keeps its existing offsets', () => {
+  const para = (name: string): string => `${Array.from({ length: 90 }, (_, i) => `${name}w${i}`).join(' ')}.`;
+  const text = ['# Title', para('alpha'), para('beta'), para('gamma'), para('delta')].join('\n\n');
+  const snapshot = S(text);
+  const passages = segment(snapshot);
+  assert.deepEqual(passages.map(passage => [passage.start, passage.end]), [[0, 2323], [2325, 3125]],
+    'paragraph-packed spans are unchanged for pages that were never over the caps');
+  assert.deepEqual(assertSpans(snapshot, passages), [271, 90]);
 });
 
 if (failures.length) {

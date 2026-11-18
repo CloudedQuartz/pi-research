@@ -9,8 +9,11 @@ import type {
  * Invariants:
  * - `segment` emits contiguous slices of snapshot.text (end - start === text.length),
  *   paragraph-packed toward 180-300 surface tokens with at most one small trailing
- *   paragraph carried into the next passage; headings stay in the text and are
- *   mirrored into `section`, `page` comes from snapshot.pages.
+ *   paragraph carried into the next passage; a paragraph that alone exceeds the
+ *   token or character cap is split at sentence boundaries (token boundaries when
+ *   it has none) instead of being admitted whole, so every passage stays bounded;
+ *   headings stay in the text and are mirrored into `section`, `page` comes from
+ *   snapshot.pages.
  * - Indexing never mutates caller passages: `add` stores shallow copies and
  *   `get`/`all`/`rank` hand out fresh copies. Exact-body duplicates are indexed
  *   once (min-id canonical) and the rest become aliases sharing its duplicateGroup;
@@ -29,7 +32,15 @@ const PHRASE_OCCURRENCE_BONUS = 0.05;
 const PHRASE_PROXIMITY_BONUS = 0.10;
 const SHINGLE = 5;
 const NEAR_DUPLICATE_JACCARD = 0.8;
+/** Packing cap for surface tokens; `SEGMENT_MIN` is the preferred floor for a split. */
 const SEGMENT_MAX = 300;
+const SEGMENT_MIN = 180;
+/**
+ * Hard bound on passage text in UTF-16 units. Ordinary prose at 300 tokens is
+ * ~2.0-2.5k chars; the bound exists so a single long token (minified payload,
+ * huge URL) cannot defeat the token cap and ship a whole page as one passage.
+ */
+const SEGMENT_MAX_CHARS = 4000;
 const SEGMENT_OVERLAP_MAX = 60;
 const PRF_POOL = 5;
 const ANCHOR_OVERLAP_RATIO = 0.25;
@@ -150,7 +161,7 @@ const shinglesOf = (terms: string[]): Set<string> => {
 
 // ------------------------------------------------------------------ segmentation
 
-interface Unit { start: number; end: number; tokens: number; heading: string | undefined; }
+interface Unit { start: number; end: number; tokens: number; heading: string | undefined; overlap: boolean; }
 
 const trimRange = (text: string, from: number, to: number, out: [number, number][]): void => {
   let start = from, end = to;
@@ -208,14 +219,88 @@ function pageAt(pages: Snapshot['pages'], start: number): number | undefined {
   return chosen?.page;
 }
 
-/** Paragraph-aware passages targeting SEGMENT_TARGET..SEGMENT_MAX tokens with limited overlap. */
+const trimEndAt = (text: string, from: number, to: number): number => {
+  let end = to;
+  while (end > from && /\s/.test(text[end - 1]!)) end--;
+  return end;
+};
+
+/** Sentence punctuation or a line break in the gap that follows one token. */
+const SENTENCE_END = /[.!?\u2026]["'\u201d\u2019)\]]*(?=\s|$)/u;
+const endsSentence = (raw: string, end: number, next: number): boolean => {
+  const gap = raw.slice(end, next);
+  return gap.includes('\n') || SENTENCE_END.test(gap);
+};
+
+/** Cut inside one overlong token, never between the halves of a surrogate pair. */
+const hardCut = (raw: string, from: number, limit: number): number => {
+  let cut = Math.min(raw.length, from + limit);
+  if (cut >= raw.length) return raw.length;
+  const code = raw.charCodeAt(cut - 1);
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return cut > from ? cut : from + 1;
+};
+
+/**
+ * Split one over-cap paragraph range into pieces that each fit both caps. Every
+ * piece is an exact, trimmed source slice; a break lands after sentence-ending
+ * punctuation when that keeps at least SEGMENT_MIN tokens, otherwise at the cap.
+ * Pieces never become headings and never seed contextual overlap. The range is
+ * tokenized once, so a very long paragraph stays linear in its own length.
+ */
+function splitRange(text: string, from: number, to: number): Unit[] {
+  const pieces: Unit[] = [];
+  const raw = text.slice(from, to);
+  const tokens = tokenize(raw);
+  let cursor = 0;
+  while (cursor < tokens.length) {
+    const origin = tokens[cursor]!.start;
+    let fit = cursor;
+    while (fit < tokens.length && fit - cursor < SEGMENT_MAX && tokens[fit]!.end - origin <= SEGMENT_MAX_CHARS) fit++;
+    if (fit === cursor) {
+      // One token alone exceeds the text cap: cut it and continue with the fragment.
+      const cut = hardCut(raw, origin, SEGMENT_MAX_CHARS);
+      pieces.push({ start: from + origin, end: from + cut, tokens: 1, heading: undefined, overlap: false });
+      tokens[cursor] = { ...tokens[cursor]!, start: cut };
+      continue;
+    }
+    let take = fit;
+    if (fit < tokens.length && fit - cursor >= SEGMENT_MIN) {
+      for (let k = fit; k - cursor >= SEGMENT_MIN; k--) {
+        if (endsSentence(raw, tokens[k - 1]!.end, tokens[k]!.start)) { take = k; break; }
+      }
+    }
+    // Keep the punctuation that closes the last token, but never past the text cap.
+    const end = Math.min(
+      trimEndAt(raw, tokens[take - 1]!.end, take < tokens.length ? tokens[take]!.start : raw.length),
+      origin + SEGMENT_MAX_CHARS,
+    );
+    pieces.push({ start: from + origin, end: from + end, tokens: take - cursor, heading: undefined, overlap: false });
+    cursor = take;
+  }
+  return pieces;
+}
+
+/** Trimmed paragraph units, with paragraphs that exceed a cap split into bounded pieces. */
+function paragraphUnits(text: string): Unit[] {
+  const units: Unit[] = [];
+  for (const [start, end] of paragraphRanges(text)) {
+    const raw = text.slice(start, end);
+    const tokens = tokenize(raw).length;
+    if (tokens <= SEGMENT_MAX && raw.length <= SEGMENT_MAX_CHARS) {
+      units.push({ start, end, tokens, heading: headingLabel(raw), overlap: true });
+      continue;
+    }
+    units.push(...splitRange(text, start, end));
+  }
+  return units;
+}
+
+/** Paragraph-aware passages targeting SEGMENT_MIN..SEGMENT_MAX tokens with limited overlap. */
 export function segment(snapshot: Snapshot): Passage[] {
   const text = snapshot.text;
   if (!text) return [];
-  const units: Unit[] = paragraphRanges(text).map(([start, end]) => {
-    const raw = text.slice(start, end);
-    return { start, end, tokens: tokenize(raw).length, heading: headingLabel(raw) };
-  }).filter(unit => unit.end > unit.start);
+  const units = paragraphUnits(text);
   if (!units.length) return [];
   const sections: (string | undefined)[] = [];
   let current: string | undefined;
@@ -230,9 +315,9 @@ export function segment(snapshot: Snapshot): Passage[] {
     let count = 0;
     let j = i;
     while (j < units.length) {
-      const unitTokens = units[j]!.tokens;
-      if (j > i && count + unitTokens > SEGMENT_MAX) break;
-      count += unitTokens;
+      const unit = units[j]!;
+      if (j > i && (count + unit.tokens > SEGMENT_MAX || unit.end - start > SEGMENT_MAX_CHARS)) break;
+      count += unit.tokens;
       j++;
     }
     const end = units[j - 1]!.end;
@@ -247,7 +332,7 @@ export function segment(snapshot: Snapshot): Passage[] {
     passages.push(passage);
     // Carry at most one small trailing paragraph into the next passage as context.
     const previous = units[j - 1]!;
-    i = (j - 1 > i && previous.tokens <= SEGMENT_OVERLAP_MAX) ? j - 1 : j;
+    i = (j - 1 > i && previous.overlap && previous.tokens <= SEGMENT_OVERLAP_MAX) ? j - 1 : j;
   }
   return passages;
 }
