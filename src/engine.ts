@@ -8,7 +8,7 @@ import { buildReport, reportEvidence } from './report.js';
 import { parseAssessment, parseDecisions, parsePlan } from './task-validation.js';
 import type { Ledger } from './allowance.js';
 import type {
-  Action, Branch, Concept, Contribution, DiscoveryResult, EvidenceAssessment, Investigation, ModelResponse, ModelUsage,
+  Action, Branch, Concept, DiscoveryResult, EvidenceAssessment, Investigation, ModelResponse, ModelUsage,
   Objective, Passage, PlanResult, Report, Resource, SearchHit, Snapshot, SourceCandidate, Span, Usage,
 } from './types.js';
 
@@ -54,7 +54,12 @@ export interface ResearchEngineArgs {
   options?: EngineOptions;
 }
 
-const OUTPUT_TOKENS: Record<TaskName, number> = { plan: 3000, assess: 3000, classify: 2500, report: 5000 };
+/**
+ * Output-token ceilings reserved per model task; the caller's ledger reservation uses these
+ * values. Assess carries the extra room long live assessments needed; classify and report
+ * stay capped and rely on concise-response instructions instead of larger ceilings.
+ */
+export const OUTPUT_TOKENS: Record<TaskName, number> = { plan: 3000, assess: 8000, classify: 2500, report: 5000 };
 /** Framing allowance on top of estimated input bytes when reserving model capacity. */
 const FRAMING_TOKENS = 512;
 const REPORT_MAX_PASSAGES = 40;
@@ -133,6 +138,81 @@ function nearVariants(ranked: SearchHit[], selected: SearchHit[]): { hit: Search
     variants.push({ hit, representativeId });
   }
   return variants;
+}
+
+const CLASSIFY_SPANS_PER_CONCEPT = 3;
+/** Characters of sentence context retained on each side of a classify introducing span. */
+const CLASSIFY_CONTEXT_CHARS = 480;
+const SENTENCE_END = /[.!?\n]/;
+
+/** One bounded, passage-relative context window around an introducing span. */
+export interface ClassifySpanContext {
+  /** Span offsets exactly as supplied: they index the original passage text, never the excerpt. */
+  start: number;
+  end: number;
+  /** Enclosing sentence window, also passage-relative; `text` is exactly that slice. */
+  excerpt: { start: number; end: number; text: string };
+}
+
+/**
+ * Bounded sentence/context window around an introducing span. The span itself is never
+ * cut, so a classifier always sees the complete term; context expands to the nearest
+ * sentence boundary on each side within CLASSIFY_CONTEXT_CHARS. Offsets stay truthful:
+ * `excerpt.start`/`excerpt.end` index the original passage text, so an excerpted window
+ * can still be mapped back. Invalid bounds yield `undefined` rather than a guessed window.
+ */
+export function classifySpanContext(text: string, span: { start: number; end: number }): ClassifySpanContext | undefined {
+  const { start, end } = span;
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > text.length) return undefined;
+  let from = Math.max(0, start - CLASSIFY_CONTEXT_CHARS);
+  for (let i = start; i > from; i--) if (SENTENCE_END.test(text[i - 1]!)) { from = i; break; }
+  let to = Math.min(text.length, end + CLASSIFY_CONTEXT_CHARS);
+  for (let i = end; i < to; i++) if (SENTENCE_END.test(text[i]!)) { to = i + 1; break; }
+  while (from < start && /\s/.test(text[from]!)) from++; // the terminator belongs to the previous sentence
+  while (to > end && /\s/.test(text[to - 1]!)) to--;
+  return { start, end, excerpt: { start: from, end: to, text: text.slice(from, to) } };
+}
+
+/**
+ * Classify packet context: one deduplicated, bounded sentence window per distinct
+ * introducing span. Concepts reference windows by passage-relative offsets, so the same
+ * span is never repeated and a span already covered by a supplied window for that passage
+ * reuses it. A concept keeps at most CLASSIFY_SPANS_PER_CONCEPT spans; spans whose passage
+ * is unknown or whose bounds are invalid contribute no context, as before.
+ */
+export function classifyContext(concepts: readonly Concept[], passages: ReadonlyMap<string, Passage>): {
+  evidence: ({ passageId: string } & ClassifySpanContext)[];
+  concepts: { id: string; term: string; score: number; anchorRelevance: number; introducing: Span[] }[];
+} {
+  const evidence: ({ passageId: string } & ClassifySpanContext)[] = [];
+  const windowsByPassage = new Map<string, number[]>();
+  const reference = (span: Span): Span | undefined => {
+    const passage = passages.get(span.passageId);
+    const context = passage ? classifySpanContext(passage.text, span) : undefined;
+    if (!context) return undefined;
+    const windows = windowsByPassage.get(span.passageId) ?? [];
+    const covering = windows.find(at => evidence[at]!.excerpt.start <= context.excerpt.start && evidence[at]!.excerpt.end >= context.excerpt.end);
+    if (covering === undefined) {
+      windows.push(evidence.push({ passageId: span.passageId, ...context }) - 1);
+      windowsByPassage.set(span.passageId, windows);
+    }
+    return { passageId: span.passageId, start: span.start, end: span.end };
+  };
+  return {
+    evidence,
+    concepts: concepts.map(concept => {
+      const seen = new Set<string>();
+      const introducing = concept.introducing.slice(0, CLASSIFY_SPANS_PER_CONCEPT).flatMap(span => {
+        const ref = reference(span);
+        if (!ref) return [];
+        const key = `${ref.passageId}\0${ref.start}\0${ref.end}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [ref];
+      });
+      return { id: concept.id, term: concept.term, score: concept.score, anchorRelevance: concept.anchorRelevance, introducing };
+    }),
+  };
 }
 
 export class ResearchEngine {
@@ -1004,17 +1084,17 @@ export class ResearchEngine {
     if (!concepts.length) return;
     const objective = this.state.objectives.find(o => o.id === this.state.activeObjectiveId)!;
     const byPassage = new Map(this.state.passages.map(p => [p.id, p]));
+    // Deduplicated bounded context: each distinct introducing span is supplied once as a
+    // passage-relative sentence window, and concepts reference windows by offsets that stay
+    // true to the original passage text.
+    const context = classifyContext(concepts, byPassage);
     const input = {
       objective: { question: objective.question, constraints: objective.constraints },
       branchContext: this.state.branches.filter(b => b.objectiveId === this.state.activeObjectiveId)
         .map(b => ({ id: b.id, question: b.question, anchor: b.anchor, status: b.status })),
-      concepts: concepts.map(concept => ({
-        id: concept.id, term: concept.term, score: concept.score, anchorRelevance: concept.anchorRelevance,
-        introducing: concept.introducing.slice(0, 3).flatMap(span => {
-          const passage = byPassage.get(span.passageId);
-          return passage ? [{ passageId: span.passageId, start: span.start, end: span.end, text: passage.text }] : [];
-        }),
-      })),
+      evidence: context.evidence,
+      concepts: context.concepts,
+      evidenceNote: 'Every concept introducing entry references supplied evidence by passageId, start and end; those offsets are UTF-16 positions in the original passage text, not in the excerpt. Each evidence entry is one bounded sentence window per distinct span, with excerpt.start/excerpt.end locating that window in the same original text.',
     };
     let decisions;
     try {

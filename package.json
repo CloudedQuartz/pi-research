@@ -11,10 +11,11 @@
     "test:ir": "tsx test/core-ir.test.ts",
     "test:engine": "tsx test/engine-retrieval.test.ts && tsx test/engine-coverage.test.ts",
     "test:sdk": "tsx test/sdk-load.test.ts && tsx test/pi-model-session.test.ts",
+    "test:context": "tsx test/pi-model-context.test.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "demo": "tsx scripts/demo.ts",
     "test:evaluate": "tsx test/evaluate.test.ts",
-    "test": "npm run test:ir && npm run test:engine && npm run test:sdk && npm run test:evaluate"
+    "test": "npm run test:ir && npm run test:engine && npm run test:sdk && npm run test:context && npm run test:evaluate"
   },
   "keywords": [
     "pi-package",
