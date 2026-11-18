@@ -75,7 +75,22 @@ This three-source replay is a reproducibility aid, **not a live web demo or retr
 
 This CLI uses lexical feedback, not live contextual assessment. It does **not** measure research-policy allocation, conversational quality or citation faithfulness. For those planned comparisons, match provider, model, extraction and resource caps; preserve each run's manifests/snapshots and record actual consumption plus unresolved exposure. Human judgments must assess useful contributions, discovered needs, wasted queries/fetches, standalone-request fidelity, constraint satisfaction, relevant reuse and obsolete report statements. Replay is not a fair unrestricted-web benchmark.
 
-No human-judged corpus or benchmark outcomes are claimed yet.
+### CISI benchmark result
+
+On the [Glasgow CISI collection](https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/), 76 queries with human judgments were scored against 1,459 documents (one document per index entry). The preparation excludes 36 unjudged queries and maps one exact duplicate to its canonical ID, collapsing one duplicate relevance pair. Unlisted pairs count as zero for scoring, not as human judgments of irrelevance.
+
+| Method | P@5 | P@10 | nDCG@10 | Pooled recall@10 |
+|---|---:|---:|---:|---:|
+| BM25 | 0.3895 | 0.3105 | 0.3607 | 0.1360 |
+| Anchored lexical PRF | 0.2974 | 0.2566 | 0.2902 | 0.0955 |
+| PRF + MMR | 0.2868 | 0.2474 | 0.2821 | 0.0915 |
+
+Plain BM25 scored best here. This is a document retrieval ablation, not a measurement of conversational research or citation support. [Per-query results and provenance](evaluation/cisi-results.json) omit source and query text. To reproduce with a local copy of the upstream archive:
+
+```sh
+node scripts/prepare-cisi.mjs --archive /path/to/cisi.tar.gz --out /tmp/cisi-dataset.json
+npm run --silent evaluate -- /tmp/cisi-dataset.json
+```
 
 The course submission also needs the report of at most eight pages, a 5–8-minute live demonstration video, actual team work division, dependency/source credits and an AI-use declaration. A recorded fixture replay is a regression aid, not a substitute for a live demo.
 
