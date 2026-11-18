@@ -76,7 +76,9 @@ export interface Investigation {
 }
 export interface Limits {
   searches: number; fetches: number; http: number; modelCalls: number;
-  modelTokens: number; elapsedMs: number;
+  modelTokens: number;
+  /** Active-time cap in milliseconds; absent means no deadline, while zero is exhausted. */
+  elapsedMs?: number;
 }
 export type Resource = Exclude<keyof Limits, 'elapsedMs'>;
 export type Usage = Partial<Record<Resource, number>>;

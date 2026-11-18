@@ -1,4 +1,6 @@
-# Live verification: fresh run with default limits
+# Live verification: fresh run with the former eight-minute default
+
+New investigations no longer have an overall deadline by default. This record describes the earlier configuration at `14b0289`; existing recorded deadlines are unchanged.
 
 **Result: partial.** On 2026-11-18, a fresh Pi RPC session at commit `14b0289` ran `/research` once with the unmodified extension. It discovered sources with Exa, attempted 12 fetches, and retained eight snapshots and 84 passages. The extension's eight-minute elapsed allowance interrupted an assessment before synthesis. No report, citations, or follow-up were produced in this session. No grant, rerun, or provider fallback was used.
 

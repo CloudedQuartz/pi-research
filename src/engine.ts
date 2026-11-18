@@ -319,7 +319,7 @@ export class ResearchEngine {
   private precheck(amount: Usage, lane: 'work' | 'synthesis' = 'work'): void {
     if (this.signal.aborted) throw this.signal.reason instanceof Error ? this.signal.reason : new Error('Research run aborted');
     const snapshot = this.ledger.snapshot(this.state.allowanceId);
-    if (snapshot.remainingElapsedMs <= 0) throw new StopRun('Elapsed allowance exhausted; no new dispatch was started.');
+    if (snapshot.remainingElapsedMs !== undefined && snapshot.remainingElapsedMs <= 0) throw new StopRun('Elapsed allowance exhausted; no new dispatch was started.');
     const remaining = lane === 'synthesis' ? snapshot.lanes.synthesis.remaining : snapshot.lanes.work.remaining;
     for (const [key, value] of Object.entries(amount)) {
       const resource = key as Resource;

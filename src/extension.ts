@@ -16,7 +16,7 @@ import { inspectState, rankText, researchMap, safeText, sourceList } from './vie
 import { validateSpan } from './report.js';
 import type { EngineHost, Feedback, Investigation, Limits } from './types.js';
 
-const DEFAULT_LIMITS: Limits = { searches: 8, fetches: 18, http: 72, modelCalls: 40, modelTokens: 180_000, elapsedMs: 480_000 };
+const DEFAULT_LIMITS: Limits = { searches: 8, fetches: 18, http: 72, modelCalls: 40, modelTokens: 180_000 };
 const SYNTHESIS = { modelCalls: 2, modelTokens: 48_000 };
 const RequestParams = Type.Object({ requestId: Type.String({ minLength: 1, maxLength: 150, description: 'One-use ID authorized by a research command; never invent one.' }) });
 const Output = Type.Object({ ok: Type.Boolean(), data: Type.Optional(Type.Unknown()), error: Type.Optional(Type.String()) });
@@ -134,7 +134,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
     } else config = configFor(ctx, old.id);
     const client = old ? getClient(ctx, old.storageRoot) : undefined;
     const summary = client && old ? client.db.snapshot(old.allowanceId) : undefined;
-    const consent = await ctx.ui.confirm('Authorize research?', `${kind}: ${question || targetId || old?.originalQuestion}\nProvider: ${config.provider}\n${JSON.stringify(summary ? { remaining: summary.remaining, remainingElapsedMs: summary.remainingElapsedMs } : DEFAULT_LIMITS)}\nContinuation revokes any prior writer, without retrying uncertain operations. Token control is estimated; hidden provider searches/costs are unknown. Accept selected provider/model charges only if intended.`);
+    let allowanceLine: string;
+    if (!summary) allowanceLine = `Limits: ${JSON.stringify(DEFAULT_LIMITS)}\nTime: no deadline`;
+    else {
+      const deadline = summary.remainingElapsedMs === undefined ? 'no deadline' : `${summary.remainingElapsedMs} ms remaining`;
+      allowanceLine = `Remaining: ${JSON.stringify(summary.remaining)}\nTime: ${deadline}`;
+    }
+    const consent = await ctx.ui.confirm('Authorize research?', `${kind}: ${question || targetId || old?.originalQuestion}\nProvider: ${config.provider}\n${allowanceLine}\nContinuation revokes any prior writer, without retrying uncertain operations. Token control is estimated; hidden provider searches/costs are unknown. Accept selected provider/model charges only if intended.`);
     assertStamp(ctx, before);
     if (old && state?.revisionId !== expectedRevision) throw new Error('Investigation changed during confirmation.');
     if (!consent) return;
@@ -176,8 +182,9 @@ export default function researchExtension(pi: ExtensionAPI): void {
       const c = client; const runOwner = owner; const r = request;
       controller = new AbortController(); active = { controller, client: c };
       const remainingTime = c.db.snapshot(r.allowanceId).remainingElapsedMs;
-      const runSignal = r.kind === 'feedback' ? (signal ? AbortSignal.any([signal, controller.signal]) : controller.signal)
-        : AbortSignal.any([controller.signal, ...(signal ? [signal] : []), AbortSignal.timeout(Math.max(1, Math.min(2_147_483_647, Math.floor(remainingTime))))]);
+      const runSignals = [controller.signal, ...(signal ? [signal] : [])];
+      if (r.kind !== 'feedback' && remainingTime !== undefined) runSignals.push(AbortSignal.timeout(Math.max(1, Math.min(2_147_483_647, Math.floor(remainingTime)))));
+      const runSignal = r.kind === 'feedback' && !signal ? controller.signal : AbortSignal.any(runSignals);
       const owns = () => contextCurrent() && c.db.owns(id, runOwner);
       const commit = (next: Investigation) => {
         if (!owns()) throw new Error('Stale research operation cannot publish state.');
@@ -193,7 +200,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
       const acquisition = AcquisitionService({ store: c.store,
         beforeHttp: async url => {
           if (!owns()) throw new Error('Obsolete acquisition'); runSignal.throwIfAborted();
-          if (c.db.snapshot(r.allowanceId).remainingElapsedMs <= 0) throw new Error('Elapsed allowance exhausted');
+          const remainingElapsedMs = c.db.snapshot(r.allowanceId).remainingElapsedMs;
+          if (remainingElapsedMs !== undefined && remainingElapsedMs <= 0) throw new Error('Elapsed allowance exhausted');
           const op = randomUUID();
           if (!c.db.reserve(r.allowanceId, op, { requestId: id, url }, { http: 1 })) throw new Error('HTTP allowance reservation refused before dispatch; no request was started');
           c.db.dispatched(op); c.db.settle(op, { http: 1 });
@@ -286,10 +294,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
     const before = stamp(ctx); const grant: Partial<Limits> = {};
     for (const token of args.slice(4).trim().split(/\s+/)) {
       const match = /^([A-Za-z]+)=(\d+)$/.exec(token);
-      if (!match || !Object.hasOwn(DEFAULT_LIMITS, match[1]!) || !Number.isSafeInteger(Number(match[2]))) throw new Error('Invalid allowance increment');
+      if (!match || (!Object.hasOwn(DEFAULT_LIMITS, match[1]!) && match[1] !== 'elapsedMs') || !Number.isSafeInteger(Number(match[2]))) throw new Error('Invalid allowance increment');
       const key = match[1] as keyof Limits; if (Object.hasOwn(grant, key)) throw new Error('Repeated allowance field'); grant[key] = Number(match[2]);
     }
-    const consent = await ctx.ui.confirm('Authorize additional allowance?', `Investigation ${s.id}; allowance ${s.allowanceId}\n${JSON.stringify(grant)}\nThis does not start calls; provider-hidden costs remain unknown.`);
+    const now = c.db.snapshot(s.allowanceId);
+    const deadline = now.remainingElapsedMs === undefined ? 'no deadline' : `${now.remainingElapsedMs} ms remaining`;
+    const consent = await ctx.ui.confirm('Authorize additional allowance?', `Investigation ${s.id}; allowance ${s.allowanceId}\nTime: ${deadline}\n${JSON.stringify(grant)}\nAn elapsedMs grant sets a total active-time cap if there is none, or adds to the existing cap. Time already accrued still counts. Omit elapsedMs to leave the deadline unchanged. This does not start calls; provider-hidden costs remain unknown.`);
     assertStamp(ctx, before);
     if (state?.id !== s.id || state.allowanceId !== s.allowanceId) throw new Error('Active investigation changed during allowance confirmation.');
     if (consent) getClient(ctx, s.storageRoot).db.addGrant(s.allowanceId, grant, randomUUID());

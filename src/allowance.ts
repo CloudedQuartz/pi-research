@@ -25,10 +25,11 @@
  *   residual `max(reserved - observed, 0)`; observations may grow but never
  *   decrease already-confirmed counts, and identical replays never add twice.
  * - Synthesis capacity is a protected carve-out of the authorized limits that
- *   work-lane reservations cannot consume. Elapsed time accrues only while a
- *   writer claim is active (idle gaps are excluded, so the cap spans runs and
- *   survives reopen/forks); interrupted or crashed writers keep accruing until
- *   explicit recovery, which is recorded, never silently reclaimed.
+ *   work-lane reservations cannot consume. An absent `elapsedMs` cap means no
+ *   deadline, while an explicit zero is already exhausted. Elapsed time accrues
+ *   only while a writer claim is active (idle gaps are excluded, so the cap
+ *   spans runs and survives reopen/forks); interrupted or crashed writers keep
+ *   accruing until explicit recovery, which is recorded, never silently reclaimed.
  * - Model token accounting is provider-reported and estimated; it is enforced
  *   mechanically but is not a guaranteed monetary cap. Hidden provider costs
  *   stay unknown rather than zero.
@@ -115,8 +116,8 @@ export interface AllowanceSnapshot {
   lanes: { work: LaneSnapshot; synthesis: LaneSnapshot };
   /** Active writer time recorded so far (grows live while a writer is claimed). */
   elapsedMs: number;
-  /** `limits.elapsedMs - elapsedMs`; zero or negative stops new reservations. */
-  remainingElapsedMs: number;
+  /** `limits.elapsedMs - elapsedMs`; `undefined` means no deadline, zero or negative stops new reservations. */
+  remainingElapsedMs: number | undefined;
   /** Sum of reported provider costs; `undefined` when no cost was ever exposed. */
   cost: number | undefined;
   operations: OperationView[];
@@ -261,7 +262,11 @@ function readUsage(value: unknown, label: string): Record<string, number> {
   return usage;
 }
 
-/** Reconstruct a full `Limits` value at its persistence boundary; every key is required. */
+/**
+ * Reconstruct a `Limits` value at its persistence boundary: every operation
+ * field is required while `elapsedMs` is optional, and absence is preserved
+ * (no deadline) rather than normalized to zero (immediately exhausted).
+ */
 function readLimits(value: unknown, label: string): Limits {
   const source = assertObject(value, label);
   const counts: Record<string, number> = {};
@@ -269,12 +274,13 @@ function readLimits(value: unknown, label: string): Limits {
     if (!(LIMIT_KEYS as readonly string[]).includes(key)) throw new Error(`${label}.${key} is not an allowance limit`);
     counts[key] = assertCount(source[key], `${label}.${key}`);
   }
-  const limits: Limits = { searches: 0, fetches: 0, http: 0, modelCalls: 0, modelTokens: 0, elapsedMs: 0 };
-  for (const key of LIMIT_KEYS) {
+  const limits = {} as Limits;
+  for (const key of RESOURCE_KEYS) {
     const count = counts[key];
     if (count === undefined) throw new Error(`${label}.${key} is required`);
     limits[key] = count;
   }
+  if (counts.elapsedMs !== undefined) limits.elapsedMs = counts.elapsedMs;
   return limits;
 }
 
@@ -650,9 +656,9 @@ export class Ledger {
    * false and never redispatches; a conflicting reuse throws. Otherwise false
    * is a budget rejection: the selected-lane cap or the allowance's global
    * total (both measured against settled observations of every lane, so
-   * visible overruns count) would be exceeded, or the active elapsed
-   * allowance is exhausted. Malformed arguments throw: they are programming
-   * errors, not budget rejections.
+   * visible overruns count) would be exceeded, or an explicit elapsed
+   * allowance is exhausted (an absent cap is no deadline). Malformed arguments
+   * throw: they are programming errors, not budget rejections.
    */
   reserve(allowanceId: string, opId: string, payload: unknown, amount: Usage, lane: Lane = 'work'): boolean {
     assertId(allowanceId, 'allowanceId');
@@ -672,7 +678,7 @@ export class Ledger {
       }
       const allowance = this.readAllowance(allowanceId);
       const now = Date.now();
-      if (allowance.effective.elapsedMs - this.elapsedMs(allowanceId, now) <= 0) return false;
+      if (allowance.effective.elapsedMs !== undefined && allowance.effective.elapsedMs - this.elapsedMs(allowanceId, now) <= 0) return false;
       const cap = zeroUsage();
       for (const key of RESOURCE_KEYS) {
         const reserveLimit = allowance.synthesis[key] ?? 0;
@@ -852,7 +858,7 @@ export class Ledger {
         unresolved,
         lanes,
         elapsedMs,
-        remainingElapsedMs: (allowance.effective.elapsedMs ?? 0) - elapsedMs,
+        remainingElapsedMs: allowance.effective.elapsedMs === undefined ? undefined : allowance.effective.elapsedMs - elapsedMs,
         cost,
         operations,
         grants,
@@ -921,7 +927,12 @@ export class Ledger {
     const increments = this.db.prepare('SELECT increments FROM grants WHERE allowance_id = ? AND kind = ?').all(allowanceId, 'grant');
     for (const grant of increments) {
       const delta = readIncrements(parseJson(field(grant, 'increments'), 'grant increments'), 'grant increments');
-      for (const key of LIMIT_KEYS) effective[key] = (effective[key] ?? 0) + (delta[key] ?? 0);
+      // Only granted keys move: unrelated grants leave an absent elapsed cap absent,
+      // and an elapsed grant caps all time already accrued for this allowance.
+      for (const key of LIMIT_KEYS) {
+        const increment = delta[key];
+        if (increment !== undefined) effective[key] = (effective[key] ?? 0) + increment;
+      }
     }
     return { base, synthesis, effective };
   }
