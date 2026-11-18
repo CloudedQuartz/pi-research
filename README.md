@@ -8,6 +8,8 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 Native Pi RPC runs verified command authorization, nested DeepSeek planning, Exa discovery, public HTML acquisition, and corpus reuse on a follow-up with no new search or fetch. With the 12,000-token report ceiling now in the code, a live report update on a retained Google ML Crash Course snapshot produced a synthesized answer with five resolving citations. The answer was limited by source coverage: it explained the production-system context but did not establish a definition of training-serving skew or a label-free detection method. An earlier live follow-up reused two snapshots with no new search or fetch; its report used the extractive fallback. Offline regression checks and the [human-judged retrieval benchmark](#cisi-benchmark-result) cover separate parts of the system. See the [handover](docs/handover.md) and [implementation plan](docs/project-plan.md) for scope and limitations.
 
+The [fresh default-limit live run](docs/live-verification.md) retained eight snapshots and 84 passages, but hit the eight-minute allowance before synthesis. It produced no report, and no follow-up was sent. A single fresh session completing both turns remains unverified.
+
 ## Development setup
 
 - Node **24.13.1 or newer** (the ledger uses the experimental built-in `node:sqlite`).
