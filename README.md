@@ -22,7 +22,7 @@ The package registers `src/extension.ts`. SDK loading is tested against Pi 1.0.4
 pi --extension ./src/extension.ts
 ```
 
-Load the web-access extension in the same Pi session. Select one authorized provider and the registered search tool name at `/research` startup; names may have been customized. No global Pi settings are changed by this project.
+Load the web-access extension in the same Pi session. Select one authorized provider and the registered search tool name at `/research` startup; names may have been customized. If you use Pi’s `--tools` allowlist, include both `research_run` and the configured search tool (usually `web_search`). Leaving the search tool out removes it from the registry, including for nested calls. No global Pi settings are changed by this project.
 
 ## Workflow
 
