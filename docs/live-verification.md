@@ -1,6 +1,6 @@
 # Live verification: fresh run with the former eight-minute default
 
-New investigations no longer have an overall deadline by default. This record describes the earlier configuration at `14b0289`; existing recorded deadlines are unchanged.
+New investigations no longer have an overall deadline by default. The [new-default rerun](#live-rerun-with-no-default-deadline) is recorded below. The original run used `14b0289`; existing recorded deadlines are unchanged.
 
 **Result: partial.** On 2026-11-18, a fresh Pi RPC session at commit `14b0289` ran `/research` once with the unmodified extension. It discovered sources with Exa, attempted 12 fetches, and retained eight snapshots and 84 passages. The extension's eight-minute elapsed allowance interrupted an assessment before synthesis. No report, citations, or follow-up were produced in this session. No grant, rerun, or provider fallback was used.
 
@@ -69,3 +69,15 @@ Earlier, separate live checks showed a follow-up reusing two retained snapshots 
 ## Evidence retained locally
 
 Private artifacts were recorded under `/tmp/pi-research-live-final-77IiOs/`: `start-rpc.jsonl` (dialogs and events), `guard-start.json` (dispatch identity and timing), `start.out` (launcher result), and `sessions/` (Pi history, `pi-research/allowances.sqlite`, immutable `snapshots/` and `blobs/`). The run was checked against the persisted state, guard, and ledger rather than the exit status alone. Raw logs, source bodies, session files, and credential references are not published with this record.
+
+## Live rerun with no default deadline
+
+The same question was run with the unmodified extension at `9cbe38e`, using the same Pi, DeepSeek, and Exa versions and the same operation limits. The authorization dialog displayed `Time: no deadline` for both turns. No budget grants were added. The launcher's separate one-hour safety stop did not fire.
+
+On the first launch, the outer model declined to invoke `research_run` after authorization; no research operations were dispatched. A fresh launch using the same setup did invoke it and completed the initial research request in about 20 minutes, well beyond the former eight-minute limit. It retained six snapshots and 46 passages. The work lane stopped when it could not reserve enough model tokens for its next call. The synthesis call then hit its 12,000-output-token ceiling, so the persisted answer used the extractive fallback. All 18 statement citations resolved to immutable passage spans; this check does not establish semantic support.
+
+The follow-up used the same investigation and allowance, with unchanged snapshot IDs and corpus revision and no new searches, fetches, or acquisition HTTP calls. It recorded a new objective but had too little work-lane token capacity to assess evidence against that objective. Its fallback had zero statements and ten unresolved needs. Retaining the corpus is not the same as answering the follow-up from it.
+
+Across the two dispatched requests, the ledger recorded 2 searches, 6 fetches, 14 acquisition HTTP requests, 21 nested model calls, 143,111 nested model tokens, and 1,186,451 ms of active time. All 43 operations settled; no writer or unknown exposure remained. The aggregate 36,889 tokens left included protected synthesis capacity and was not available in full to work-lane calls.
+
+The rerun verifies that the old deadline is gone. It does **not** verify a useful synthesized answer and follow-up in one fresh session. The observed blockers are model dispatch reliability, synthesis output truncation, and insufficient work-lane capacity for follow-up assessment. Private artifacts are under `/tmp/pi-research-live-9cbe38e-UYCYcf/`.
