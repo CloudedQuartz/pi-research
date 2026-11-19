@@ -6,7 +6,9 @@
  * zero-deficit contradiction earns yield without downgrading; C an explicit
  * downgrade reopens coverage with its witness; D one real PRF follow-up then a
  * stable key with no repeats; E fetch-allowance exhaustion truncates an episode
- * without skipping evaluation or certifying saturation.
+ * without skipping evaluation or certifying saturation; F start holds a work-lane
+ * follow-up reserve, refuses to spend it and continue uses it; G synthesis sends a
+ * compact packet that keeps priority witnesses and still rejects citations outside it.
  * Run: npx tsx test/engine-coverage.test.ts
  */
 import { randomUUID } from 'node:crypto';
@@ -44,8 +46,11 @@ function longParagraph(seed: string): string {
 
 interface Ctx {
   root: string; store: ObjectStore; ledger: Ledger; requestId: string; state: Investigation;
-  commits: number; modelCalls: Record<string, number>; assessInputs: any[];
+  commits: number; modelCalls: Record<string, number>; assessInputs: any[]; reportInputs: any[];
+  /** Usage the fake host reports per call; case F uses realistic per-call cost, default is negligible. */
+  usage: typeof USAGE;
   assess: (input: any) => unknown;
+  report: (input: any) => unknown;
   acquire: (url: string) => Snapshot;
   discover: (query: string) => Promise<DiscoveryResult>;
 }
@@ -62,18 +67,19 @@ function fixtureSnapshot(store: ObjectStore, url: string, text: string): Snapsho
   return snapshot;
 }
 
-function createCtx(limits = LIMITS): Ctx {
+function createCtx(limits = LIMITS, synthesis: Parameters<Ledger['authorize']>[1] = SYNTHESIS): Ctx {
   const root = mkdtempSync(join(tmpdir(), 'engine-coverage-perm-'));
   const store = new ObjectStore(root);
   const ledger = new Ledger(join(root, 'ledger.sqlite'));
-  const allowanceId = ledger.authorize(limits, SYNTHESIS, `auth-${randomUUID()}`);
+  const allowanceId = ledger.authorize(limits, synthesis, `auth-${randomUUID()}`);
   const requestId = randomUUID();
   const state = newInvestigation({ id: `inv-${randomUUID()}`, allowanceId, storageRoot: root, question: 'Quantum foxberry taxonomy survey methods' });
   ledger.authorizeRequest({ id: requestId, allowanceId, investigationId: state.id, sessionId: `session-${requestId}`,
     kind: 'report', question: state.originalQuestion, provider: 'brave', searchTool: 'web', storageRoot: root });
   ledger.claimRequest(requestId, OWNER);
-  return { root, store, ledger, requestId, state, commits: 0, modelCalls: {}, assessInputs: [],
+  return { root, store, ledger, requestId, state, commits: 0, modelCalls: {}, assessInputs: [], reportInputs: [], usage: USAGE,
     assess: () => ({ relevantPassageIds: [], contributions: [] }),
+    report: () => ({ sections: [] }),
     acquire: url => fixtureSnapshot(store, url, longParagraph('beta')),
     discover: async query => ({ query, provider: 'brave', rankingKind: 'ranked', results: [] }) };
 }
@@ -83,8 +89,9 @@ function engineFor(ctx: Ctx, state: Investigation = ctx.state, options: EngineOp
     model: {
       async complete(task, input) {
         ctx.modelCalls[task] = (ctx.modelCalls[task] ?? 0) + 1;
-        if (task === 'assess') { ctx.assessInputs.push(input); return { value: ctx.assess(input), usage: USAGE, usageComplete: true }; }
-        if (task === 'classify' || task === 'report') return { value: task === 'classify' ? { decisions: [] } : { sections: [] }, usage: USAGE, usageComplete: true };
+        if (task === 'assess') { ctx.assessInputs.push(input); return { value: ctx.assess(input), usage: ctx.usage, usageComplete: true }; }
+        if (task === 'classify') return { value: { decisions: [] }, usage: ctx.usage, usageComplete: true };
+        if (task === 'report') { ctx.reportInputs.push(input); return { value: ctx.report(input), usage: ctx.usage, usageComplete: true }; }
         throw new Error(`unexpected model task ${task}`);
       },
     },
@@ -290,10 +297,184 @@ async function caseEpisodeFetchExhaustion(): Promise<void> {
   } finally { retire(productive.ctx); }
 }
 
+// ------------------------------ F: work-lane reserve for the first follow-up
+// Work-lane cap 70,000 tokens / 50 calls ⇒ a 17,500-token, 3-call hold (24,000 ceiling, 25% share).
+const RESERVE_LIMITS = { ...LIMITS, modelTokens: 100_000 };
+const RESERVE_SYNTHESIS = { modelCalls: 10, modelTokens: 30_000 };
+
+/** Eight unmet branches over one small corpus, so every retrieve is exactly one assess call. */
+function makeWideFixture(seed: string, limits = RESERVE_LIMITS, synthesis = RESERVE_SYNTHESIS) {
+  const ctx = createCtx(limits, synthesis);
+  const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}`, longParagraph(seed));
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const passages = index.all();
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const branches: Investigation['branches'] = Array.from({ length: 8 }, (_, i) => ({
+    id: `branch-${seed}-${i}`, objectiveId: objective.id, question: `Which ${seed} survey method repeats (${i})?`,
+    anchor: `${seed} quantum foxberry ${i}`, origin: 'initial' as const, introducing: [],
+    priority: 0.7 - i * 0.01, status: 'active' as const,
+    needs: [{ id: `need-${seed}-${i}`, question: `identify survey method ${i}`, weight: 1, status: 0 as const }],
+    aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  }));
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches,
+    snapshotIds: [snapshot.id], passages, corpusRevision: 1 };
+  validateInvestigation(state);
+  ctx.state = state;
+  // Observed per-call usage close to the reserved amount, as a real provider reports it.
+  ctx.usage = { input: 8_500, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 9_000, costKind: 'model-estimate' };
+  ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  return { ctx, state };
+}
+
+/** Assess operations the ledger actually reserved during the run. */
+const assessOps = (ledger: Ledger, allowanceId: string) =>
+  ledger.snapshot(allowanceId).operations.filter(op => (op.payload as { task?: string } | undefined)?.task === 'assess');
+
+async function caseFollowUpReserve(): Promise<void> {
+  const { ctx, state } = makeWideFixture('reserve');
+  const allowanceId = state.allowanceId;
+  try {
+    const start = await engineFor(ctx, state).run();
+    const afterStart = ctx.ledger.snapshot(allowanceId);
+    const startAssess = ctx.modelCalls.assess ?? 0;
+    const callCost = Math.max(0, ...assessOps(ctx.ledger, allowanceId).map(op => op.amount.modelTokens ?? 0));
+    const remaining = afterStart.lanes.work.remaining.modelTokens;
+    check('F start dispatches real assessments before the hold blocks it', startAssess >= 2, `assess=${startAssess}`);
+    check('F start stops on the follow-up hold, not exhaustion',
+      start.status === 'complete' && /held for the first follow-up/.test(start.stopReason ?? '') && !/exhausted/.test(start.stopReason ?? ''), String(start.stopReason));
+    check('F the hold keeps one full assessment of the work lane available',
+      callCost > 0 && remaining >= callCost, `call=${callCost} remaining=${remaining}`);
+    check('F the hold is headroom, not a ledger reservation',
+      afterStart.lanes.work.reserved.modelTokens === 0 && afterStart.lanes.synthesis.reserved.modelTokens === 0,
+      `work=${afterStart.lanes.work.reserved.modelTokens} synthesis=${afterStart.lanes.synthesis.reserved.modelTokens}`);
+    check('F accounting confirms only observed usage, never the hold',
+      afterStart.confirmed.modelTokens === startAssess * ctx.usage.totalTokens, `confirmed=${afterStart.confirmed.modelTokens} expected=${startAssess * ctx.usage.totalTokens}`);
+
+    const second = await engineFor(ctx).run();
+    check('F a repeated start cannot spend the held capacity',
+      (ctx.modelCalls.assess ?? 0) === startAssess && /held for the first follow-up/.test(second.stopReason ?? ''),
+      `assess=${ctx.modelCalls.assess} stop=${String(second.stopReason)}`);
+
+    const continuation = await engineFor(ctx).run('', 'continue');
+    const continueAssess = (ctx.modelCalls.assess ?? 0) - startAssess;
+    check('F continue releases the reserve and dispatches the follow-up assessment',
+      continueAssess >= 1, `assess=${ctx.modelCalls.assess}`);
+    check('F continue is no longer stopped by the hold',
+      !/held for the first follow-up/.test(continuation.stopReason ?? ''), String(continuation.stopReason));
+  } finally { retire(ctx); }
+}
+
+async function caseSmallLaneReserve(): Promise<void> {
+  // 40,000-token work lane: the hold is 10,000 (25%), not the 24,000 ceiling.
+  const { ctx, state } = makeWideFixture('smallreserve', { ...LIMITS, modelTokens: 70_000 });
+  try {
+    const start = await engineFor(ctx, state).run();
+    const afterStart = ctx.ledger.snapshot(state.allowanceId);
+    const remaining = afterStart.lanes.work.remaining.modelTokens;
+    check('F a small lane caps the hold proportionally instead of starving start',
+      (ctx.modelCalls.assess ?? 0) >= 3 && remaining < 24_000, `assess=${ctx.modelCalls.assess} remaining=${remaining}`);
+    check('F the small-lane stop still explains the hold', /held for the first follow-up/.test(start.stopReason ?? ''), String(start.stopReason));
+  } finally { retire(ctx); }
+}
+
+async function caseFollowUpCallReserve(): Promise<void> {
+  // Work-lane call cap 6 ⇒ a one-call hold (25% of six), not the three-call ceiling.
+  const { ctx, state } = makeWideFixture('callreserve', { ...LIMITS, modelCalls: 8 }, { modelCalls: 2, modelTokens: 30_000 });
+  try {
+    const start = await engineFor(ctx, state).run();
+    const startAssess = ctx.modelCalls.assess ?? 0;
+    check('F the call hold is proportional, so start keeps most of its calls',
+      startAssess >= 4 && /held for the first follow-up/.test(start.stopReason ?? '') && /modelCalls/.test(start.stopReason ?? ''),
+      `assess=${startAssess} stop=${String(start.stopReason)}`);
+    check('F the call hold keeps one call for the follow-up',
+      ctx.ledger.snapshot(state.allowanceId).lanes.work.remaining.modelCalls === 1,
+      `remainingCalls=${ctx.ledger.snapshot(state.allowanceId).lanes.work.remaining.modelCalls}`);
+    await engineFor(ctx).run('', 'continue');
+    check('F continue spends the protected call', (ctx.modelCalls.assess ?? 0) > startAssess, `assess=${ctx.modelCalls.assess}`);
+  } finally { retire(ctx); }
+}
+
+// ------------------------- G: compact synthesis packet and packet-bound citations
+/** Twelve need-audit witnesses (priority) plus four ordinary support passages, in corpus order. */
+function makePacketFixture(seed: string) {
+  const ctx = createCtx();
+  const text = Array.from({ length: 16 }, (_, i) => longParagraph(`${seed}p${i}`)).join('\n\n');
+  const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}-packet`, text);
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const passages = index.all();
+  if (passages.length !== 16) throw new Error(`packet fixture expected 16 passages, got ${passages.length}`);
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const needs = passages.slice(0, 12).map((passage, i) => ({
+    id: `need-${seed}-${i}`, question: `addressed question ${i}`, weight: 1 / 12, status: 1 as const,
+    assessment: { passageIds: [passage.id], reason: `audit witness ${i}`, corpusRevision: 1, createdAt: new Date().toISOString() },
+  }));
+  const branch: Investigation['branches'][number] = {
+    id: `branch-${seed}`, objectiveId: objective.id, question: 'Which survey methods repeat?', anchor: 'quantum foxberry taxonomy',
+    origin: 'initial', introducing: [], priority: 0.7, status: 'active', needs, aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  };
+  const contributions = passages.slice(12).map(passage => ({
+    objectiveId: objective.id, branchId: branch.id, needId: needs[0]!.id, passageId: passage.id,
+    duplicateGroup: passage.duplicateGroup, role: 'support' as const, assessment: 'ordinary supporting evidence',
+  }));
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches: [branch],
+    snapshotIds: [snapshot.id], passages, contributions, corpusRevision: 1 };
+  branch.retrievalKey = retrievalKey(state, branch); // unchanged key: no refresh assessment before synthesis
+  validateInvestigation(state);
+  ctx.state = state;
+  return { ctx, state, passages, witnesses: passages.slice(0, 12), ordinary: passages.slice(12) };
+}
+
+async function caseCompactReportPacket(): Promise<void> {
+  const f = makePacketFixture('compact');
+  try {
+    f.ctx.report = input => {
+      const packet = input.evidence as { passageId: string }[];
+      return { sections: [{ title: 'Answer', statements: [
+        { text: 'The earliest witness supports the answer.', citations: [{ passageId: packet[0]!.passageId, start: 0, end: 20 }] },
+        { text: 'The latest witness qualifies it.', citations: [{ passageId: packet.at(-1)!.passageId, start: 5, end: 30 }] },
+      ] }] };
+    };
+    const final = await engineFor(f.ctx).run('', 'report');
+    const packet = f.ctx.reportInputs[0]?.evidence as { passageId: string; text: string }[] | undefined;
+    const report = final.reports.at(-1)!;
+    const ids = new Set((packet ?? []).map(p => p.passageId));
+    const chars = (packet ?? []).reduce((sum, p) => sum + p.text.length, 0);
+    check('G synthesis is called once with a packet under the hard maximum',
+      f.ctx.modelCalls.report === 1 && !!packet && packet.length <= 40 && chars <= 48_000, `calls=${f.ctx.modelCalls.report} packet=${packet?.length} chars=${chars}`);
+    check('G every need-audit witness is kept past the compact target',
+      f.witnesses.every(p => ids.has(p.id)) && (packet?.length ?? 0) > 10 && chars > 16_000, `packet=${packet?.length} chars=${chars}`);
+    check('G ordinary evidence beyond the compact target is omitted and disclosed',
+      f.ordinary.every(p => !ids.has(p.id)) && f.ctx.reportInputs[0]?.evidenceOmitted === 4
+      && /compact target 10 passages \/ 16000 characters/.test(String(f.ctx.reportInputs[0]?.packetNote)),
+      `omitted=${f.ctx.reportInputs[0]?.evidenceOmitted} note=${String(f.ctx.reportInputs[0]?.packetNote).slice(0, 120)}`);
+    check('G packet citations resolve without the fallback',
+      report.fallback === false && report.sections[0]?.statements.length === 2
+      && report.sections[0]!.statements.every(s => ids.has(s.citations[0]!.passageId)), JSON.stringify(report.sections.map(s => s.statements.length)));
+  } finally { retire(f.ctx); }
+}
+
+async function caseReportPacketCitationBound(): Promise<void> {
+  const f = makePacketFixture('bound');
+  try {
+    // Cite an eligible passage that the compact packet omitted: provenance must fail closed.
+    f.ctx.report = () => ({ sections: [{ title: 'Answer', statements: [
+      { text: 'Omitted evidence supports this claim.', citations: [{ passageId: f.ordinary[0]!.id, start: 0, end: 20 }] },
+    ] }] });
+    const final = await engineFor(f.ctx).run('', 'report');
+    const report = final.reports.at(-1)!;
+    check('G a citation outside the packet falls back instead of publishing', report.fallback === true, `fallback=${report.fallback}`);
+    check('G the invalid report gets exactly one bounded repair attempt', f.ctx.modelCalls.report === 2, `calls=${f.ctx.modelCalls.report}`);
+    check('G the fallback is explicitly extractive',
+      /Extractive evidence outline/.test(report.markdown) && report.sections.every(s => s.statements.every(t => !t.text.includes('Omitted evidence supports this claim.'))));
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
   await caseEpisodeFetchExhaustion();
+  await caseFollowUpReserve(); await caseSmallLaneReserve(); await caseFollowUpCallReserve();
+  await caseCompactReportPacket(); await caseReportPacketCitationBound();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

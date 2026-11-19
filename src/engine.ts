@@ -65,6 +65,22 @@ export const OUTPUT_TOKENS: Record<TaskName, number> = { plan: 3000, assess: 800
 const FRAMING_TOKENS = 512;
 const REPORT_MAX_PASSAGES = 40;
 const REPORT_MAX_CHARS = 48_000;
+/**
+ * Compact initial synthesis packet. A packet filled to the hard maximum made live reports
+ * run into the 12,000 output ceiling and truncate, so ordinary evidence now stops at this
+ * target; priority witnesses may still exceed it up to the hard maximum rather than being
+ * dropped for length.
+ */
+const REPORT_PACKET_PASSAGES = 10;
+const REPORT_PACKET_CHARS = 16_000;
+/**
+ * Work-lane capacity held back during `start` and released for `continue`, so the first
+ * follow-up can still afford a full contextual assessment after a long start. The hold is
+ * guarded precheck headroom only: it reserves nothing in the ledger and consumes nothing.
+ */
+const FOLLOW_UP_RESERVE: Usage = { modelTokens: 24_000, modelCalls: 3 };
+/** A hold never exceeds this share of the work lane, so small allowances can still work. */
+const FOLLOW_UP_RESERVE_SHARE = 0.25;
 const MAX_EVAL_FAILURES = 2;
 const BRANCHES_PER_EXPANSION_CYCLE = 2;
 const DEFAULT_STOP = 'No eligible worthwhile action remains; unresolved needs stay visible. Answer coverage is not factual confidence.';
@@ -228,6 +244,8 @@ export class ResearchEngine {
   private indexCache?: PassageIndex;
   private actions = 0;
   private evalFailures = 0;
+  /** True only for a `start` run: work-lane dispatches then hold the follow-up reserve. */
+  private holdFollowUpReserve = false;
 
   constructor(args: ResearchEngineArgs) {
     this.state = structuredClone(args.state);
@@ -316,6 +334,28 @@ export class ResearchEngine {
 
   // ------------------------------------------------------------- dispatch checks
 
+  /**
+   * Proportional work-lane headroom held for the first follow-up, or `undefined` when
+   * this run holds nothing back (`continue`, `report`, standalone fetch). Small lanes
+   * hold proportionally less — possibly nothing — rather than starving the run.
+   */
+  private followUpReserve(cap: Record<Resource, number>): Usage | undefined {
+    if (!this.holdFollowUpReserve) return undefined;
+    const held = (total: number, reserve: number | undefined): number =>
+      Math.min(reserve ?? 0, Math.floor(total * FOLLOW_UP_RESERVE_SHARE));
+    const usage: Usage = {
+      modelTokens: held(cap.modelTokens, FOLLOW_UP_RESERVE.modelTokens),
+      modelCalls: held(cap.modelCalls, FOLLOW_UP_RESERVE.modelCalls),
+    };
+    return usage.modelTokens || usage.modelCalls ? usage : undefined;
+  }
+
+  /**
+   * Capacity check before dispatch. The synthesis lane keeps its own protected carve-out;
+   * during `start` the work lane additionally holds the follow-up reserve back. A refusal
+   * here is a controlled stop, not a grant: it reserves and consumes nothing, and the
+   * reserve becomes available again as soon as the follow-up actually runs.
+   */
   private precheck(amount: Usage, lane: 'work' | 'synthesis' = 'work'): void {
     if (this.signal.aborted) throw this.signal.reason instanceof Error ? this.signal.reason : new Error('Research run aborted');
     const snapshot = this.ledger.snapshot(this.state.allowanceId);
@@ -325,6 +365,14 @@ export class ResearchEngine {
       const resource = key as Resource;
       if ((remaining[resource] ?? 0) < (value ?? 0)) {
         throw new StopRun(`${resource} allowance exhausted (${remaining[resource] ?? 0} < ${value}); committed results are retained. Provider-hidden usage stays unknown.`);
+      }
+    }
+    const held = lane === 'work' ? this.followUpReserve(snapshot.lanes.work.cap) : undefined;
+    for (const [key, value] of Object.entries(held ?? {})) {
+      const resource = key as Resource;
+      const needed = amount[resource] ?? 0;
+      if (needed > 0 && (remaining[resource] ?? 0) - needed < (value ?? 0)) {
+        throw new StopRun(`Work-lane ${resource} is held for the first follow-up: ${remaining[resource] ?? 0} remains, this dispatch needs ${needed}, and ${value} stays reserved until the follow-up runs. Nothing was consumed by the hold; committed results are retained.`);
       }
     }
   }
@@ -414,6 +462,8 @@ export class ResearchEngine {
   // ------------------------------------------------------------- run entry points
 
   async run(input = '', kind: RunKind = 'start'): Promise<Investigation> {
+    // Only a start protects the first follow-up; continue (and report refresh) may use that reserve.
+    this.holdFollowUpReserve = kind === 'start';
     try {
       this.commit(draft => { draft.status = 'running'; draft.stopReason = undefined; });
       this.progress(`Research run started (${kind}).`);
@@ -1183,12 +1233,15 @@ export class ResearchEngine {
 
   /**
    * Bounded, full-passage packet from current-objective evidence only; offsets stay
-   * passage-relative. The unchanged 40-passage/48k-character cap is filled in priority
-   * order — current need-audit witnesses, then current-objective qualification and
-   * contradiction contributions, then remaining eligible evidence in corpus order — so
-   * a late audit or contradictory passage is not crowded out by chronology. Every
-   * included passage stays whole; omitted eligible passages are reported to the model
-   * as a bounded-packet count and caveat, never as confidence.
+   * passage-relative. Passages are taken in priority order — current need-audit witnesses,
+   * then current-objective qualification and contradiction contributions, then remaining
+   * eligible evidence in corpus order — so a late audit or contradictory passage is not
+   * crowded out by chronology. Ordinary evidence fills only the compact packet target
+   * (REPORT_PACKET_PASSAGES/REPORT_PACKET_CHARS), while a priority witness that fits the
+   * unchanged hard maximum (REPORT_MAX_PASSAGES/REPORT_MAX_CHARS) is retained even past
+   * that target, so no witness is dropped merely for length. Every included passage stays
+   * whole; omitted eligible passages are reported to the model as a bounded-packet count
+   * and caveat, never as confidence.
    */
   private async synthesize(): Promise<Report | undefined> {
     this.assertGuard();
@@ -1198,18 +1251,20 @@ export class ResearchEngine {
     const branches = this.state.branches.filter(b => b.objectiveId === objective.id && b.status !== 'rejected' && b.status !== 'archived');
     const evidenceById = new Map(evidence.map(p => [p.id, p]));
     const ordered: string[] = [];
+    const witnesses = new Set<string>();
     const seen = new Set<string>();
-    const take = (id: string): void => {
+    const take = (id: string, witness = false): void => {
+      if (witness && evidenceById.has(id)) witnesses.add(id);
       if (seen.has(id) || !evidenceById.has(id)) return;
       seen.add(id);
       ordered.push(id);
     };
-    for (const branch of branches) for (const need of branch.needs) for (const id of need.assessment?.passageIds ?? []) take(id);
+    for (const branch of branches) for (const need of branch.needs) for (const id of need.assessment?.passageIds ?? []) take(id, true);
     const currentBranchIds = new Set(branches.map(b => b.id));
     for (const contribution of this.state.contributions) {
       if (contribution.objectiveId !== objective.id || !currentBranchIds.has(contribution.branchId)) continue;
       if (contribution.role !== 'qualification' && contribution.role !== 'contradiction') continue;
-      take(contribution.passageId);
+      take(contribution.passageId, true);
     }
     for (const passage of evidence) take(passage.id);
 
@@ -1217,9 +1272,11 @@ export class ResearchEngine {
     const packet: { passageId: string; snapshotId: string; title: string; url: string; section: string | null; page: number | null; text: string }[] = [];
     let used = 0;
     for (const id of ordered) {
-      if (packet.length >= REPORT_MAX_PASSAGES) break;
+      if (packet.length >= REPORT_MAX_PASSAGES) break; // hard maximum is never exceeded
       const passage = evidenceById.get(id)!;
-      if (used + passage.text.length > REPORT_MAX_CHARS) continue;
+      if (used + passage.text.length > REPORT_MAX_CHARS) continue; // oversized for the hard bound: skip, keep scanning
+      const compact = packet.length >= REPORT_PACKET_PASSAGES || used >= REPORT_PACKET_CHARS;
+      if (compact && !witnesses.has(id)) continue; // ordinary evidence only fills the compact target
       const snapshot = bySnapshot.get(passage.snapshotId);
       if (!snapshot) continue;
       packet.push({
@@ -1227,7 +1284,6 @@ export class ResearchEngine {
         url: snapshot.finalUrl, section: passage.section ?? null, page: passage.page ?? null, text: passage.text,
       });
       used += passage.text.length;
-      if (used >= REPORT_MAX_CHARS) break;
     }
     if (!packet.length) return buildReport(this.state, snapshots); // deterministic outline; no call, no fabrication
     const packetIds = new Set(packet.map(p => p.passageId));
@@ -1249,8 +1305,8 @@ export class ResearchEngine {
       })),
       evidence: packet,
       evidenceOmitted,
-      packetNote: `Bounded evidence packet: ${packet.length} of ${evidence.length} currently eligible passages are supplied (cap ${REPORT_MAX_PASSAGES} passages / ${REPORT_MAX_CHARS} characters; ${evidenceOmitted} omitted). Omitted passages are not evidence of absence: never infer confidence from the packet bound and never claim that a qualification or contradiction is missing.`,
-      citationRule: 'Citations are {passageId, start, end} with UTF-16 offsets relative to the supplied passage text (base 0). Cite only supplied passageIds; never invent URLs or facts.',
+      packetNote: `Bounded evidence packet: ${packet.length} of ${evidence.length} currently eligible passages are supplied (compact target ${REPORT_PACKET_PASSAGES} passages / ${REPORT_PACKET_CHARS} characters, hard maximum ${REPORT_MAX_PASSAGES} / ${REPORT_MAX_CHARS}; priority witnesses may exceed the compact target, ${evidenceOmitted} omitted). Omitted passages are not evidence of absence: never infer confidence from the packet bound and never claim that a qualification or contradiction is missing.`,
+      citationRule: 'Citations are {passageId, start, end} with UTF-16 offsets relative to the supplied passage text (base 0). Cite only supplied passageIds; never invent URLs or facts. Supplied passages you did not need may stay uncited.',
     };
     const build = (value: unknown): Report => buildReport(this.state, snapshots, value, packetIds);
     let value: unknown;
