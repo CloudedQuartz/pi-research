@@ -14,7 +14,7 @@
     "test:context": "tsx test/pi-model-context.test.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "demo": "tsx scripts/demo.ts",
-    "test:evaluate": "tsx test/evaluate.test.ts",
+    "test:evaluate": "tsx test/evaluate.test.ts && tsx test/browsecomp-plus.test.ts",
     "test": "npm run test:ir && npm run test:engine && npm run test:sdk && npm run test:context && npm run test:evaluate"
   },
   "keywords": [

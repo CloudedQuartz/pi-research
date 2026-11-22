@@ -10,4 +10,5 @@ coverage/
 *-dataset.json
 cisi-dataset.json
 evaluation/*-latest.json
+benchmark-data/
 

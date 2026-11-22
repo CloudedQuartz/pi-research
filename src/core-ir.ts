@@ -25,8 +25,8 @@ import type {
  *   from the hits it receives, never from mutable global index pointers.
  */
 
-const K1 = 1.2;
-const B = 0.75;
+export const K1 = 1.2;
+export const B = 0.75;
 const PHRASE_EXACT_BONUS = 0.25;
 const PHRASE_OCCURRENCE_BONUS = 0.05;
 const PHRASE_PROXIMITY_BONUS = 0.10;
@@ -53,7 +53,7 @@ const USED_VOCAB_DISCOUNT = 0.5;
 const MAX_NGRAM = 4;
 
 /** Standard English stopwords; apostrophe splits (don't -> don + t) are covered. */
-const STOPWORDS = new Set(`
+export const STOPWORDS = new Set(`
 i me my myself we our ours ourselves you your yours yourself yourselves he him his himself she her hers herself
 it its itself they them their theirs themselves what which who whom this that these those am is are was were be been
 being have has had having do does did doing a an the and but if or because as until while of at by for with about
@@ -235,7 +235,7 @@ export function stem(word: string): string {
 }
 
 /** Scoring normalization: the surface stream minus stopwords. */
-const keyTerms = (text: string): string[] =>
+export const keyTerms = (text: string): string[] =>
   tokenize(text).filter(token => !STOPWORDS.has(token.term)).map(token => token.term);
 
 /**

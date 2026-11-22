@@ -295,19 +295,36 @@ export function studentTTwoTailedP(t: number, df: number): number {
   };
 
   const lnBeta = betaLn(a) + betaLn(b) - betaLn(a + b);
-  let f = 1.0, c = 1.0, d = 0.0;
-  for (let m = 1; m <= 60; m++) {
-    let num = -(a + m - 1) * (a + b + m - 1) * x / ((a + 2 * m - 2) * (a + 2 * m - 1));
-    d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30; d = 1.0 / d;
-    c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
-    f *= c * d;
-
-    num = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m));
-    d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30; d = 1.0 / d;
-    c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
-    f *= c * d;
-  }
-  const ix = Math.exp(a * Math.log(x) + b * Math.log(1 - x) - lnBeta) * (f / a);
+  const betacf = (aa: number, bb: number, xx: number): number => {
+    const qab = aa + bb;
+    const qap = aa + 1.0;
+    const qam = aa - 1.0;
+    let c = 1.0;
+    let d = 1.0 - (qab * xx) / qap;
+    if (Math.abs(d) < 1e-30) d = 1e-30;
+    d = 1.0 / d;
+    let h = d;
+    for (let m = 1; m <= 100; m++) {
+      const m2 = 2 * m;
+      let num = (m * (bb - m) * xx) / ((qam + m2) * (aa + m2));
+      d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+      c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+      d = 1.0 / d;
+      h *= d * c;
+      num = -((aa + m) * (qab + m) * xx) / ((aa + m2) * (qap + m2));
+      d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+      c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+      d = 1.0 / d;
+      const del = d * c;
+      h *= del;
+      if (Math.abs(del - 1.0) < 3e-12) break;
+    }
+    return h;
+  };
+  const bt = Math.exp(a * Math.log(x) + b * Math.log(1 - x) - lnBeta);
+  const ix = x < (a + 1.0) / (a + b + 2.0)
+    ? (bt * betacf(a, b, x)) / a
+    : 1.0 - (bt * betacf(b, a, 1.0 - x)) / b;
   return Math.min(1.0, Math.max(0.0, ix));
 }
 
