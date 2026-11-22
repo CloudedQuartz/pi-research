@@ -81,3 +81,9 @@ The follow-up used the same investigation and allowance, with unchanged snapshot
 Across the two dispatched requests, the ledger recorded 2 searches, 6 fetches, 14 acquisition HTTP requests, 21 nested model calls, 143,111 nested model tokens, and 1,186,451 ms of active time. All 43 operations settled; no writer or unknown exposure remained. The aggregate 36,889 tokens left included protected synthesis capacity and was not available in full to work-lane calls.
 
 The rerun verifies that the old deadline is gone. It does **not** verify a useful synthesized answer and follow-up in one fresh session. The observed blockers are model dispatch reliability, synthesis output truncation, and insufficient work-lane capacity for follow-up assessment. Private artifacts are under `/tmp/pi-research-live-9cbe38e-UYCYcf/`.
+
+## First-follow-up budget change
+
+Commit `3d36cf6` holds back up to 24,000 work-lane tokens and three calls during the initial run, capped at 25% of the work lane for smaller allowances. The hold consumes no budget and does not apply to the follow-up. The same commit reduces the synthesis evidence packet for ordinary passages while preserving priority witnesses within the hard bounds. Regression checks cover release of the hold during continuation and citation validation against the smaller packet.
+
+In the fresh live attempt on `3d36cf6`, the command obtained native authorization, but the outer DeepSeek model treated the extension's user-role handoff as untrusted text and declined to invoke `research_run`. The ledger recorded an authorized request, zero claims, and zero research operations. No discovery, initial answer, or follow-up ran, so this attempt did not exercise the new engine behavior. A useful cited answer on both turns of one fresh session remains unverified.
