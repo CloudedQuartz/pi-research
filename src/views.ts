@@ -1,4 +1,4 @@
-import type { Action, Branch, Concept, Contribution, Investigation, Passage, SearchHit, Snapshot, SourceCandidate } from './types.js';
+import type { Action, Branch, Concept, Contribution, Investigation, Passage, ProgressInfo, SearchHit, Snapshot, SourceCandidate } from './types.js';
 import { normalizeUrl } from './acquisition.js';
 
 export type Inspection = Branch | Concept | SourceCandidate | Action | {
@@ -257,4 +257,115 @@ export function inspectState(state: Investigation, id: string, snapshots: Snapsh
 
 export function rankText(hits: SearchHit[]): string {
   return safeText(hits.map((h, i) => `${i + 1}. ${h.passage.id} score=${h.score.toFixed(4)}${h.mmr !== undefined ? ` mmr=${h.mmr.toFixed(4)}` : ''}\n  length ${h.length}; avg ${h.averageLength.toFixed(2)}; phrase bonus ${h.phraseBonus.toFixed(4)}\n${h.terms.map(t => `  ${t.term}: weight=${t.weight.toFixed(3)} tf=${t.tf} df=${t.df} idf=${t.idf.toFixed(4)} contribution=${t.contribution.toFixed(4)}`).join('\n')}\n  ${h.passage.text}`).join('\n\n'));
+}
+
+/**
+ * Renders a compact stage-based progress bar.
+ * Example: `[██████░░░░] 3/5 stages`
+ */
+export function renderProgressBar(stage?: number, totalStages?: number, width = 10): string {
+  if (!stage || !totalStages || totalStages <= 0) {
+    return stage ? `[Stage ${stage}]` : '';
+  }
+  const clampedStage = Math.max(0, Math.min(totalStages, stage));
+  const filled = Math.round((clampedStage / totalStages) * width);
+  const empty = width - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  return `[${bar}] ${clampedStage}/${totalStages} stages`;
+}
+
+/**
+ * Compact single-line status for the terminal status bar (`ctx.ui.setStatus`).
+ * Format: `[3/5] Acquiring sources · Calls: 12/40 · 8 sources · 6 assessed`
+ */
+export function renderProgressStatus(
+  state: Investigation,
+  info?: ProgressInfo,
+  modelCalls?: { confirmed: number; limit: number },
+  message?: string
+): string {
+  const parts: string[] = [];
+
+  if (info?.stage && info?.totalStages) {
+    parts.push(`[${info.stage}/${info.totalStages}]`);
+  } else if (state.status === 'complete') {
+    parts.push('[Complete]');
+  }
+
+  const activity = info?.activity ?? (message ? (message.length > 40 ? `${message.slice(0, 37)}...` : message) : `Research ${state.status}`);
+  parts.push(activity);
+
+  if (modelCalls) {
+    parts.push(`Calls: ${modelCalls.confirmed}/${modelCalls.limit}`);
+  }
+
+  const sources = state.snapshotIds.length;
+  const assessed = state.contributions.length;
+  parts.push(`${sources} source${sources === 1 ? '' : 's'} · ${assessed} assessed`);
+
+  return safeText(parts.join(' · '));
+}
+
+/**
+ * Compact multi-line progress widget rendered in the terminal UI (`ctx.ui.setWidget`).
+ * Provides an at-a-glance view of current activity, stage completion, counters, and needs.
+ */
+export function renderProgressWidget(
+  state: Investigation,
+  info?: ProgressInfo,
+  modelCalls?: { confirmed: number; limit: number }
+): string[] {
+  const lines: string[] = [];
+
+  const roundPrefix = info?.round && info.round > 1 ? ` (Round ${info.round})` : '';
+  const bar = renderProgressBar(info?.stage, info?.totalStages);
+  const activity = info?.activity ?? (state.status === 'complete' ? 'Research completed' : `Research ${state.status}`);
+  if (bar) {
+    lines.push(`Research${roundPrefix}: ${bar} · ${activity}`);
+  } else {
+    lines.push(`Research${roundPrefix}: ${activity}`);
+  }
+
+  const sources = state.snapshotIds.length;
+  const assessed = state.contributions.length;
+  const callsText = modelCalls ? ` | Model calls: ${modelCalls.confirmed} / ${modelCalls.limit}` : '';
+  lines.push(`Sources acquired: ${sources} | Evidence assessed: ${assessed}${callsText}`);
+
+  const objective = state.objectives.find(o => o.id === state.activeObjectiveId);
+  const question = objective?.question ?? state.originalQuestion;
+  const truncatedQ = question.length > 70 ? `${question.slice(0, 67)}...` : question;
+  lines.push(`Objective: ${truncatedQ}`);
+
+  const branches = state.branches.filter(b => b.objectiveId === state.activeObjectiveId && b.status !== 'archived');
+  const allNeeds = branches.flatMap(b => b.needs);
+  const addressed = allNeeds.filter(n => n.status === 1).length;
+  const partial = allNeeds.filter(n => n.status === 0.5).length;
+  const totalWeight = allNeeds.reduce((sum, n) => sum + n.weight, 0);
+  const coveragePct = totalWeight > 0
+    ? Math.round((allNeeds.reduce((sum, n) => sum + n.weight * n.status, 0) / totalWeight) * 100)
+    : 0;
+  lines.push(`Needs: ${addressed}/${allNeeds.length} addressed (${coveragePct}%)${partial > 0 ? ` [${partial} partial]` : ''} · ${state.passages.length} passages`);
+
+  const openOrPartialNeeds = allNeeds.filter(n => n.status < 1);
+  const sampleNeeds = (openOrPartialNeeds.length ? openOrPartialNeeds : allNeeds).slice(0, 3);
+  for (const n of sampleNeeds) {
+    const icon = n.status === 1 ? '✓' : n.status === 0.5 ? '◐' : '○';
+    const label = n.status === 1 ? 'addressed' : n.status === 0.5 ? 'partial' : 'open';
+    const q = n.question.length > 55 ? `${n.question.slice(0, 52)}...` : n.question;
+    lines.push(`  ${icon} ${q} [${label}]`);
+  }
+
+  const report = state.reports.at(-1);
+  if (state.status === 'complete' && report) {
+    if (report.fallback) {
+      lines.push('  ⚠️ Extractive fallback report (model synthesis unavailable)');
+    } else {
+      lines.push(`  Report synthesized (${report.sections.reduce((s, sec) => s + sec.statements.length, 0)} statements with citations)`);
+    }
+  } else if (state.stopReason) {
+    const shortReason = state.stopReason.length > 70 ? `${state.stopReason.slice(0, 67)}...` : state.stopReason;
+    lines.push(`  Status: ${shortReason}`);
+  }
+
+  return lines.map(safeText);
 }

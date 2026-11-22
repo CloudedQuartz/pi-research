@@ -107,6 +107,13 @@ export interface PlanResult {
   question: string; constraints: string[];
   facets: { question: string; anchor: string; priority: number; needs: string[] }[];
 }
+export interface ProgressInfo {
+  activity: string;
+  stage?: number;
+  totalStages?: number;
+  round?: number;
+  phase?: 'plan' | 'search' | 'acquire' | 'evaluate' | 'expand' | 'report' | 'complete' | 'failed' | 'stopped';
+}
 export interface EvidenceAssessment {
   contributions: { passageId: string; needId: string; role: EvidenceRole; status: 0.5 | 1; assessment: string }[];
   relevantPassageIds: string[];
@@ -129,5 +136,5 @@ export interface EngineHost {
   acquire(url: string, signal: AbortSignal): Promise<Snapshot>;
   commit(state: Investigation): void;
   isCurrent(): boolean;
-  progress(message: string, state: Investigation): void;
+  progress(message: string, state: Investigation, info?: ProgressInfo): void;
 }

@@ -21,7 +21,7 @@ import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
 import { isBotChallenge, isThinContent, normalizeUrl, parseArticleLinks, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
-import { classifyFailure, formatAcquisitionSummary, needCorroboration, sourceList, summarizeAcquisition } from '../src/views.js';
+import { classifyFailure, formatAcquisitionSummary, needCorroboration, renderProgressBar, renderProgressStatus, renderProgressWidget, sourceList, summarizeAcquisition } from '../src/views.js';
 import { buildReport, statementCorroboration } from '../src/report.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
@@ -977,6 +977,82 @@ async function caseLinkHarvestingAndCorroboration(): Promise<void> {
   } finally { retire(ctx); }
 }
 
+// ------------------------------ M: TUI Progress, Stage Bar, Usage and Fallback Rendering
+async function caseProgressAndUsageRendering(): Promise<void> {
+  // 1. Stage-based progress bar
+  check('M renderProgressBar formats 3/5 stages',
+    renderProgressBar(3, 5) === '[██████░░░░] 3/5 stages',
+    `bar=${renderProgressBar(3, 5)}`);
+  check('M renderProgressBar formats 5/5 complete stages',
+    renderProgressBar(5, 5) === '[██████████] 5/5 stages',
+    `bar=${renderProgressBar(5, 5)}`);
+  check('M renderProgressBar formats 1/2 stages',
+    renderProgressBar(1, 2) === '[█████░░░░░] 1/2 stages',
+    `bar=${renderProgressBar(1, 2)}`);
+
+  // 2. Status line formatting
+  const f = makeFixture('progress-test');
+  try {
+    f.state.snapshotIds = [f.snapshot.id];
+    f.state.contributions = [supportRow(f, 'witness')];
+
+    const statusRunning = renderProgressStatus(
+      f.state,
+      { activity: 'Acquiring sources', stage: 3, totalStages: 5, round: 1 },
+      { confirmed: 12, limit: 40 }
+    );
+    check('M renderProgressStatus includes stage prefix, activity, calls, and counters',
+      statusRunning.includes('[3/5]') &&
+      statusRunning.includes('Acquiring sources') &&
+      statusRunning.includes('Calls: 12/40') &&
+      statusRunning.includes('1 source') &&
+      statusRunning.includes('1 assessed'),
+      `status=${statusRunning}`);
+
+    // 3. Progress widget rendering
+    const widgetLines = renderProgressWidget(
+      f.state,
+      { activity: 'Acquiring sources', stage: 3, totalStages: 5, round: 1 },
+      { confirmed: 12, limit: 40 }
+    );
+    check('M renderProgressWidget line 1 has stage progress bar and activity',
+      widgetLines[0] !== undefined && widgetLines[0].includes('[██████░░░░] 3/5 stages · Acquiring sources'),
+      `line0=${widgetLines[0]}`);
+    check('M renderProgressWidget line 2 has sources, evidence, and model calls',
+      widgetLines[1] !== undefined && widgetLines[1].includes('Sources acquired: 1 | Evidence assessed: 1 | Model calls: 12 / 40'),
+      `line1=${widgetLines[1]}`);
+    check('M renderProgressWidget line 3 has objective question',
+      widgetLines[2] !== undefined && widgetLines[2].includes('Objective: Quantum foxberry taxonomy'),
+      `line2=${widgetLines[2]}`);
+
+    // 4. Extractive fallback labeling
+    const reportFallback = buildReport(f.state, [f.snapshot]);
+    check('M fallback report has fallback: true', reportFallback.fallback === true);
+    f.state.reports.push(reportFallback);
+    f.state.status = 'complete';
+
+    const widgetFallback = renderProgressWidget(f.state);
+    check('M widget explicitly warns when report is an extractive fallback',
+      widgetFallback.some(line => line.includes('⚠️ Extractive fallback report')),
+      `widget=${widgetFallback.join('\n')}`);
+
+    const statusFallback = renderProgressStatus(f.state, { activity: 'Research completed (extractive fallback)' });
+    check('M status line labels extractive fallback on completion',
+      statusFallback.includes('extractive fallback') && statusFallback.includes('[Complete]'),
+      `status=${statusFallback}`);
+
+    // 5. Failure state
+    const statusFailed = renderProgressStatus(
+      f.state,
+      { activity: 'Research failed: Model timeout at Evaluating evidence' },
+      { confirmed: 15, limit: 40 }
+    );
+    check('M status line displays failure message and final calls cleanly',
+      statusFailed.includes('Research failed') && statusFailed.includes('Calls: 15/40'),
+      `status=${statusFailed}`);
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -988,6 +1064,7 @@ async function main(): Promise<void> {
   await caseAcquisitionSummaryView();
   await caseMetadataExtractionAndCanonicalDedup();
   await caseLinkHarvestingAndCorroboration();
+  await caseProgressAndUsageRendering();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

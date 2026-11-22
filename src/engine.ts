@@ -10,7 +10,7 @@ import { parseAssessment, parseDecisions, parsePlan } from './task-validation.js
 import type { Ledger } from './allowance.js';
 import type {
   Action, Branch, Concept, DiscoveryResult, EvidenceAssessment, Investigation, ModelResponse, ModelUsage,
-  Objective, Passage, PlanResult, Report, Resource, SearchHit, Snapshot, SourceCandidate, Span, Usage,
+  Objective, Passage, PlanResult, ProgressInfo, Report, Resource, SearchHit, Snapshot, SourceCandidate, Span, Usage,
 } from './types.js';
 
 export { newInvestigation, feedback } from './engine-state.js';
@@ -251,6 +251,9 @@ export class ResearchEngine {
   private knownCanonicalUrls = new Set<string>();
   /** True only for a `start` run: work-lane dispatches then hold the follow-up reserve. */
   private holdFollowUpReserve = false;
+  private round = 1;
+  private currentStage = 1;
+  private totalStages = 5;
 
   constructor(args: ResearchEngineArgs) {
     this.state = structuredClone(args.state);
@@ -330,7 +333,27 @@ export class ResearchEngine {
     } catch { return false; }
   }
 
-  private progress(messageText: string): void { this.host.progress(short(messageText), this.state); }
+  private progress(messageText: string, info?: ProgressInfo): void {
+    const progressInfo: ProgressInfo = info ?? {
+      activity: short(messageText),
+      stage: this.currentStage,
+      totalStages: this.totalStages,
+      round: this.round,
+    };
+    this.host.progress(short(messageText), this.state, progressInfo);
+  }
+
+  private setStage(stage: number, activity: string, phase?: ProgressInfo['phase'], totalStages?: number): void {
+    this.currentStage = stage;
+    if (totalStages !== undefined) this.totalStages = totalStages;
+    this.progress(activity, {
+      activity,
+      stage: this.currentStage,
+      totalStages: this.totalStages,
+      round: this.round,
+      phase,
+    });
+  }
 
   /** Running actions never survive a stop: interrupted, not saturated. */
   private static settleRunning(draft: Investigation): void {
@@ -469,6 +492,9 @@ export class ResearchEngine {
   async run(input = '', kind: RunKind = 'start'): Promise<Investigation> {
     // Only a start protects the first follow-up; continue (and report refresh) may use that reserve.
     this.holdFollowUpReserve = kind === 'start';
+    this.totalStages = kind === 'report' ? 2 : 5;
+    this.currentStage = 1;
+    this.round = 1;
     try {
       this.commit(draft => { draft.status = 'running'; draft.stopReason = undefined; });
       this.progress(`Research run started (${kind}).`);
@@ -489,15 +515,19 @@ export class ResearchEngine {
 
   /** Authorized standalone acquisition of one pending source candidate. */
   async fetchSource(candidateId: string): Promise<Investigation> {
+    this.totalStages = 2;
+    this.currentStage = 1;
+    this.round = 1;
     try {
       const candidate = this.state.candidates.find(c => c.id === candidateId);
       if (!candidate) throw new Error('Unknown source candidate');
       if (candidate.status !== 'unread') throw new Error('Source candidate is not a pending unread action');
       this.commit(draft => { draft.status = 'running'; draft.stopReason = undefined; });
-      this.progress(`Fetching authorized source ${candidate.url}.`);
+      this.setStage(1, `Acquiring sources: ${candidate.url}`, 'acquire', 2);
       const outcome = await this.fetchCandidate(candidate, { nextAction: undefined });
       let yieldCount = 0;
       if (outcome === 'fetched') {
+        this.setStage(2, 'Evaluating evidence', 'evaluate', 2);
         const evaluation = await this.evaluateBranch(candidate.branchId);
         yieldCount = evaluation.yield;
         this.creditFetch(candidate.branchId, evaluation, candidate);
@@ -528,6 +558,7 @@ export class ResearchEngine {
       ? 'Cancelled while running; committed results are retained and no uncertain dispatch was retried.'
       : `Run stopped: ${message(error)}`;
     this.pauseDisposition(reason);
+    this.progress(`Research failed: ${reason}`, { activity: 'Research failed', stage: this.currentStage, totalStages: this.totalStages, round: this.round, phase: 'failed' });
     throw error;
   }
 
@@ -541,13 +572,18 @@ export class ResearchEngine {
       draft.status = paused ? 'paused' : 'complete';
       draft.stopReason = short(stopReason);
     });
-    this.progress(`Research ${this.state.status}: ${this.state.stopReason ?? ''}`);
+    if (paused) {
+      this.progress(`Research paused: ${stopReason}`, { activity: 'Research paused', stage: this.currentStage, totalStages: this.totalStages, round: this.round, phase: 'stopped' });
+    } else {
+      this.setStage(this.totalStages, 'Research completed', 'complete', this.totalStages);
+    }
   }
 
   // ------------------------------------------------------------- planning
 
   private async planInitial(input: string): Promise<void> {
     const question = input.trim() || this.state.originalQuestion;
+    this.setStage(1, 'Planning research', 'plan', 5);
     let plan: PlanResult;
     try {
       plan = await this.validated('plan', { question, originalQuestion: this.state.originalQuestion }, parsePlan);
@@ -580,6 +616,7 @@ export class ResearchEngine {
       this.progress('Continuation matches the current objective; resuming without revision or cooldown reset.');
       return;
     }
+    this.setStage(1, 'Planning research', 'plan', 5);
     let plan: PlanResult;
     try {
       plan = await this.validated('plan', {
@@ -622,13 +659,19 @@ export class ResearchEngine {
       if (this.actions >= this.options.maxActions) throw new StopRun(`Action limit of ${this.options.maxActions} reached; outstanding needs stay visible.`);
       if (proposal.kind === 'retrieve') await this.runRetrieve(proposal);
       else if (proposal.kind === 'fetch') await this.runFetchProposal(proposal);
-      else await this.searchEpisode(proposal);
+      else {
+        const priorSearches = this.state.actions.filter(a => a.kind === 'search').length;
+        this.round = priorSearches + 1;
+        await this.searchEpisode(proposal);
+      }
     }
   }
 
   /** Report requests refresh only local evidence; no external dispatch. */
   private async refreshEvidence(): Promise<void> {
     if (!this.state.objectives.length || !this.state.passages.length) return;
+    this.totalStages = 2;
+    this.setStage(1, 'Evaluating evidence', 'evaluate', 2);
     // Changed context is the refresh trigger: an unchanged key skips, so a fully
     // covered branch is only re-evaluated when corpus, objective, expansion or
     // feedback actually changed.
@@ -701,6 +744,7 @@ export class ResearchEngine {
   private async runRetrieve(proposal: ProposedAction): Promise<void> {
     this.precheck({});
     const actionId = this.actionCheckpoint(proposal, () => { /* local retrieval consumes no reserved resource */ });
+    this.setStage(this.totalStages === 2 ? 1 : 4, 'Evaluating evidence', 'evaluate', this.totalStages);
     this.progress(`Retrieving existing corpus for: ${proposal.reason.slice(0, 120)}`);
     const result = await this.evaluateBranch(proposal.branchId);
     this.finalizeAction(actionId, 'completed', result.yield, result.ok ? undefined : 'contextual assessment failed', { branchId: proposal.branchId, kind: 'retrieve' });
@@ -771,6 +815,7 @@ export class ResearchEngine {
     });
     this.ledger.dispatched(operationId);
     if (!this.guard()) { this.ledger.settle(operationId, {}); throw new StaleError(); } // stale before invocation: no external work
+    this.setStage(2, 'Searching for sources', 'search', this.totalStages);
     this.progress(`Discovery episode started: ${query}`);
     let result: DiscoveryResult;
     try {
@@ -818,6 +863,7 @@ export class ResearchEngine {
       const action = draft.actions.find(a => a.id === actionId);
       if (action) action.candidateIds = created.map(c => c.id);
     });
+    this.setStage(2, 'Screening search results', 'search', this.totalStages);
 
     // One query, then up to N eligible new sources, then evaluation — before rescheduling.
     // Candidates are scored by lexical overlap between their title/snippet and the branch anchor/needs.
@@ -852,6 +898,7 @@ export class ResearchEngine {
       // Never dispatch a fetch without credit: the episode closes truncated and still
       // evaluates the evidence already committed by its successful attempts.
       if (!this.hasFetchCredit()) { truncated = true; break; }
+      this.setStage(3, `Acquiring sources: ${candidate.url}`, 'acquire', this.totalStages);
       const outcome = await this.fetchCandidate(candidate, { nextAction: proposal });
       attempts += 1;
       if (outcome === 'fetched') ingested += 1;
@@ -1075,6 +1122,7 @@ export class ResearchEngine {
     const objective = this.state.objectives.find(o => o.id === this.state.activeObjectiveId)!;
     const assessed = new Set(this.state.contributions.filter(c => c.branchId === branchId).map(c => c.passageId));
     let assessment: EvidenceAssessment;
+    this.setStage(this.totalStages === 2 ? 2 : 4, 'Evaluating evidence', 'evaluate', this.totalStages);
     try {
       assessment = await this.validated('assess', {
         objective: { question: objective.question, constraints: objective.constraints },
@@ -1272,6 +1320,7 @@ export class ResearchEngine {
       evidenceNote: 'Every concept introducing entry references supplied evidence by passageId, start and end; those offsets are UTF-16 positions in the original passage text, not in the excerpt. Each evidence entry is one bounded sentence window per distinct span, with excerpt.start/excerpt.end locating that window in the same original text.',
     };
     let decisions;
+    this.setStage(4, 'Expanding research', 'expand', this.totalStages);
     try {
       decisions = await this.validated('classify', input, value => parseDecisions(value, concepts));
     } catch (error) {
@@ -1432,8 +1481,18 @@ export class ResearchEngine {
       packetNote: `Bounded evidence packet: ${packet.length} of ${evidence.length} currently eligible passages are supplied (compact target ${REPORT_PACKET_PASSAGES} passages / ${REPORT_PACKET_CHARS} characters, hard maximum ${REPORT_MAX_PASSAGES} / ${REPORT_MAX_CHARS}; priority witnesses may exceed the compact target, ${evidenceOmitted} omitted). Omitted passages are not evidence of absence: never infer confidence from the packet bound and never claim that a qualification or contradiction is missing.`,
       citationRule: 'Citations are {passageId, start, end} with UTF-16 offsets relative to the supplied passage text (base 0). Cite only supplied passageIds; never invent URLs or facts. Supplied passages you did not need may stay uncited.',
     };
-    const build = (value: unknown): Report => buildReport(this.state, snapshots, value, packetIds);
+    const build = (value: unknown): Report => {
+      this.progress('Validating citations', {
+        activity: 'Validating citations',
+        stage: this.totalStages,
+        totalStages: this.totalStages,
+        round: this.round,
+        phase: 'report',
+      });
+      return buildReport(this.state, snapshots, value, packetIds);
+    };
     let value: unknown;
+    this.setStage(this.totalStages, 'Generating report', 'report', this.totalStages);
     try {
       value = await this.callModel('report', input);
     } catch (error) {

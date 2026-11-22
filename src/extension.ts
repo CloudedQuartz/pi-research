@@ -12,7 +12,7 @@ import { PassageIndex, mmr } from './core-ir.js';
 import { AcquisitionService } from './acquisition.js';
 import { ResearchEngine, newInvestigation, feedback } from './engine.js';
 import { combineUsage, makeModelHost, normalizeDiscovery } from './pi-model.js';
-import { inspectState, rankText, researchMap, safeText, sourceList } from './views.js';
+import { inspectState, rankText, renderProgressStatus, renderProgressWidget, researchMap, safeText, sourceList } from './views.js';
 import { validateSpan } from './report.js';
 import type { EngineHost, Feedback, Investigation, Limits } from './types.js';
 
@@ -86,7 +86,18 @@ export default function researchExtension(pi: ExtensionAPI): void {
       }
       state = restored;
     } catch (error) { if (ctx.hasUI) ctx.ui.notify(safeText(error instanceof Error ? error.message : String(error)), 'error'); }
-    if (ctx.hasUI) { ctx.ui.setWidget('pi-research', undefined); ctx.ui.setStatus('pi-research', state ? `Research paused · ${state.snapshotIds.length} sources` : undefined); }
+    if (ctx.hasUI) {
+      if (state) {
+        const client = getClient(ctx, state.storageRoot);
+        const snap = client.db.snapshot(state.allowanceId);
+        const modelCalls = { confirmed: snap.confirmed.modelCalls, limit: snap.limits.modelCalls };
+        ctx.ui.setStatus('pi-research', renderProgressStatus(state, undefined, modelCalls));
+        ctx.ui.setWidget('pi-research', renderProgressWidget(state, undefined, modelCalls));
+      } else {
+        ctx.ui.setWidget('pi-research', undefined);
+        ctx.ui.setStatus('pi-research', undefined);
+      }
+    }
   };
   pi.on('session_start', (_event, ctx) => restore(ctx));
   pi.on('session_tree', (_event, ctx) => restore(ctx));
@@ -218,15 +229,28 @@ export default function researchExtension(pi: ExtensionAPI): void {
           if (outcome.isError) throw new Error(outcome.result.content.filter(part => part.type === 'text').map(part => part.text).join('\n'));
           return normalizeDiscovery(outcome.result.structuredContent, query, r.provider);
         }, acquire: (url, s) => acquisition.acquire(url, s), commit, isCurrent: owns,
-        progress: (message, next) => { if (!owns()) return; onUpdate?.(safeText(message)); if (ctx.hasUI) { ctx.ui.setStatus('pi-research', safeText(message).slice(0, 100)); ctx.ui.setWidget('pi-research', researchMap(next).split('\n').slice(0, 8)); } },
+        progress: (message, next, info) => {
+          if (!owns()) return;
+          onUpdate?.(safeText(message));
+          if (ctx.hasUI) {
+            const snap = c.db.snapshot(next.allowanceId);
+            const modelCalls = { confirmed: snap.confirmed.modelCalls, limit: snap.limits.modelCalls };
+            ctx.ui.setStatus('pi-research', renderProgressStatus(next, info, modelCalls, message));
+            ctx.ui.setWidget('pi-research', renderProgressWidget(next, info, modelCalls));
+          }
+        },
       };
       const engine = new ResearchEngine({ state: initial, ledger: c.db, store: c.store, requestId: id, owner: runOwner, signal: runSignal, host });
       const next = r.kind === 'fetch' ? await engine.fetchSource(r.targetId ?? '') : await engine.run(r.question, r.kind);
       if (!owns()) throw new Error('Obsolete research completion: operational accounting is retained, but no branch result may be published.');
       const interrupted = runSignal.aborted;
       completed = !interrupted;
-      const body = next.reports.at(-1)?.markdown ?? researchMap(next);
-      return result({ investigationId: next.id, objectiveId: next.activeObjectiveId, revisionId: next.revisionId, status: next.status, interrupted, report: next.reports.at(-1) ?? null, stopReason: next.stopReason ?? null },
+      const lastReport = next.reports.at(-1);
+      let body = lastReport?.markdown ?? researchMap(next);
+      if (lastReport?.fallback) {
+        body = `[⚠️ Extractive Fallback Report — Model synthesis was unavailable or failed citation validation; quotes are extracted directly from verified evidence.]\n\n${body}`;
+      }
+      return result({ investigationId: next.id, objectiveId: next.activeObjectiveId, revisionId: next.revisionId, status: next.status, interrupted, report: lastReport ?? null, stopReason: next.stopReason ?? null },
         interrupted ? `Research interrupted; previously committed results are retained.\n\n${body}` : body, combineUsage(usage));
     } catch (error) {
       let stale = !contextCurrent();
@@ -245,7 +269,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
       if (active?.controller === controller) active = undefined;
       try { closeUnused(); } catch { finalizationFailed = true; }
       try {
-        if (contextCurrent() && ctx.hasUI) ctx.ui.setStatus('pi-research', state ? `Research ${state.status} · ${state.snapshotIds.length} sources` : undefined);
+        if (contextCurrent() && ctx.hasUI && state) {
+          const snap = client ? client.db.snapshot(state.allowanceId) : undefined;
+          const modelCalls = snap ? { confirmed: snap.confirmed.modelCalls, limit: snap.limits.modelCalls } : undefined;
+          ctx.ui.setStatus('pi-research', renderProgressStatus(state, undefined, modelCalls));
+          ctx.ui.setWidget('pi-research', renderProgressWidget(state, undefined, modelCalls));
+        }
       } catch { /* Presentation failure must not undo writer cleanup. */ }
       if (finalizationFailed) return failure(new Error('Research request finalization failed; recover explicitly before continuing. No refund or retry was attempted.'), combineUsage(usage));
     }
