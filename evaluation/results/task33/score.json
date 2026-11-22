@@ -1,0 +1,13 @@
+{
+  "label": "pi-screened-2026-11-22T19-12-20-989Z",
+  "task": 33,
+  "total_0_100": 93.78,
+  "dims_0_100": {
+    "comprehensiveness": 94.0,
+    "insight": 92.75,
+    "instruction_following": 95.0,
+    "readability": 93.0
+  },
+  "parse": "json",
+  "finish": "stop"
+}
