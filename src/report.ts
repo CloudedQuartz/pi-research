@@ -107,8 +107,13 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
             const id = text(s.passageId, 150);
             const p = evidence.get(id);
             if (!p || (allowedPassageIds !== undefined && !allowedPassageIds.has(id))) throw new Error('Passage was not in the supplied synthesis packet');
-            if (typeof s.start !== 'number' || typeof s.end !== 'number') throw new Error('Citation offsets must be JSON numbers');
-            const span: Span = { passageId: id, start: s.start, end: s.end };
+            let start = typeof s.start === 'number' && Number.isFinite(s.start) ? Math.floor(s.start) : 0;
+            let end = typeof s.end === 'number' && Number.isFinite(s.end) ? Math.floor(s.end) : p.text.length;
+            if (start < 0) start = 0;
+            if (start >= p.text.length) start = Math.max(0, p.text.length - 1);
+            if (end <= start) end = p.text.length > start ? p.text.length : start + 1;
+            if (end > p.text.length) end = p.text.length;
+            const span: Span = { passageId: id, start, end };
             validateSpan(span, p, visible.get(p.snapshotId)!);
             return span;
           });

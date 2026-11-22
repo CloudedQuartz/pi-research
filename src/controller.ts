@@ -65,7 +65,8 @@ export function candidateRelevance(candidate: SourceCandidate, branch: Branch, c
     }
   }
   const anchor = terms(`${branch.anchor} ${branch.question} ${branch.aliases.join(' ')}`);
-  const metadata = terms(`${candidate.title} ${candidate.snippet} ${candidate.query}`);
+  const urlTokens = candidate.url.replace(/[/:_.-]/g, ' ');
+  const metadata = terms(`${candidate.title} ${candidate.snippet} ${candidate.query} ${urlTokens}`);
   const lexical = overlap(anchor, metadata);
   return candidate.branchId === branch.id ? Math.max(lexical, 0.5) : lexical;
 }
