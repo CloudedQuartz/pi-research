@@ -1111,7 +1111,7 @@ export class ResearchEngine {
     const changedKey = branch.retrievalKey !== evaluatedKey;
     if (!this.state.passages.length || (unmetMass(branch) <= 0 && !changedKey)) return { yield: 0, ok: true };
     const index = this.ensureIndex();
-    const ranked = index.rank(this.retrievalQuery(branch), 30, [branch.anchor].filter(a => a.trim()));
+    const ranked = index.rankStemmed(this.retrievalQuery(branch), 30, [branch.anchor].filter(a => a.trim()));
     if (!ranked.length) {
       this.commit(draft => { const b = draft.branches.find(x => x.id === branchId); if (b) b.retrievalKey = evaluatedKey; });
       return { yield: 0, ok: true };
