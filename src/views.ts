@@ -39,7 +39,151 @@ export function sourceList(state: Investigation, snapshots: Snapshot[] = []): st
   const warnings = [...hosts].filter(([, count]) => visible.length > 1 && count / visible.length > 0.6)
     .map(([host, count]) => `Source concentration: ${count}/${visible.length} acquired snapshot records are from ${host}. This is not credibility or factual confidence.`);
   const sources = state.candidates.map(c => `${c.id} [${c.status}] ${c.title}\n  ${c.url}\n  ${c.provider} / ${c.rankingKind}${c.rank ? ` rank ${c.rank}` : ''} · query: ${c.query}${c.error ? `\n  ${c.error}` : ''}`).join('\n\n') || 'No discovered sources.';
-  return safeText([...warnings, 'Discovery metadata is not original evidence; snapshot/domain counts are not confidence.', '', sources].join('\n'));
+  const summary = summarizeAcquisition(state, snapshots);
+  const summaryText = formatAcquisitionSummary(summary);
+  return safeText([...warnings, 'Discovery metadata is not original evidence; snapshot/domain counts are not confidence.', '', sources, '', summaryText].join('\n'));
+}
+
+export interface AcquisitionSummary {
+  totalDiscovered: number;
+  unread: number;
+  fetched: number;
+  blocked: number;
+  failed: number;
+  attempts: number;
+  yieldPct: number;
+  failuresByCause: Record<string, number>;
+  hostOutcomes: Record<string, {
+    discovered: number;
+    fetched: number;
+    blocked: number;
+    failed: number;
+    circuitBroken: boolean;
+  }>;
+}
+
+export function classifyFailure(error?: string): string {
+  if (!error) return 'Unspecified';
+  const e = error.toLowerCase();
+  if (e.includes('challenge') || e.includes('captcha') || e.includes('browser verification')) {
+    return 'Bot challenge / CAPTCHA';
+  }
+  if (e.includes('robots')) {
+    return 'Robots.txt policy';
+  }
+  if (e.includes('403') || e.includes('forbidden')) {
+    return 'HTTP 403 Forbidden';
+  }
+  if (e.includes('429') || e.includes('too many requests')) {
+    return 'HTTP 429 Rate limited';
+  }
+  if (/\b5\d\d\b/.test(e) || e.includes('server error') || e.includes('bad gateway') || e.includes('service unavailable')) {
+    return 'HTTP 5xx Server error';
+  }
+  if (e.includes('404') || e.includes('not found')) {
+    return 'HTTP 404 Not found';
+  }
+  if (e.includes('timeout') || e.includes('timed out')) {
+    return 'Timeout';
+  }
+  if (e.includes('thin text') || e.includes('readability') || e.includes('extraction')) {
+    return 'Extraction failure / thin content';
+  }
+  if (e.includes('dns') || e.includes('network') || e.includes('econnrefused') || e.includes('enotfound')) {
+    return 'DNS / Network error';
+  }
+  if (e.includes('previously blocked')) {
+    return 'Host circuit-broken';
+  }
+  if (e.includes('non-article')) {
+    return 'Non-article route filter';
+  }
+  if (e.includes('invalid url') || e.includes('private') || e.includes('redirect')) {
+    return 'Policy / invalid destination';
+  }
+  return error.length > 50 ? `${error.slice(0, 47)}...` : error;
+}
+
+export function summarizeAcquisition(state: Investigation, snapshots: Snapshot[] = []): AcquisitionSummary {
+  const summary: AcquisitionSummary = {
+    totalDiscovered: state.candidates.length,
+    unread: 0,
+    fetched: 0,
+    blocked: 0,
+    failed: 0,
+    attempts: 0,
+    yieldPct: 0,
+    failuresByCause: {},
+    hostOutcomes: {},
+  };
+
+  for (const c of state.candidates) {
+    let host = 'unknown';
+    try { host = new URL(c.url).hostname.toLowerCase(); } catch { /* ignore */ }
+
+    if (!summary.hostOutcomes[host]) {
+      summary.hostOutcomes[host] = { discovered: 0, fetched: 0, blocked: 0, failed: 0, circuitBroken: false };
+    }
+    const h = summary.hostOutcomes[host]!;
+    h.discovered += 1;
+
+    if (c.status === 'unread') {
+      summary.unread += 1;
+    } else if (c.status === 'fetched') {
+      summary.fetched += 1;
+      summary.attempts += 1;
+      h.fetched += 1;
+    } else if (c.status === 'failed') {
+      summary.failed += 1;
+      summary.attempts += 1;
+      h.failed += 1;
+      const cause = classifyFailure(c.error);
+      summary.failuresByCause[cause] = (summary.failuresByCause[cause] ?? 0) + 1;
+    } else if (c.status === 'blocked') {
+      summary.blocked += 1;
+      h.blocked += 1;
+      const isPreFiltered = Boolean(c.error && c.error.startsWith('skipped: '));
+      if (!isPreFiltered) {
+        summary.attempts += 1;
+      }
+      if (c.error && /previously blocked|circuit-broken/i.test(c.error)) {
+        h.circuitBroken = true;
+      }
+      const cause = classifyFailure(c.error);
+      summary.failuresByCause[cause] = (summary.failuresByCause[cause] ?? 0) + 1;
+    }
+  }
+
+  summary.yieldPct = summary.attempts > 0 ? (summary.fetched / summary.attempts) * 100 : 0;
+  return summary;
+}
+
+export function formatAcquisitionSummary(summary: AcquisitionSummary): string {
+  if (summary.totalDiscovered === 0) return 'Acquisition summary: No candidate URLs discovered.';
+  const lines: string[] = [
+    '=== Acquisition Summary ===',
+    `Yield: ${summary.fetched}/${summary.attempts} attempt(s) (${summary.yieldPct.toFixed(1)}%) · ${summary.totalDiscovered} candidate(s) discovered (${summary.fetched} fetched, ${summary.failed} failed, ${summary.blocked} blocked, ${summary.unread} unread)`,
+  ];
+
+  const failureEntries = Object.entries(summary.failuresByCause);
+  if (failureEntries.length > 0) {
+    lines.push('Failures and policy exclusions:');
+    for (const [cause, count] of failureEntries.sort((a, b) => b[1] - a[1])) {
+      lines.push(`  - ${cause}: ${count}`);
+    }
+  }
+
+  const hostEntries = Object.entries(summary.hostOutcomes);
+  if (hostEntries.length > 0) {
+    lines.push('Host outcomes:');
+    for (const [host, h] of hostEntries.sort((a, b) => b[1].discovered - a[1].discovered)) {
+      const flags: string[] = [];
+      if (h.circuitBroken) flags.push('circuit-broken');
+      lines.push(`  - ${host}: ${h.discovered} discovered, ${h.fetched} fetched, ${h.failed} failed, ${h.blocked} blocked${flags.length ? ` [${flags.join(', ')}]` : ''}`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 export function inspectState(state: Investigation, id: string, snapshots: Snapshot[]): Inspection {

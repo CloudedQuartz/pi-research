@@ -21,6 +21,7 @@ import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
 import { isBotChallenge, isThinContent, normalizeUrl, shouldSkipCandidateUrl } from '../src/acquisition.js';
+import { classifyFailure, formatAcquisitionSummary, sourceList, summarizeAcquisition } from '../src/views.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
@@ -594,6 +595,86 @@ async function caseBotChallengeAndCircuitBreaker(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+async function caseAcquisitionSummaryView(): Promise<void> {
+  // 1. classifyFailure
+  check('J classifyFailure classifies known failure modes',
+    classifyFailure('bot-challenge detected (Cloudflare)') === 'Bot challenge / CAPTCHA' &&
+    classifyFailure('HTTP 403 for https://example.org') === 'HTTP 403 Forbidden' &&
+    classifyFailure('HTTP 429 for https://example.org') === 'HTTP 429 Rate limited' &&
+    classifyFailure('HTTP 503 Service Unavailable') === 'HTTP 5xx Server error' &&
+    classifyFailure('HTTP 404 for https://example.org') === 'HTTP 404 Not found' &&
+    classifyFailure('timeout after 15000ms') === 'Timeout' &&
+    classifyFailure('Readability produced thin text (30 chars)') === 'Extraction failure / thin content' &&
+    classifyFailure('getaddrinfo ENOTFOUND') === 'DNS / Network error' &&
+    classifyFailure('skipped: host foo.com previously blocked requests') === 'Host circuit-broken' &&
+    classifyFailure('skipped: non-article video/social route') === 'Non-article route filter' &&
+    classifyFailure('Robots.txt denies /path') === 'Robots.txt policy');
+
+  // 2. summarizeAcquisition and formatAcquisitionSummary
+  const mockState: Investigation = {
+    schema: 1,
+    id: 'test-inv',
+    revisionId: 'rev-1',
+    originalQuestion: 'test question',
+    activeObjectiveId: 'obj-1',
+    storageRoot: '',
+    allowanceId: '',
+    objectives: [],
+    branches: [],
+    passages: [],
+    concepts: [],
+    contributions: [],
+    actions: [],
+    feedback: [],
+    reports: [],
+    corpusRevision: 1,
+    status: 'complete',
+    snapshotIds: ['snap-1', 'snap-2'],
+    candidates: [
+      { id: 'c1', branchId: 'b1', query: 'q', url: 'https://site-a.com/page1', title: 'Page 1', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-1' },
+      { id: 'c2', branchId: 'b1', query: 'q', url: 'https://site-a.com/page2', title: 'Page 2', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-2' },
+      { id: 'c3', branchId: 'b1', query: 'q', url: 'https://site-b.com/page3', title: 'Page 3', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'failed', error: 'HTTP 403 Forbidden' },
+      { id: 'c4', branchId: 'b1', query: 'q', url: 'https://site-b.com/page4', title: 'Page 4', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'blocked', error: 'skipped: host site-b.com previously blocked requests' },
+      { id: 'c5', branchId: 'b1', query: 'q', url: 'https://site-c.com/video', title: 'Video', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'blocked', error: 'skipped: non-article video/social route' },
+      { id: 'c6', branchId: 'b1', query: 'q', url: 'https://site-d.com/page5', title: 'Page 5', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'unread' },
+    ],
+  };
+
+  const summary = summarizeAcquisition(mockState);
+  check('J summarizeAcquisition counts total candidates and yields correctly',
+    summary.totalDiscovered === 6 &&
+    summary.fetched === 2 &&
+    summary.failed === 1 &&
+    summary.blocked === 2 &&
+    summary.unread === 1 &&
+    summary.attempts === 3 &&
+    Math.round(summary.yieldPct) === 67,
+    `summary=${JSON.stringify(summary)}`);
+
+  check('J summarizeAcquisition tracks failures by cause and host outcomes',
+    summary.failuresByCause['HTTP 403 Forbidden'] === 1 &&
+    summary.failuresByCause['Host circuit-broken'] === 1 &&
+    summary.failuresByCause['Non-article route filter'] === 1 &&
+    summary.hostOutcomes['site-a.com']?.fetched === 2 &&
+    summary.hostOutcomes['site-b.com']?.circuitBroken === true &&
+    summary.hostOutcomes['site-b.com']?.failed === 1,
+    `causes=${JSON.stringify(summary.failuresByCause)} hosts=${JSON.stringify(summary.hostOutcomes)}`);
+
+  const formatted = formatAcquisitionSummary(summary);
+  check('J formatAcquisitionSummary includes sections and host flags',
+    formatted.includes('=== Acquisition Summary ===') &&
+    formatted.includes('Yield: 2/3 attempt(s) (66.7%)') &&
+    formatted.includes('Failures and policy exclusions:') &&
+    formatted.includes('Host outcomes:') &&
+    formatted.includes('site-b.com: 2 discovered, 0 fetched, 1 failed, 1 blocked [circuit-broken]'));
+
+  const renderedList = sourceList(mockState);
+  check('J sourceList integrates acquisition summary at the end',
+    renderedList.includes('=== Acquisition Summary ===') &&
+    renderedList.includes('Page 1') &&
+    renderedList.indexOf('Page 1') < renderedList.indexOf('=== Acquisition Summary ==='));
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -602,6 +683,7 @@ async function main(): Promise<void> {
   await caseCompactReportPacket(); await caseReportPacketCitationBound();
   await caseCandidateFilteringAndDedup();
   await caseBotChallengeAndCircuitBreaker();
+  await caseAcquisitionSummaryView();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;
