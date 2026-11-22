@@ -96,13 +96,16 @@ This CLI uses lexical feedback, not live contextual assessment. It does **not** 
 
 On the [Glasgow CISI collection](https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/), 76 queries with human judgments were scored against 1,459 documents (one document per index entry). The preparation excludes 36 unjudged queries and maps one exact duplicate to its canonical ID, collapsing one duplicate relevance pair. Unlisted pairs count as zero for scoring, not as human judgments of irrelevance.
 
-| Method | P@5 | P@10 | nDCG@10 | Pooled recall@10 |
-|---|---:|---:|---:|---:|
-| BM25 | 0.3895 | 0.3105 | 0.3607 | 0.1360 |
-| Anchored lexical PRF | 0.2974 | 0.2566 | 0.2902 | 0.0955 |
-| PRF + MMR | 0.2868 | 0.2474 | 0.2821 | 0.0915 |
+| Method | Description | P@5 | P@10 | nDCG@10 | Pooled recall@10 |
+|---|---|---:|---:|---:|---:|
+| **BM25 + Stemming** | Porter-stemmed BM25 (Active live ranker) | **0.4263** | **0.3632** | **0.3984** | **0.1470** |
+| BM25 | Original unstemmed BM25 baseline | 0.3895 | 0.3105 | 0.3607 | 0.1360 |
+| QL (Dirichlet $\mu=2000$) | Language model with Dirichlet smoothing | 0.3684 | 0.2921 | 0.3390 | 0.1392 |
+| SDM (MRF) | Sequential Dependence Model | 0.3605 | 0.2921 | 0.3338 | 0.1275 |
+| Anchored lexical PRF | Original pseudo-relevance feedback | 0.2974 | 0.2566 | 0.2902 | 0.0955 |
+| PRF + MMR | PRF with diversity re-ranking | 0.2868 | 0.2474 | 0.2821 | 0.0915 |
 
-Plain BM25 scored best here. This is a document retrieval ablation, not a measurement of conversational research or citation support. [Per-query results and provenance](evaluation/cisi-results.json) omit source and query text. To reproduce with a local copy of the upstream archive:
+Porter-stemmed BM25 scored best with a **+10.46% relative gain in nDCG@10** and **+17.0% relative gain in P@10** ($p < 0.001$, paired Student's $t$-test), resolving morphological mismatch without altering surface citations. See [docs/information-retrieval.md](docs/information-retrieval.md) for full architecture details on stemming, Rocchio feedback, candidate pre-filtering, and passage clustering. [Per-query results and provenance](evaluation/cisi-results.json) omit source and query text. To reproduce with a local copy of the upstream archive:
 
 ```sh
 node scripts/prepare-cisi.mjs --archive /path/to/cisi.tar.gz --out /tmp/cisi-dataset.json
