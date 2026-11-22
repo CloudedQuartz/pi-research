@@ -197,7 +197,7 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
       `**[${num}]** [${md(s.title || s.finalUrl)}](${url.href}) — fetched ${s.fetchedAt.slice(0, 10)}${datePart}`,
       `- *Location*: passage \`${p.id.slice(0, 8)}…\` (characters ${start}–${end}${location})`,
       `<details>`,
-      `<summary>📖 <b>View verified source passage</b></summary>`,
+      `<summary><b>View verified source passage</b></summary>`,
       ``,
       `> "${md(quote)}"`,
       `</details>`,
