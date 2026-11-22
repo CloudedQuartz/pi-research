@@ -165,7 +165,7 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
           entry = { num: footnoteSeq++, p: evidence.get(span.passageId)!, s: visible.get(evidence.get(span.passageId)!.snapshotId)!, span };
           footnotes.set(key, entry);
         }
-        return `[^${entry.num}]`;
+        return `<sup>[<a href="#source-${entry.num}">${entry.num}</a>]</sup>`;
       });
       lines.push(`${fallback ? '> ' : ''}${md(statement.text)} ${refs.join(' ')}`, '');
     }
@@ -191,7 +191,18 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     let location = '';
     if (first && last) location = first.page === last.page ? `; page ${first.page}` : `; pages ${first.page}–${last.page}`;
     const datePart = s.publishedAt ? ` · published ${s.publishedAt.slice(0, 10)} (source-claimed)` : '';
-    lines.push(`[^${num}]: [${md(s.title || s.finalUrl)}](${url.href}) — fetched ${s.fetchedAt.slice(0, 10)}${datePart} (passage ${p.id.slice(0, 8)}… span ${start}–${end}${location})`, '');
+    const quote = p.text.slice(span.start, span.end).trim();
+    lines.push(
+      `<a id="source-${num}"></a>`,
+      `**[${num}]** [${md(s.title || s.finalUrl)}](${url.href}) — fetched ${s.fetchedAt.slice(0, 10)}${datePart}`,
+      `- *Location*: passage \`${p.id.slice(0, 8)}…\` (characters ${start}–${end}${location})`,
+      `<details>`,
+      `<summary>📖 <b>View verified source passage</b></summary>`,
+      ``,
+      `> "${md(quote)}"`,
+      `</details>`,
+      ''
+    );
   }
   return { id: randomUUID(), objectiveId: objective.id, corpusRevision: state.corpusRevision, createdAt: new Date().toISOString(), sections, unresolved, changes, markdown: lines.join('\n'), fallback };
 }
