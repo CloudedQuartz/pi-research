@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Type } from 'typebox';
 import { matchesKey, truncateToWidth } from '@earendil-works/pi-tui';
@@ -38,6 +38,14 @@ function result(data: unknown, text: string, usage?: PiUsage): AgentToolResult<D
 function failure(error: unknown, usage?: PiUsage): AgentToolResult<Details> {
   const message = safeText(error instanceof Error ? error.message : String(error));
   return { isError: true, content: [{ type: 'text', text: message }], details: { error: message }, structuredContent: { ok: false, error: message }, usage };
+}
+
+export function reportFilename(question: string, revision: number): string {
+  const slug = question.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 45) || 'research';
+  return `${slug}_report_v${revision}.md`;
 }
 
 export default function researchExtension(pi: ExtensionAPI): void {
@@ -246,6 +254,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
       const interrupted = runSignal.aborted;
       completed = !interrupted;
       const lastReport = next.reports.at(-1);
+      if (lastReport?.markdown) {
+        try {
+          const filename = reportFilename(next.originalQuestion || 'research', next.corpusRevision);
+          writeFileSync(resolve(process.cwd(), filename), lastReport.markdown, 'utf-8');
+          writeFileSync(resolve(process.cwd(), 'report.md'), lastReport.markdown, 'utf-8');
+        } catch { /* ignore write failures */ }
+      }
       let body = lastReport?.markdown ?? researchMap(next);
       if (lastReport?.fallback) {
         body = `[⚠️ Extractive Fallback Report — Model synthesis was unavailable or failed citation validation; quotes are extracted directly from verified evidence.]\n\n${body}`;
@@ -309,7 +324,21 @@ export default function researchExtension(pi: ExtensionAPI): void {
     if (args.startsWith('fetch ')) { const id = args.slice(6).trim(); if (!current().candidates.some(c => c.id === id && c.status === 'unread')) throw new Error('Source is not a pending unread candidate'); await authorize('fetch', '', ctx, id); }
     else { const s = current(); if (resolve(s.storageRoot) !== rootFor(ctx)) throw new Error('Invalid investigation storage root'); const store = new ObjectStore(s.storageRoot); await show('Research sources', sourceList(s, s.snapshotIds.map(id => store.loadSnapshot(id))), ctx); }
   });
-  command('research-report', 'Display a report or authorize an update', async (args, ctx) => { if (args.trim() === 'update') await authorize('report', '', ctx); else await show('Research report', current().reports.at(-1)?.markdown ?? 'No report yet.', ctx); });
+  command('research-report', 'Display a report or authorize an update', async (args, ctx) => {
+    if (args.trim() === 'update') await authorize('report', '', ctx);
+    else {
+      const s = current();
+      const rep = s.reports.at(-1);
+      if (rep?.markdown) {
+        try {
+          const filename = reportFilename(s.originalQuestion || 'research', s.corpusRevision);
+          writeFileSync(resolve(process.cwd(), filename), rep.markdown, 'utf-8');
+          writeFileSync(resolve(process.cwd(), 'report.md'), rep.markdown, 'utf-8');
+        } catch { /* ignore write failures */ }
+      }
+      await show('Research report', rep?.markdown ?? 'No report yet.', ctx);
+    }
+  });
   command('research-feedback', 'Record explicit feedback: <kind> <id>', async (args, ctx) => {
     const [kind, id, extra] = args.trim().split(/\s+/);
     if (!id || extra || !['useful', 'irrelevant', 'accept', 'reject', 'prioritize'].includes(kind ?? '')) throw new Error('Usage: /research-feedback useful|irrelevant|accept|reject|prioritize <id>');
