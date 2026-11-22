@@ -19,6 +19,7 @@ export interface SourceInput {
 
 export interface Source extends SourceInput {
 	id: string;
+	kind: "summary" | "unclassified";
 	/** Other URLs that resolved to this source (copies, mirrors, alternate renderings). */
 	aliases: string[];
 }
@@ -74,6 +75,12 @@ export function arxivId(rawUrl: string): string | undefined {
 	return rawUrl.match(/(?:arxiv\.org\/(?:abs|html|pdf)|ar5iv(?:\.labs\.arxiv)?\.org\/(?:abs|html)|alphaxiv\.org\/(?:abs|overview))\/(\d{4}\.\d{4,5})/i)?.[1];
 }
 
+function sourceKind(text: string): Source["kind"] {
+	return /\bAI[- ]generated\b.{0,20}\bverify against the paper\b|\bAI[- ](?:generated|narrated) summary\b/i.test(text.slice(0, 3000))
+		? "summary"
+		: "unclassified";
+}
+
 /** Canonical identity for URLs: lowercase host, no fragment, no tracking params, no trailing slash. */
 export function sourceKey(rawUrl: string): string {
 	try {
@@ -127,15 +134,18 @@ export class EvidenceLibrary {
 		if (!input.text.trim()) return { status: "empty" };
 		const id = arxivId(input.url) ?? arxivId(input.canonicalUrl ?? "");
 		const key = id ? `arxiv:${id}` : sourceKey(input.canonicalUrl || input.url);
+		const kind = sourceKind(input.text);
 		const existing = this.sources.get(key);
 		if (existing) {
 			if (!existing.aliases.includes(input.url) && input.url !== existing.url) existing.aliases.push(input.url);
 			// A fuller copy of the same document replaces an abstract-level one; its passages are re-split.
 			// Same arXiv ID is the same document even when front matter garbles the shingles.
 			const sameDocument = key.startsWith("arxiv:") || containment(shingles(existing.text), shingles(input.text)) >= NEAR_DUPLICATE;
-			if (input.text.length > existing.text.length * 1.2 && sameDocument) {
-				const { aliases } = existing;
-				this.sources.set(key, { ...input, id: key, aliases });
+			const replacesSummary = existing.kind === "summary" && kind !== "summary";
+			const isFullerCopy = kind === existing.kind && input.text.length > existing.text.length * 1.2;
+			if (sameDocument && (replacesSummary || isFullerCopy)) {
+				const aliases = [...new Set([existing.url, ...existing.aliases])].filter((url) => url !== input.url);
+				this.sources.set(key, { ...input, id: key, kind, aliases });
 				this.shingleCache.set(key, shingles(input.text));
 				for (let i = this.passages.length - 1; i >= 0; i--) if (this.passages[i]!.sourceId === key) this.passages.splice(i, 1);
 				this.addPassages(key, input.text);
@@ -146,12 +156,12 @@ export class EvidenceLibrary {
 		const fingerprint = shingles(input.text);
 		for (const [id, source] of this.sources) {
 			if (!this.shingleCache.has(id)) this.shingleCache.set(id, shingles(source.text));
-			if (containment(fingerprint, this.shingleCache.get(id)!) >= NEAR_DUPLICATE) {
+			if (kind === source.kind && containment(fingerprint, this.shingleCache.get(id)!) >= NEAR_DUPLICATE) {
 				if (!source.aliases.includes(input.url)) source.aliases.push(input.url);
 				return { status: "near-duplicate", sourceId: id };
 			}
 		}
-		this.sources.set(key, { ...input, id: key, aliases: [] });
+		this.sources.set(key, { ...input, id: key, kind, aliases: [] });
 		this.shingleCache.set(key, fingerprint);
 		this.addPassages(key, input.text);
 		return { status: "added", sourceId: key };

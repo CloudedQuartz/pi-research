@@ -1,15 +1,26 @@
 import { normalizeUrl, shouldSkipCandidateUrl } from "./research-acquisition.js";
-import { EvidenceLibrary, type Passage } from "./research-library.js";
+import { EvidenceLibrary, type Passage, type Source } from "./research-library.js";
 
 interface Need {
 	id: number;
 	question: string;
 	queries: string[];
+	essential: boolean;
 	gap?: string;
 	answered: boolean;
 }
 
 interface Hit { url: string; title?: string; snippet?: string }
+
+export interface SourceInspection {
+	id: string;
+	sourceId: string;
+	sourceVersion: string;
+	start: number;
+	end: number;
+	matches?: { term: string; count: number; firstOffsets: number[] }[];
+	text?: string;
+}
 export interface SearchGroup { query: string; results?: Hit[]; error?: string }
 export type EvidencePacket = ReturnType<ResearchLoop["evidence"]>;
 
@@ -30,6 +41,9 @@ export class ResearchLoop {
 	readonly failures = new Set<string>();
 	readonly searched = new Set<string>();
 	readonly attempted = new Set<string>();
+	readonly inspections: SourceInspection[] = [];
+	readonly inspectedSources = new Map<string, Source>();
+	readonly searches: { query: string; hits: number; error?: string }[] = [];
 	needs: Need[] = [];
 	stopReason = "";
 	private checkingStop = false;
@@ -42,15 +56,16 @@ export class ResearchLoop {
 			if (typeof row?.question !== "string" || !row.question.trim() || !queries.length) {
 				throw new Error("Each research need requires a question and search queries.");
 			}
-			this.needs.push({ id: this.needs.length + 1, question: row.question.trim(), queries, answered: false });
+			if (typeof row.essential !== "boolean") throw new Error("Each need must be marked essential or optional.");
+			this.needs.push({ id: this.needs.length + 1, question: row.question.trim(), queries, essential: row.essential, answered: false });
 		}
-		if (!this.needs.length) throw new Error("The plan did not contain a usable research need.");
+		if (!this.needs.some((need) => need.essential)) throw new Error("The plan must contain an essential research need.");
 	}
 
 	pendingQueries(): string[] {
 		const pending = new Map<string, string>();
 		for (const need of this.needs) {
-			if (need.answered) continue;
+			if (need.answered || !need.essential) continue;
 			for (const query of need.queries) {
 				const key = queryKey(query);
 				if (!this.searched.has(key)) pending.set(key, query);
@@ -67,6 +82,7 @@ export class ResearchLoop {
 		const urls: string[] = [];
 		// Pick one unread hit per query so broad queries cannot take over a round.
 		for (const group of groups) {
+			this.searches.push({ query: group.query, hits: group.results?.length ?? 0, error: group.error });
 			if (group.error) this.failures.add(`Search “${group.query}”: ${group.error}`);
 			const query = words(group.query);
 			const ranked = (group.results ?? []).filter((hit) => typeof hit.url === "string" && /^https?:\/\//i.test(hit.url))
@@ -83,6 +99,38 @@ export class ResearchLoop {
 		return urls;
 	}
 
+	inspect(sourceId: string, terms?: string[], start = 0, end?: number): SourceInspection {
+		const source = this.library.sources.get(sourceId);
+		if (!source) throw new Error(`Unknown stored source: ${sourceId}`);
+		const literalTerms = terms?.filter((term) => term.trim());
+		const stop = end ?? (literalTerms?.length ? source.text.length : Math.min(start + 6000, source.text.length));
+		if (start < 0 || stop <= start || stop > source.text.length) throw new Error(`Invalid range for this ${source.text.length}-character source.`);
+		if (!literalTerms?.length && stop - start > 6000) throw new Error("Read source text in chunks of at most 6,000 characters.");
+		const text = source.text.slice(start, stop);
+		let sourceVersion = [...this.inspectedSources].find(([, snapshot]) => snapshot === source)?.[0];
+		if (!sourceVersion) {
+			sourceVersion = `V${this.inspectedSources.size + 1}`;
+			this.inspectedSources.set(sourceVersion, source);
+		}
+		const inspection: SourceInspection = { id: `I${this.inspections.length + 1}`, sourceId, sourceVersion, start, end: stop };
+		if (literalTerms?.length) {
+			inspection.matches = literalTerms.map((term) => {
+				const pattern = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+				let count = 0;
+				const firstOffsets: number[] = [];
+				for (const match of text.matchAll(pattern)) {
+					count++;
+					if (firstOffsets.length < 12) firstOffsets.push(start + match.index);
+				}
+				return { term, count, firstOffsets };
+			});
+		} else {
+			inspection.text = text;
+		}
+		this.inspections.push(inspection);
+		return inspection;
+	}
+
 	evidence() {
 		const selected = new Map<string, { id: string; passage: Passage }>();
 		const needs = this.needs.map((need) => {
@@ -95,13 +143,14 @@ export class ResearchLoop {
 				}
 				return entry.id;
 			});
-			return { id: need.id, question: need.question, answered: need.answered, gap: need.gap, passages: hits };
+			return { id: need.id, question: need.question, essential: need.essential, answered: need.answered, gap: need.gap, passages: hits };
 		});
 		const passages = [...selected.values()].map(({ id, passage }) => {
 			const source = this.library.sources.get(passage.sourceId)!;
-			return { id, sourceId: source.id, url: source.url, title: source.title, start: passage.start, end: passage.end, text: passage.text };
+			return { id, sourceId: source.id, url: source.url, title: source.title, kind: source.kind, start: passage.start, end: passage.end, text: passage.text };
 		});
-		return { needs, passages };
+		const sources = [...this.library.sources.values()].map(({ id, url, title, text, kind }) => ({ id, url, title, kind, length: text.length }));
+		return { needs, passages, sources };
 	}
 
 	assess(reply: string, packet: EvidencePacket, gainedEvidence: boolean): boolean {
@@ -114,12 +163,12 @@ export class ResearchLoop {
 		for (const need of this.needs) {
 			const row = judgments.get(need.id);
 			const available = packet.needs.find((entry) => entry.id === need.id)?.passages ?? [];
-			const cited = strings(row?.passages).filter((id) => available.includes(id));
+			const cited = strings(row?.passages).filter((id) => available.includes(id) || this.inspections.some((inspection) => inspection.id === id));
 			need.answered = row?.answered === true && cited.length > 0;
 			need.gap = typeof row?.gap === "string" ? row.gap.trim() : undefined;
-			if (!need.answered) need.queries.push(...strings(row?.queries));
+			if (!need.answered && need.essential) need.queries.push(...strings(row?.queries));
 		}
-		if (this.needs.every((need) => need.answered)) this.stopReason = "The assessment found evidence for every research need.";
+		if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
 		else if (!this.pendingQueries().length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
 		else if (!continueSearching && (!gainedEvidence || this.checkingStop)) {
 			this.stopReason = typeof reason === "string" && reason.trim() ? reason.trim() : "Another search was unlikely to change the conclusions.";

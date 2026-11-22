@@ -2,11 +2,11 @@
 
 `/research` runs a tool-using deep-research workflow on the active Pi session model. Start it and walk away: the target is a substantial, cited Markdown report in about ten minutes. It writes a brief, searches and reads sources, follows gaps, ranks passages, and writes the report without asking for approval. The assistant draft is visible in Pi; the saved Markdown resolves its passage IDs into linked citations.
 
-This is a Pi-native adaptation of [LangChain Open Deep Research](https://github.com/langchain-ai/open_deep_research). Pi runs the model turns; the extension owns the evidence-building loop and uses the old Riya branch’s crawler.
+This is a Pi-native adaptation of [LangChain Open Deep Research](https://github.com/langchain-ai/open_deep_research). Pi runs the model turns; the extension owns the evidence-building loop and reuses Riya’s URL filtering.
 
 ## Requirements
 
-Install the crawler dependencies with `npm ci` and enable `web_search` from `pi-web-access`. Search supplies URLs and metadata; the bundled crawler is the only page reader. A failed read is recorded rather than retried through another reader. Pi makes all model requests through the active session.
+Run `npm ci` and enable `web_search` and `fetch_content` from `pi-web-access`. Search supplies URLs and metadata. The extension reads pages with `fetch_content` in readable mode and records failed reads without switching readers. Pi makes all model requests through the active session.
 
 ## Use
 
@@ -22,15 +22,15 @@ Then start a research run:
 /research How have water utilities used AI and remote sensing to detect leaks, and what economic outcomes are actually reported?
 ```
 
-The brief appears as an ordinary assistant reply, and the run continues without a plan-approval gate. Pi handles the model requests, tool loop, streaming, and errors as it does for any other turn.
+The brief appears as an ordinary assistant reply, and the run continues without a plan-approval gate. During evidence collection, enter `/research-finish` to finish the current turn and write from the evidence gathered so far. Escape cancels the run without starting synthesis.
 
 `/research` without a question opens the input dialog. In non-interactive modes, provide the question as part of the command.
 
 ## What a run does
 
 1. **Build the evidence library.** The model breaks the question into evidence needs and writes initial search queries. Then the extension repeats this loop:
-   - **Search → select → read:** Code runs queued queries, takes URLs directly from structured search results, and ranks and deduplicates unread candidates. The crawler reads the selected pages. Only extracted source text enters the library; never snippets or model summaries.
-   - **Retrieve → assess → expand:** Code ranks passages for each need with BM25 and MMR. The model judges whether the passages answer each need, identifies gaps and contradictions, and proposes fresh queries. Code runs those queries in the next round. It stops when the needs are answered, no new queries remain, or the model recommends stopping and retrieval does not justify another round. There is no fixed round or read cap.
+   - **Search → select → read:** Code runs queued queries, takes URLs directly from structured search results, and ranks and deduplicates unread candidates. Pi’s `fetch_content` reads the selected pages. Only extracted source text enters the library; never snippets or model summaries.
+   - **Retrieve → inspect → assess → expand:** Code ranks passages with BM25 and MMR. The model can inspect the stored extraction by offset or scan it for exact terms without any web calls. Inspection records keep the exact source version, range, and result; a zero match is not proof of semantic absence or complete extraction. Only essential gaps drive new web searches, and independent search batches overlap. Collection stops when essential needs are answered, useful queries run out, or you ask it to finish the current turn.
 2. **Synthesize from the library.** The extension saves the evidence first. A separate writing turn sees the ranked passages and open needs, not the search transcript. It cites passage IDs, which code resolves to the source URL, retrieval date, and text offsets.
 
 ## Output and save condition
@@ -41,17 +41,17 @@ The report with resolved citations is saved as:
 research/<timestamp>-<slug>.md
 ```
 
-A matching `.evidence.json` file holds sources, ranked passages, needs, search queries, and acquisition failures. The library is saved before synthesis; if the run is interrupted during collection, acquired text is saved on cancellation.
+A matching `.evidence.json` file holds sources, ranked passages, scoped inspections, needs, search outcomes, and acquisition failures. The library is saved before synthesis; if the run is interrupted during collection, acquired text is saved on cancellation.
 
 ## Limitations
 
-- **Crawl policy:** The bundled crawler applies `robots.txt`, per-host spacing, and public-address checks. It reports unreadable pages rather than switching readers.
+- **Page acquisition:** Access and extraction depend on the configured `pi-web-access` reader. Blocked or unreadable pages are recorded as failures; summaries are not substitutes for original full text.
 - **Citation resolution is not claim validation.** The extension resolves passage IDs and reproduces their stored text; the writer still decides whether it supports each claim.
 - **Timing depends on the research.** About ten minutes is a target, not a cutoff. The active Pi model plans, assesses, and writes.
 - **Follow-up questions start a new run.** Gap-driven follow-up searches happen within a run, but this implementation does not yet reuse a previous run's stored evidence for a narrower follow-up question; that remains a later milestone.
 - **Failures are gaps.** A blocked page, challenge screen, unreadable PDF, or empty extract is reported as a gap; it is never filled in from memory. The extension cannot make a failing source readable.
 
-Measure report quality with the project’s separate evaluation. The evaluator is not part of `/research`.
+Measure report quality with the [separate evaluation harness and results](evaluation/README.md). The evaluator is not part of `/research`. The [course report](submission/CSD358-project-report.pdf) and final archive are in [`submission/`](submission/).
 
 ## Attribution
 

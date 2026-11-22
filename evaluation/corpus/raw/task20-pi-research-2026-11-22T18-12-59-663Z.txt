@@ -1,0 +1,140 @@
+{
+  "comprehensiveness": [
+    {
+      "criterion": "核心概念与设计目标阐述",
+      "analysis": "文章清晰界定了 Streamable HTTP 是 MCP 规范传输层，并梳理两代形态、设计目标与工程动机，包括单端点、请求作用域 SSE、取消语义、无会话简化部署等；也对比了旧 HTTP+SSE 与 JSON 响应模式。但文章明确否认 Anthropic 发布这一前提，且未与 WebSocket 等方案做定位比较，因此按“Anthropic Streamable HTTP”标准看有所偏离。",
+      "target_score": 7.0
+    },
+    {
+      "criterion": "核心技术机制与工作流程",
+      "analysis": "对 POST 分派到 202/JSON/SSE 三条路径、请求作用域 SSE、事件先落库再写流、断线重放去重、GET/DELETE 处理、取消与关闭流等核心流程解释深入，并结合 TypeScript SDK 内部状态机说明工作机制，覆盖度很高。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "协议层具体实现细节",
+      "analysis": "详细说明了 Accept、Content-Type、mcp-session-id、MCP-Protocol-Version、Mcp-Method/Mcp-Name、X-Accel-Buffering、SSE 响应头四件套、413/406/409/404 等状态码，以及 2026-07-28 的头体镜像、Base64 哨兵编码与校验规则，协议细节非常丰富。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "流式数据块格式与解析",
+      "analysis": "文章说明了 SSE 流承载 JSON-RPC 消息、priming event、空 data、event id、retry、注释保活、重放去重和客户端按 content-type 分流解析等机制，但未系统展开 SSE 帧格式（event/data/id/retry 行）与逐块解析规则，格式层描述相对分散。",
+      "target_score": 7.0
+    },
+    {
+      "criterion": "流生命周期管理机制",
+      "analysis": "覆盖了流的启动、最终响应后关闭、closeSSEStream/closeStandaloneSSEStream、客户端 abort 与服务端关闭的区别、关闭流即取消、keep-alive、重连退避、404 语义分叉、会话终止与 409 冲突等，生命周期管理阐述完整。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "服务端与客户端实现要点",
+      "analysis": "分别用独立章节说明服务端 transport 状态、三张映射表、初始化门禁、POST/GET/DELETE 分支、事件存储，以及客户端公共头、POST 分支、401/403 授权重试、GET 重连和 404 处理，服务端与客户端工程要点都很扎实。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "在Anthropic API中的集成与应用",
+      "analysis": "文章没有说明 Streamable HTTP 在 Anthropic API 的具体接口、调用参数、示例或官方 SDK 集成，反而明确指出证据库中不存在 Anthropic 产品或公告将其作为发布物，仅以 Claude Code 等 MCP 客户端宿主身份出现。因此该条严重缺失。",
+      "target_score": 2.0
+    }
+  ],
+  "insight": [
+    {
+      "criterion": "核心机制与技术细节深度阐释",
+      "analysis": "文章深入到 TS SDK 的 transport 字段、映射表、事件存储顺序、重放去重、stateless 复用限制、头体校验等实现细节，明显超越官方文档表面描述，展示了对内部工程实现的深刻理解。",
+      "target_score": 9.5
+    },
+    {
+      "criterion": "设计理念与决策依据剖析",
+      "analysis": "文章分析了请求作用域 SSE 如何让断连成为无歧义取消信号、无会话如何简化部署、默认无状态为何成为工程建议、头镜像为何用于防止中间设备与服务器信任不同事实源，设计理念剖析有深度。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "技术权衡与潜在局限性评估",
+      "analysis": "对有状态与无状态的部署权衡、SSE 反代缓冲、Last-Event-ID 恢复限制、404 语义分叉导致的 Rust SDK 缺陷、Origin 校验边界、token 透传风险等进行了有依据的评估，权衡分析充分。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "与现有方案对比及创新点识别",
+      "analysis": "文章对比了两代 Streamable HTTP、旧 HTTP+SSE、JSON 响应模式与 SSE 模式，并识别出请求作用域流、无会话、头体镜像等差异点；但未与 WebSocket、gRPC streaming 等业界流式方案做系统比较，对比维度略窄。",
+      "target_score": 7.5
+    },
+    {
+      "criterion": "问题场景与方案契合度分析",
+      "analysis": "文章将方案与远程 MCP 服务器、长任务轮询、横向扩展、Serverless、通知订阅、取消等场景联系紧密，并分析无状态默认值对部署的适配性；但未围绕 Anthropic API/LLM 推理流式传输场景展开，契合度分析偏向 MCP 工程场景。",
+      "target_score": 8.0
+    },
+    {
+      "criterion": "工程价值与潜在影响洞察",
+      "analysis": "文章给出可直接落地的工程清单、迁移兼容策略、安全控制线和部署建议，工程价值很高；对行业影响着墨较少，但已指出默认无状态、头体校验等实践可能成为实现共识。",
+      "target_score": 8.5
+    }
+  ],
+  "instruction_following": [
+    {
+      "criterion": "主题聚焦于 Anthropic Streamable HTTP",
+      "analysis": "文章主体聚焦 MCP Streamable HTTP，而非 Anthropic 公司发布的 Streamable HTTP，并明确论证“Anthropic 发布”无法证实。虽然纠偏有研究价值，但从严格切题标准看，文章偏离了任务设定的 Anthropic 主体。",
+      "target_score": 4.5
+    },
+    {
+      "criterion": "聚焦于“具体实现方案”",
+      "analysis": "文章大量讨论 transport 内部状态、源码级分支、协议头、事件存储、SSE 生命周期、部署拓扑和兼容策略，属于典型的实现方案研究，而不是停留在功能介绍或使用教程层面。",
+      "target_score": 9.5
+    },
+    {
+      "criterion": "信息时效性（最新发布）的遵守",
+      "analysis": "文章基于 2026-07-28 现行修订与 2025-11-25 最后修订进行代际划分，检索时间标注为 2026-11-22，反映出对最新 MCP 规范状态的追踪；但无法证实 Anthropic 最新发布，因此“最新发布”这一任务前提未被满足。",
+      "target_score": 8.0
+    },
+    {
+      "criterion": "回应方式的直接性",
+      "analysis": "文章直接以“工程实现方案”为研究对象，给出规范对比、服务端/客户端实现、部署、安全、迁移与清单，回应方式直接且研究性强。",
+      "target_score": 9.0
+    }
+  ],
+  "readability": [
+    {
+      "criterion": "语言清晰度、精确性与技术规范性",
+      "analysis": "技术表述精确，术语使用规范，句子整体清晰；但部分段落信息密度很高，引用标记密集，长句较多，阅读时需要一定背景知识。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "文章整体结构与逻辑流的清晰度",
+      "analysis": "结构非常清晰：结论先行、两代规范对比、服务端实现、客户端实现、部署拓扑、安全、2026 陷阱、迁移兼容、工程清单、证据局限，层级分明且逻辑顺畅。",
+      "target_score": 9.5
+    },
+    {
+      "criterion": "技术概念解释的清晰度与易懂性",
+      "analysis": "对会话、无状态、SSE 作用域、事件存储、priming event、头体校验等概念解释清楚，并结合实现行为说明；但默认读者具备 MCP/HTTP/SSE 基础，部分缩写和规范术语未逐一展开。",
+      "target_score": 8.5
+    },
+    {
+      "criterion": "信息组织与密度控制",
+      "analysis": "利用表格、分节、列表和编号清单组织高密度信息，重点较突出；但部分小节信息堆叠明显，初学者可能需要反复阅读才能消化。",
+      "target_score": 8.5
+    },
+    {
+      "criterion": "段落组织的连贯性与聚焦性",
+      "analysis": "段落大多围绕单一主题展开，节内过渡自然，服务端与客户端部分按处理分支逐层推进，连贯性良好。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "技术术语使用的恰当性与解释",
+      "analysis": "术语使用准确一致，如 session、stateless、EventStore、priming event、MRTR 等均在上下文中有所说明；但部分术语首次出现时解释较简略，对非 MCP 读者不够友好。",
+      "target_score": 8.5
+    },
+    {
+      "criterion": "图表、代码示例的有效性与清晰度 (若有)",
+      "analysis": "文章主要使用表格进行两代规范对比和工程清单整理，表格清晰有效；没有代码示例或架构图，但表格已能辅助理解关键差异。",
+      "target_score": 8.0
+    },
+    {
+      "criterion": "格式排版的规范性与视觉友好度",
+      "analysis": "Markdown 标题、列表、表格、引用链接和证据锚点使用规范，层级清楚，整体排版整洁，便于查找信息。",
+      "target_score": 9.0
+    },
+    {
+      "criterion": "内容表达的读者适应性",
+      "analysis": "文章面向具备工程背景的读者，表达专业且信息量大；但对不熟悉 MCP 规范、SSE 和 SDK 内部机制的读者门槛较高，读者适应性中等偏上。",
+      "target_score": 8.0
+    }
+  ]
+}
