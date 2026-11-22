@@ -8,7 +8,7 @@
  * Run: ./node_modules/.bin/tsx test/core-ir.test.ts   (exit 1 on any failed check)
  */
 import assert from 'node:assert/strict';
-import { PassageIndex, expandedQuery, mmr, segment, tokenize } from '../src/core-ir.js';
+import { PassageIndex, expandedQuery, mmr, segment, stem, tokenize } from '../src/core-ir.js';
 import type { Concept, Passage, SearchHit, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
@@ -224,6 +224,68 @@ check('ordinary paragraph packing keeps its existing offsets', () => {
   assert.deepEqual(passages.map(passage => [passage.start, passage.end]), [[0, 2323], [2325, 3125]],
     'paragraph-packed spans are unchanged for pages that were never over the caps');
   assert.deepEqual(assertSpans(snapshot, passages), [271, 90]);
+});
+
+check('porter stemmer maps morphological variants', () => {
+  assert.equal(stem('detect'), 'detect');
+  assert.equal(stem('detection'), 'detect');
+  assert.equal(stem('detecting'), 'detect');
+  assert.equal(stem('retrieval'), 'retriev');
+  assert.equal(stem('retrieving'), 'retriev');
+  assert.equal(stem('models'), 'model');
+  assert.equal(stem('improves'), 'improv');
+  assert.equal(stem('improving'), 'improv');
+});
+
+check('stemmed ranking matches word-form variants without mutating spans', () => {
+  const index = new PassageIndex();
+  index.add([
+    P('p1', 's1', 'automatic detection of training serving skew is critical'),
+    P('p2', 's2', 'retrieval systems for continuous evaluation'),
+  ]);
+  const unstemmed = index.rank('detecting', 10);
+  assert.equal(unstemmed.length, 0, 'unstemmed rank does not match detecting against detection');
+
+  const stemmed = index.rankStemmed('detecting', 10);
+  assert.equal(stemmed.length, 1, 'stemmed rank matches detecting against detection');
+  assert.equal(stemmed[0]!.passage.id, 'p1');
+  assert.equal(stemmed[0]!.passage.text, 'automatic detection of training serving skew is critical',
+    'surface text is preserved exactly');
+  assert.equal(stemmed[0]!.passage.start, 0);
+  assert.equal(stemmed[0]!.passage.end, stemmed[0]!.passage.text.length);
+
+  assert.equal(index.documentFrequency('detection'), 1);
+  assert.equal(index.documentFrequency('detecting'), 0);
+  assert.equal(index.documentFrequency('detecting', { stem: true }), 1);
+});
+
+check('query-likelihood language model applies Dirichlet smoothing and length penalty', () => {
+  const index = new PassageIndex();
+  index.add([
+    P('short', 's1', 'neural retrieval models improve recall'),
+    P('long', 's2', 'neural retrieval models improve recall in domain applications through comprehensive offline evaluation pipelines and benchmarks'),
+    P('highTF', 's3', 'neural retrieval retrieval retrieval systems improve recall'),
+  ]);
+  const qlHigh = index.rankQL('retrieval', 10);
+  assert.equal(qlHigh[0]!.passage.id, 'highTF', 'higher TF produces higher QL score');
+
+  const qlLen = index.rankQL('neural retrieval', 10);
+  const shortHit = qlLen.find(h => h.passage.id === 'short')!;
+  const longHit = qlLen.find(h => h.passage.id === 'long')!;
+  assert.ok(shortHit.score > longHit.score, `shorter document (${shortHit.score}) scores higher than longer document (${longHit.score}) at equal TF`);
+});
+
+check('SDM ranks adjacent ordered phrases above separated or reversed terms', () => {
+  const index = new PassageIndex();
+  index.add([
+    P('phrase', 's1', 'realtime detection of training serving skew occurs here'),
+    P('unordered', 's2', 'realtime detection of serving skew from training occurs here'),
+    P('separated', 's3', 'realtime detection of training in production without serving any significant data skew occurs here'),
+  ]);
+  const hits = index.rankSDM('training serving skew', 10);
+  assert.equal(hits[0]!.passage.id, 'phrase', 'exact adjacent ordered phrase (#1) ranks highest');
+  assert.equal(hits[1]!.passage.id, 'unordered', 'nearby unordered terms (#8) rank second');
+  assert.equal(hits[2]!.passage.id, 'separated', 'separated terms rank lowest');
 });
 
 if (failures.length) {

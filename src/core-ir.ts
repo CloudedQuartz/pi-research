@@ -78,6 +78,162 @@ export function tokenize(text: string): Token[] {
   return tokens;
 }
 
+/**
+ * Porter Stemmer (Martin Porter, 1980) for English.
+ * Strips morphological suffixes to map word variants (e.g. detect, detection, detecting -> detect).
+ */
+export function stem(word: string): string {
+  if (word.length < 3) return word.toLowerCase();
+  let w = word.toLowerCase();
+
+  const isConsonant = (str: string, i: number): boolean => {
+    const c = str[i]!;
+    if (c === 'a' || c === 'e' || c === 'i' || c === 'o' || c === 'u') return false;
+    if (c === 'y') return i === 0 ? true : !isConsonant(str, i - 1);
+    return true;
+  };
+
+  const measure = (str: string): number => {
+    let n = 0;
+    let i = 0;
+    const len = str.length;
+    while (i < len && isConsonant(str, i)) i++;
+    while (i < len) {
+      while (i < len && !isConsonant(str, i)) i++;
+      if (i < len) {
+        n++;
+        while (i < len && isConsonant(str, i)) i++;
+      }
+    }
+    return n;
+  };
+
+  const hasVowel = (str: string): boolean => {
+    for (let i = 0; i < str.length; i++) {
+      if (!isConsonant(str, i)) return true;
+    }
+    return false;
+  };
+
+  const endsWithDoubleConsonant = (str: string): boolean => {
+    const len = str.length;
+    if (len < 2) return false;
+    if (str[len - 1] !== str[len - 2]) return false;
+    return isConsonant(str, len - 1);
+  };
+
+  const cvc = (str: string): boolean => {
+    const len = str.length;
+    if (len < 3) return false;
+    if (!isConsonant(str, len - 1) || isConsonant(str, len - 2) || !isConsonant(str, len - 3)) return false;
+    const last = str[len - 1]!;
+    if (last === 'w' || last === 'x' || last === 'y') return false;
+    return true;
+  };
+
+  // Step 1a
+  if (w.endsWith('sses')) w = w.slice(0, -2);
+  else if (w.endsWith('ies')) w = w.slice(0, -2);
+  else if (!w.endsWith('ss') && w.endsWith('s')) w = w.slice(0, -1);
+
+  // Step 1b
+  let extra1b = false;
+  if (w.endsWith('eed')) {
+    const s = w.slice(0, -3);
+    if (measure(s) > 0) w = s + 'ee';
+  } else if (w.endsWith('ed')) {
+    const s = w.slice(0, -2);
+    if (hasVowel(s)) {
+      w = s;
+      extra1b = true;
+    }
+  } else if (w.endsWith('ing')) {
+    const s = w.slice(0, -3);
+    if (hasVowel(s)) {
+      w = s;
+      extra1b = true;
+    }
+  }
+  if (extra1b) {
+    if (w.endsWith('at') || w.endsWith('bl') || w.endsWith('iz')) {
+      w += 'e';
+    } else if (endsWithDoubleConsonant(w) && !w.endsWith('l') && !w.endsWith('s') && !w.endsWith('z')) {
+      w = w.slice(0, -1);
+    } else if (measure(w) === 1 && cvc(w)) {
+      w += 'e';
+    }
+  }
+
+  // Step 1c
+  if (w.endsWith('y') && hasVowel(w.slice(0, -1))) {
+    w = w.slice(0, -1) + 'i';
+  }
+
+  // Step 2
+  const step2Pairs: [string, string][] = [
+    ['ational', 'ate'], ['tional', 'tion'], ['enci', 'ence'], ['anci', 'ance'],
+    ['izer', 'ize'], ['abli', 'able'], ['alli', 'al'], ['entli', 'ent'],
+    ['eli', 'e'], ['ousli', 'ous'], ['ization', 'ize'], ['ation', 'ate'],
+    ['ator', 'ate'], ['alism', 'al'], ['iveness', 'ive'], ['fulness', 'ful'],
+    ['ousness', 'ous'], ['aliti', 'al'], ['iviti', 'ive'], ['biliti', 'ble'],
+  ];
+  for (const [suffix, repl] of step2Pairs) {
+    if (w.endsWith(suffix)) {
+      const s = w.slice(0, -suffix.length);
+      if (measure(s) > 0) w = s + repl;
+      break;
+    }
+  }
+
+  // Step 3
+  const step3Pairs: [string, string][] = [
+    ['icate', 'ic'], ['ative', ''], ['alize', 'al'],
+    ['iciti', 'ic'], ['ical', 'ic'], ['ful', ''], ['ness', ''],
+  ];
+  for (const [suffix, repl] of step3Pairs) {
+    if (w.endsWith(suffix)) {
+      const s = w.slice(0, -suffix.length);
+      if (measure(s) > 0) w = s + repl;
+      break;
+    }
+  }
+
+  // Step 4
+  const step4Suffixes = [
+    'al', 'ance', 'ence', 'er', 'ic', 'able', 'ible', 'ant',
+    'ement', 'ment', 'ent', 'ou', 'ism', 'ate', 'iti', 'ous', 'ive', 'ize',
+  ];
+  for (const suffix of step4Suffixes) {
+    if (w.endsWith(suffix)) {
+      const s = w.slice(0, -suffix.length);
+      if (measure(s) > 1) w = s;
+      break;
+    }
+  }
+  if (w.endsWith('ion')) {
+    const s = w.slice(0, -3);
+    if (measure(s) > 1 && (s.endsWith('s') || s.endsWith('t'))) {
+      w = s;
+    }
+  }
+
+  // Step 5a
+  if (w.endsWith('e')) {
+    const s = w.slice(0, -1);
+    const m = measure(s);
+    if (m > 1 || (m === 1 && !cvc(s))) {
+      w = s;
+    }
+  }
+
+  // Step 5b
+  if (w.endsWith('ll') && measure(w.slice(0, -1)) > 1) {
+    w = w.slice(0, -1);
+  }
+
+  return w;
+}
+
 /** Scoring normalization: the surface stream minus stopwords. */
 const keyTerms = (text: string): string[] =>
   tokenize(text).filter(token => !STOPWORDS.has(token.term)).map(token => token.term);
@@ -149,6 +305,25 @@ const nearPhrase = (stream: string[], phrase: string[]): boolean => {
     if (phrase.every(term => slice.includes(term))) return true;
   }
   return false;
+};
+
+/** Occurrences where t1 and t2 appear within windowSize tokens of each other in stream. */
+const countWindow = (stream: string[], t1: string, t2: string, windowSize: number): number => {
+  if (stream.length < 2) return 0;
+  let count = 0;
+  for (let i = 0; i < stream.length; i++) {
+    if (stream[i] === t1) {
+      const from = Math.max(0, i - windowSize + 1);
+      const to = Math.min(stream.length, i + windowSize);
+      for (let j = from; j < to; j++) {
+        if (i !== j && stream[j] === t2) {
+          count++;
+          break;
+        }
+      }
+    }
+  }
+  return count;
 };
 
 const shinglesOf = (terms: string[]): Set<string> => {
@@ -352,11 +527,20 @@ export interface IndexStats {
   revision: number;
 }
 
+export interface SDMWeights {
+  lambdaT?: number;
+  lambdaO?: number;
+  lambdaU?: number;
+  mu?: number;
+  windowSize?: number;
+}
+
 interface IndexedPassage {
   passage: Passage;
   tokens: Token[];
   surface: string[];
   content: string[];
+  stems: string[];
   length: number;
   shingles: Set<string>;
 }
@@ -371,6 +555,10 @@ export class PassageIndex {
   private records = new Map<string, IndexedPassage>();
   private postings = new Map<string, string[]>();
   private df = new Map<string, number>();
+  private stemPostings = new Map<string, string[]>();
+  private stemDf = new Map<string, number>();
+  private contentCf = new Map<string, number>();
+  private totalContentTokens = 0;
   private basisTag = 'empty';
   private statsValue: IndexStats = { n: 0, passages: 0, aliases: 0, terms: 0, tokens: 0, avg: 0, groups: 0, revision: 0 };
 
@@ -408,13 +596,18 @@ export class PassageIndex {
    * Positional document frequency over distinct passages. Single terms use the
    * df table; multiword phrases match surface tokens consecutively, so a
    * function-word gap blocks an exact match.
+   * If options.stem is true, document frequency is evaluated on the stemmed stream.
    */
-  documentFrequency(termOrPhrase: string): number {
-    const phrase = tokenize(termOrPhrase).map(token => token.term);
+  documentFrequency(termOrPhrase: string, options?: { stem?: boolean }): number {
+    const isStem = Boolean(options?.stem);
+    const phrase = tokenize(termOrPhrase).map(token => isStem ? stem(token.term) : token.term);
     if (!phrase.length) return 0;
-    if (phrase.length === 1) return this.df.get(phrase[0]!) ?? 0;
+    if (phrase.length === 1) return (isStem ? this.stemDf.get(phrase[0]!) : this.df.get(phrase[0]!)) ?? 0;
     let df = 0;
-    for (const record of this.records.values()) if (containsPhrase(record.surface, phrase)) df++;
+    for (const record of this.records.values()) {
+      const stream = isStem ? record.stems : record.surface;
+      if (containsPhrase(stream, phrase)) df++;
+    }
     return df;
   }
 
@@ -423,27 +616,40 @@ export class PassageIndex {
    * per-term contributions and a small exact/proximity phrase bonus computed on
    * surface tokens. Ties break by passage id so output is deterministic across
    * intake order; fresh hits carry their corpus basis and TF-IDF vector.
+   * If options.stem is true, terms and phrases match against the stemmed stream.
    */
-  rank(query: string | Record<string, number>, limit = 30, phrases?: string[]): SearchHit[] {
+  rank(query: string | Record<string, number>, limit = 30, phrases?: string[], options?: { stem?: boolean }): SearchHit[] {
     if (limit <= 0 || !this.records.size) return [];
-    const weights = queryWeights(query);
-    if (!weights.size) return [];
+    const isStem = Boolean(options?.stem);
+    const rawWeights = queryWeights(query);
+    if (!rawWeights.size) return [];
+    const weights = new Map<string, number>();
+    if (isStem) {
+      for (const [term, weight] of rawWeights) {
+        const st = stem(term);
+        weights.set(st, (weights.get(st) ?? 0) + weight);
+      }
+    } else {
+      for (const [term, weight] of rawWeights) weights.set(term, weight);
+    }
+    const dfSource = isStem ? this.stemDf : this.df;
+    const postingsSource = isStem ? this.stemPostings : this.postings;
     const { n, avg } = this.statsValue;
     const idfs = new Map<string, number>();
     for (const term of weights.keys()) {
-      const df = this.df.get(term) ?? 0;
+      const df = dfSource.get(term) ?? 0;
       idfs.set(term, Math.log(1 + (n - df + 0.5) / (df + 0.5)));
     }
     const tfs = new Map<string, Map<string, number>>();
     for (const term of weights.keys()) {
-      for (const id of this.postings.get(term) ?? []) {
+      for (const id of postingsSource.get(term) ?? []) {
         let byTerm = tfs.get(id);
         if (!byTerm) { byTerm = new Map(); tfs.set(id, byTerm); }
         byTerm.set(term, (byTerm.get(term) ?? 0) + 1);
       }
     }
     const phraseStreams = (phrases ?? [])
-      .map(phrase => tokenize(phrase).map(token => token.term))
+      .map(phrase => tokenize(phrase).map(token => isStem ? stem(token.term) : token.term))
       .filter(stream => stream.length >= 2);
     const queryOrder = [...weights.keys()];
     const hits: SearchHit[] = [];
@@ -457,21 +663,223 @@ export class PassageIndex {
       for (const term of queryOrder) {
         const tf = tfMap.get(term) ?? 0;
         const weight = weights.get(term)!;
-        const df = this.df.get(term) ?? 0;
+        const df = dfSource.get(term) ?? 0;
         const idf = idfs.get(term)!;
         const contribution = tf > 0 ? weight * idf * ((tf * (K1 + 1)) / (tf + norm)) : 0;
         score += contribution;
         terms.push({ term, weight, tf, df, idf, contribution });
       }
       let phraseBonus = 0;
+      const matchStream = isStem ? record.stems : record.surface;
       for (const stream of phraseStreams) {
-        const occurrences = countPhrase(record.surface, stream);
+        const occurrences = countPhrase(matchStream, stream);
         if (occurrences > 0) phraseBonus += PHRASE_EXACT_BONUS + PHRASE_OCCURRENCE_BONUS * Math.min(occurrences - 1, 2);
-        else if (nearPhrase(record.surface, stream)) phraseBonus += PHRASE_PROXIMITY_BONUS;
+        else if (nearPhrase(matchStream, stream)) phraseBonus += PHRASE_PROXIMITY_BONUS;
       }
       score += phraseBonus;
       hits.push({ passage: { ...record.passage }, score, terms, phraseBonus, length, averageLength: avg });
     }
+    hits.sort((a, b) => b.score - a.score || (a.passage.id < b.passage.id ? -1 : a.passage.id > b.passage.id ? 1 : 0));
+    const limited = hits.slice(0, limit);
+    for (const hit of limited) {
+      const record = this.records.get(hit.passage.id);
+      if (record) hitVectors.set(hit, { basis: this.basisTag, vector: this.tfidfVector(record) });
+    }
+    return limited;
+  }
+
+  /**
+   * Ranked BM25 using Porter stemming on terms and phrases.
+   * Original surface tokens and character spans in hit passages are preserved.
+   */
+  rankStemmed(query: string | Record<string, number>, limit = 30, phrases?: string[]): SearchHit[] {
+    return this.rank(query, limit, phrases, { stem: true });
+  }
+
+  /**
+   * Query-Likelihood Language Model with Bayesian Dirichlet smoothing (Zhai & Lafferty, 2001).
+   *
+   * score(d) = Σ_{w ∈ q} c(w, q) * log(1 + tf(w, d) / (μ * P(w|C))) + |q| * log(μ / (|d| + μ))
+   */
+  rankQL(query: string | Record<string, number>, limit = 30, mu = 2000): SearchHit[] {
+    if (limit <= 0 || !this.records.size) return [];
+    const weights = queryWeights(query);
+    if (!weights.size) return [];
+    const totalC = Math.max(this.totalContentTokens, 1);
+    const queryTerms = [...weights.keys()];
+    const totalQueryWeight = [...weights.values()].reduce((sum, w) => sum + w, 0);
+
+    const tfs = new Map<string, Map<string, number>>();
+    for (const term of queryTerms) {
+      for (const id of this.postings.get(term) ?? []) {
+        let byTerm = tfs.get(id);
+        if (!byTerm) { byTerm = new Map(); tfs.set(id, byTerm); }
+        byTerm.set(term, (byTerm.get(term) ?? 0) + 1);
+      }
+    }
+    if (!tfs.size) return [];
+
+    const hits: SearchHit[] = [];
+    for (const [id, tfMap] of tfs) {
+      const record = this.records.get(id);
+      if (!record) continue;
+      const docLen = Math.max(record.length, 1);
+      const lengthPenalty = Math.log(mu / (docLen + mu));
+      let score = totalQueryWeight * lengthPenalty;
+      const terms: TermScore[] = [];
+
+      for (const term of queryTerms) {
+        const weight = weights.get(term)!;
+        const tf = tfMap.get(term) ?? 0;
+        const cf = this.contentCf.get(term) ?? 0;
+        const df = this.df.get(term) ?? 0;
+        const pC = Math.max(cf, 0.5) / totalC;
+        const idf = Math.log(1 / pC);
+        const matchGain = tf > 0 ? weight * Math.log(1 + tf / (mu * pC)) : 0;
+        score += matchGain;
+        terms.push({ term, weight, tf, df, idf, contribution: weight * lengthPenalty + matchGain });
+      }
+
+      hits.push({
+        passage: { ...record.passage },
+        score,
+        terms,
+        phraseBonus: 0,
+        length: record.length,
+        averageLength: this.statsValue.avg,
+      });
+    }
+
+    hits.sort((a, b) => b.score - a.score || (a.passage.id < b.passage.id ? -1 : a.passage.id > b.passage.id ? 1 : 0));
+    const limited = hits.slice(0, limit);
+    for (const hit of limited) {
+      const record = this.records.get(hit.passage.id);
+      if (record) hitVectors.set(hit, { basis: this.basisTag, vector: this.tfidfVector(record) });
+    }
+    return limited;
+  }
+
+  /**
+   * Sequential Dependence Model / Markov Random Field retrieval (Metzler & Croft, 2005).
+   * Linearly combines unigram Dirichlet language model (λ_T = 0.85),
+   * ordered bigram window #1 (λ_O = 0.10), and unordered window bigrams #8 (λ_U = 0.05).
+   */
+  rankSDM(
+    query: string | Record<string, number>,
+    limit = 30,
+    weights?: SDMWeights,
+  ): SearchHit[] {
+    if (limit <= 0 || !this.records.size) return [];
+    const lambdaT = weights?.lambdaT ?? 0.85;
+    const lambdaO = weights?.lambdaO ?? 0.10;
+    const lambdaU = weights?.lambdaU ?? 0.05;
+    const mu = weights?.mu ?? 2000;
+    const windowSize = weights?.windowSize ?? 8;
+
+    const qWeights = queryWeights(query);
+    if (!qWeights.size) return [];
+    const queryTerms = [...qWeights.keys()];
+
+    if (queryTerms.length < 2) {
+      return this.rankQL(query, limit, mu);
+    }
+
+    const totalC = Math.max(this.totalContentTokens, 1);
+    const totalSurfaceC = Math.max(this.statsValue.tokens, 1);
+    const totalQueryWeight = [...qWeights.values()].reduce((sum, w) => sum + w, 0);
+
+    const candidateIds = new Set<string>();
+    const tfs = new Map<string, Map<string, number>>();
+    for (const term of queryTerms) {
+      for (const id of this.postings.get(term) ?? []) {
+        candidateIds.add(id);
+        let byTerm = tfs.get(id);
+        if (!byTerm) { byTerm = new Map(); tfs.set(id, byTerm); }
+        byTerm.set(term, (byTerm.get(term) ?? 0) + 1);
+      }
+    }
+    if (!candidateIds.size) return [];
+
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < queryTerms.length - 1; i++) {
+      pairs.push([queryTerms[i]!, queryTerms[i + 1]!]);
+    }
+
+    const cfO = new Map<string, number>();
+    const cfU = new Map<string, number>();
+    for (const [t1, t2] of pairs) {
+      const key = `${t1}\0${t2}`;
+      let cO = 0;
+      let cU = 0;
+      for (const record of this.records.values()) {
+        cO += countPhrase(record.surface, [t1, t2]);
+        cU += countWindow(record.surface, t1, t2, windowSize);
+      }
+      cfO.set(key, cO);
+      cfU.set(key, cU);
+    }
+
+    const hits: SearchHit[] = [];
+    for (const id of candidateIds) {
+      const record = this.records.get(id);
+      if (!record) continue;
+      const docLen = Math.max(record.length, 1);
+      const surfaceLen = Math.max(record.tokens.length, 1);
+      const lengthPenaltyT = Math.log(mu / (docLen + mu));
+      const lengthPenaltyO = Math.log(mu / (surfaceLen + mu));
+      const lengthPenaltyU = Math.log(mu / (surfaceLen + mu));
+
+      // 1. Unigram feature f_T
+      let scoreT = totalQueryWeight * lengthPenaltyT;
+      const terms: TermScore[] = [];
+      const tfMap = tfs.get(id);
+      for (const term of queryTerms) {
+        const weight = qWeights.get(term)!;
+        const tf = tfMap?.get(term) ?? 0;
+        const cf = this.contentCf.get(term) ?? 0;
+        const df = this.df.get(term) ?? 0;
+        const pC = Math.max(cf, 0.5) / totalC;
+        const idf = Math.log(1 / pC);
+        const matchGain = tf > 0 ? weight * Math.log(1 + tf / (mu * pC)) : 0;
+        scoreT += matchGain;
+        terms.push({ term, weight, tf, df, idf, contribution: weight * lengthPenaltyT + matchGain });
+      }
+
+      // 2. Ordered bigram feature f_O (#1)
+      let scoreO = pairs.length * lengthPenaltyO;
+      for (const [t1, t2] of pairs) {
+        const key = `${t1}\0${t2}`;
+        const tfO = countPhrase(record.surface, [t1, t2]);
+        const pCO = Math.max(cfO.get(key) ?? 0, 0.5) / totalSurfaceC;
+        if (tfO > 0) {
+          scoreO += Math.log(1 + tfO / (mu * pCO));
+        }
+      }
+
+      // 3. Unordered window feature f_U (#windowSize)
+      let scoreU = pairs.length * lengthPenaltyU;
+      for (const [t1, t2] of pairs) {
+        const key = `${t1}\0${t2}`;
+        const tfU = countWindow(record.surface, t1, t2, windowSize);
+        const pCU = Math.max(cfU.get(key) ?? 0, 0.5) / totalSurfaceC;
+        if (tfU > 0) {
+          scoreU += Math.log(1 + tfU / (mu * pCU));
+        }
+      }
+
+      const totalScore = lambdaT * scoreT + lambdaO * scoreO + lambdaU * scoreU;
+      const phraseBonus = lambdaO * scoreO + lambdaU * scoreU;
+
+      hits.push({
+        passage: { ...record.passage },
+        score: totalScore,
+        terms,
+        phraseBonus,
+        length: record.length,
+        averageLength: this.statsValue.avg,
+      });
+    }
+
     hits.sort((a, b) => b.score - a.score || (a.passage.id < b.passage.id ? -1 : a.passage.id > b.passage.id ? 1 : 0));
     const limited = hits.slice(0, limit);
     for (const hit of limited) {
@@ -521,8 +929,9 @@ export class PassageIndex {
       const passage = this.accepted.get(id)!;
       const tokens = tokenize(passage.text);
       const content = tokens.filter(token => !STOPWORDS.has(token.term)).map(token => token.term);
+      const stems = content.map(term => stem(term));
       records.set(id, {
-        passage, tokens, surface: tokens.map(token => token.term), content, length: content.length,
+        passage, tokens, surface: tokens.map(token => token.term), content, stems, length: content.length,
         shingles: shinglesOf(tokens.map(token => token.term)),
       });
     }
@@ -573,6 +982,9 @@ export class PassageIndex {
     // counts repeats); distinct-document df and stats derive from the accepted set.
     const postings = new Map<string, string[]>();
     const df = new Map<string, number>();
+    const stemPostings = new Map<string, string[]>();
+    const stemDf = new Map<string, number>();
+    const contentCf = new Map<string, number>();
     let tokens = 0;
     let totalLength = 0;
     for (const id of canonicalIds) {
@@ -585,10 +997,25 @@ export class PassageIndex {
         else postings.set(token.term, [id]);
       }
       for (const term of new Set(record.surface)) df.set(term, (df.get(term) ?? 0) + 1);
+
+      for (const st of record.stems) {
+        const list = stemPostings.get(st);
+        if (list) list.push(id);
+        else stemPostings.set(st, [id]);
+      }
+      for (const st of new Set(record.stems)) stemDf.set(st, (stemDf.get(st) ?? 0) + 1);
+
+      for (const term of record.content) {
+        contentCf.set(term, (contentCf.get(term) ?? 0) + 1);
+      }
     }
     this.records = records;
     this.postings = postings;
     this.df = df;
+    this.stemPostings = stemPostings;
+    this.stemDf = stemDf;
+    this.contentCf = contentCf;
+    this.totalContentTokens = totalLength;
     const n = canonicalIds.length;
     const snapshots = new Set(accepted.map(passage => passage.snapshotId));
     this.statsValue = {

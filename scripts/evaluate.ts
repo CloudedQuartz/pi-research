@@ -30,8 +30,8 @@ export interface Dataset { passages: Passage[]; queries: JudgedQuery[]; }
 export interface Metrics {
   p5: number; p10: number; ndcg10: number; pooledRecall10: number; redundancy10: number;
 }
-export type Method = 'bm25' | 'lexicalPRF' | 'prfMMR';
-export const METHODS: readonly Method[] = ['bm25', 'lexicalPRF', 'prfMMR'];
+export type Method = 'bm25' | 'bm25stem' | 'ql' | 'sdm' | 'lexicalPRF' | 'prfMMR';
+export const METHODS: readonly Method[] = ['bm25', 'bm25stem', 'ql', 'sdm', 'lexicalPRF', 'prfMMR'];
 
 function fail(message: string): never { throw new Error(message); }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -124,6 +124,9 @@ export function evaluate(dataset: Dataset) {
       aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
     };
     const bm25 = index.rank(query.text, 30);
+    const bm25stem = index.rankStemmed(query.text, 30);
+    const ql = index.rankQL(query.text, 30);
+    const sdm = index.rankSDM(query.text, 30);
     // No qrel leakage: PRF concepts come only from the ranked corpus pool and the
     // anchor. This lexical ablation never reads query.judgments or any human grade.
     const lexicalPRF = index.rank(expandedQuery(query.text, concepts(bm25, branch, [], 12, index)), 30);
@@ -132,9 +135,19 @@ export function evaluate(dataset: Dataset) {
       queryId: query.id,
       text: query.text,
       judgedPositive: Object.values(query.judgments).filter(grade => grade > 0).length,
-      rankings: { bm25: rankIds(bm25), lexicalPRF: rankIds(lexicalPRF), prfMMR: rankIds(prfMMR) },
+      rankings: {
+        bm25: rankIds(bm25),
+        bm25stem: rankIds(bm25stem),
+        ql: rankIds(ql),
+        sdm: rankIds(sdm),
+        lexicalPRF: rankIds(lexicalPRF),
+        prfMMR: rankIds(prfMMR),
+      },
       metrics: {
         bm25: metrics(bm25, query.judgments),
+        bm25stem: metrics(bm25stem, query.judgments),
+        ql: metrics(ql, query.judgments),
+        sdm: metrics(sdm, query.judgments),
         lexicalPRF: metrics(lexicalPRF, query.judgments),
         prfMMR: metrics(prfMMR, query.judgments),
       },
