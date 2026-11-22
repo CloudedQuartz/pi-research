@@ -1,4 +1,6 @@
-# Evidence-First Deep Research in Pi
+# Evidence-First Deep Research in Pi — working draft
+
+The final version is the [IEEE conference report](CSD358-project-report.pdf) ([LaTeX source](CSD358-project-report.tex)). The draft below predates the final evaluation diagnostics.
 
 **CSD358 — Information Retrieval course project**  
 **Group members:** Riya Arora, Abhyudaya Vasisht, Ayan Pande  
