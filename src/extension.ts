@@ -11,7 +11,7 @@ import { ObjectStore, rehydrate, validateInvestigation } from './object-store.js
 import { PassageIndex, mmr } from './core-ir.js';
 import { AcquisitionService } from './acquisition.js';
 import { ResearchEngine, newInvestigation, feedback } from './engine.js';
-import { combineUsage, makeModelHost, normalizeDiscovery } from './pi-model.js';
+import { CONFIGURED_DEFAULT_PROVIDER, combineUsage, makeModelHost, normalizeConfiguredDiscovery, normalizeDiscovery } from './pi-model.js';
 import { inspectState, rankText, researchMap, safeText, sourceList } from './views.js';
 import { validateSpan } from './report.js';
 import type { EngineHost, Feedback, Investigation, Limits } from './types.js';
@@ -125,12 +125,11 @@ export default function researchExtension(pi: ExtensionAPI): void {
     const expectedRevision = old?.revisionId;
     let config: { provider: string; searchTool: string };
     if (!old) {
-      const provider = (await ctx.ui.input('Choose one discovery provider (e.g. brave, gemini, openai)'))?.trim(); assertStamp(ctx, before);
-      const searchTool = (await ctx.ui.input('Registered search tool name', 'web_search'))?.trim(); assertStamp(ctx, before);
-      if (!provider || provider === 'auto' || provider === 'all' || /[,\s]/.test(provider) || !searchTool) throw new Error('One explicit provider and tool name are required.');
-      const tool = pi.getAllTools().find(t => t.name === searchTool);
-      if (!tool || tool.exposure === 'hidden' || tool.exposure === 'model-only') throw new Error('Configured search tool is not registered/callable; load pi-web-access first.');
-      config = { provider, searchTool };
+      const tool = pi.getAllTools().find(t => t.name === 'web_search');
+      if (!tool || tool.exposure === 'hidden' || tool.exposure === 'model-only') throw new Error('Registered web_search tool is unavailable; load pi-web-access first.');
+      // Persist only the policy marker: the tool resolves its configured default, which may
+      // fan out across configured providers. No provider or tool name is typed per run.
+      config = { provider: CONFIGURED_DEFAULT_PROVIDER, searchTool: 'web_search' };
     } else config = configFor(ctx, old.id);
     const client = old ? getClient(ctx, old.storageRoot) : undefined;
     const summary = client && old ? client.db.snapshot(old.allowanceId) : undefined;
@@ -140,7 +139,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
       const deadline = summary.remainingElapsedMs === undefined ? 'no deadline' : `${summary.remainingElapsedMs} ms remaining`;
       allowanceLine = `Remaining: ${JSON.stringify(summary.remaining)}\nTime: ${deadline}`;
     }
-    const consent = await ctx.ui.confirm('Authorize research?', `${kind}: ${question || targetId || old?.originalQuestion}\nProvider: ${config.provider}\n${allowanceLine}\nContinuation revokes any prior writer, without retrying uncertain operations. Token control is estimated; hidden provider searches/costs are unknown. Accept selected provider/model charges only if intended.`);
+    // A configured default may fan out across configured providers; the ledger counts the single
+    // tool invocation, not the searches or fees each provider performs behind it.
+    const providerLine = config.provider === CONFIGURED_DEFAULT_PROVIDER
+      ? `Provider: configured default via ${config.searchTool} (configured providers may fan out; one search invocation is counted, not hidden provider requests or fees)`
+      : `Provider: ${config.provider}`;
+    const consent = await ctx.ui.confirm('Authorize research?', `${kind}: ${question || targetId || old?.originalQuestion}\n${providerLine}\n${allowanceLine}\nContinuation revokes any prior writer, without retrying uncertain operations. Token control is estimated; hidden provider searches/costs are unknown. Accept selected provider/model charges only if intended.`);
     assertStamp(ctx, before);
     if (old && state?.revisionId !== expectedRevision) throw new Error('Investigation changed during confirmation.');
     if (!consent) return;
@@ -214,9 +218,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
           const tool = pi.getAllTools().find(t => t.name === r.searchTool);
           if (!tool || tool.exposure === 'hidden' || tool.exposure === 'model-only') throw new Error('Configured discovery tool unavailable');
           if (!ctx.tools.some(t => t.name === r.searchTool)) pi.setActiveTools([...new Set([...pi.getActiveTools(), r.searchTool])]);
-          const outcome = await ctx.executeTool(r.searchTool, { query, provider: r.provider, numResults: 8, workflow: 'none', includeContent: false }, { signal: s });
+          const configuredDefault = r.provider === CONFIGURED_DEFAULT_PROVIDER;
+          const params = { query, ...(configuredDefault ? {} : { provider: r.provider }), numResults: 8, workflow: 'none', includeContent: false };
+          const outcome = await ctx.executeTool(r.searchTool, params, { signal: s });
           if (outcome.isError) throw new Error(outcome.result.content.filter(part => part.type === 'text').map(part => part.text).join('\n'));
-          return normalizeDiscovery(outcome.result.structuredContent, query, r.provider);
+          // An explicit binding keeps its strict provider check; the configured default accepts
+          // whatever single or aggregate provider set the tool truthfully reports.
+          return configuredDefault
+            ? normalizeConfiguredDiscovery(outcome.result.structuredContent, query)
+            : normalizeDiscovery(outcome.result.structuredContent, query, r.provider);
         }, acquire: (url, s) => acquisition.acquire(url, s), commit, isCurrent: owns,
         progress: (message, next) => { if (!owns()) return; onUpdate?.(safeText(message)); if (ctx.hasUI) { ctx.ui.setStatus('pi-research', safeText(message).slice(0, 100)); ctx.ui.setWidget('pi-research', researchMap(next).split('\n').slice(0, 8)); } },
       };

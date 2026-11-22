@@ -55,22 +55,30 @@ export function makeModelHost(ctx: ExtensionToolContext, observe: (usage: Usage)
   };
 }
 
-/** Never ingest generated search answers or snippets as original evidence. */
-export function normalizeDiscovery(raw: unknown, query: string, provider: string): DiscoveryResult {
+/**
+ * Policy marker for a new investigation that omits the tool's provider argument and
+ * lets the installed search tool resolve its configured default, which may fan out
+ * across several configured providers. Stored in the existing string provider field.
+ */
+export const CONFIGURED_DEFAULT_PROVIDER = 'configured-default';
+
+/** Resolve the single query item the tool returned, or fail without ingesting anything. */
+function queryItem(raw: unknown, query: string): { result: Record<string, unknown>; item: Record<string, unknown> } {
   if (!raw || typeof raw !== 'object') throw new Error('Search tool omitted structured results');
   const result = raw as Record<string, unknown>;
   if (!Array.isArray(result.queries) || result.queries.length !== 1) throw new Error('Expected exactly one search-query result');
   const item = result.queries[0] as Record<string, unknown> | undefined;
   if (!item || item.query !== query || item.error) throw new Error(`Search failed or query binding changed: ${String(item?.error ?? '')}`);
   if (!Array.isArray(item.results) || item.results.length > 20) throw new Error('Invalid discovery results');
-  if (item.provider !== undefined && item.provider !== provider) throw new Error('Provider binding changed');
-  if (item.providers !== undefined && !Array.isArray(item.providers)) throw new Error('Malformed provider identity list');
-  const returnedProviders = Array.isArray(item.providers) ? item.providers : item.provider ? [item.provider] : [];
-  if (returnedProviders.length > 1 || returnedProviders.some(p => p !== provider)) throw new Error('Provider binding changed or multiple providers returned');
-  const rankingKind = returnedProviders.length === 0 ? 'unknown' : provider === 'brave' ? 'ranked' : ['gemini', 'openai'].includes(provider) ? 'citation-list' : 'unknown';
+  return { result, item };
+}
+
+/** Copy only validated HTTP(S) candidates; snippets stay discovery metadata, never evidence. */
+function candidateHits(item: Record<string, unknown>, ranked: boolean): DiscoveryResult['results'] {
+  const rawResults = item.results as unknown[];
   const seen = new Set<string>();
   const hits: DiscoveryResult['results'] = [];
-  for (const rawHit of item.results) {
+  for (const rawHit of rawResults) {
     if (!rawHit || typeof rawHit !== 'object') throw new Error('Malformed source candidate');
     const hit = rawHit as Record<string, unknown>;
     if (typeof hit.url !== 'string' || typeof hit.title !== 'string' || typeof hit.snippet !== 'string') throw new Error('Malformed discovery fields');
@@ -80,9 +88,47 @@ export function normalizeDiscovery(raw: unknown, query: string, provider: string
     url.hash = '';
     if (seen.has(url.href)) continue;
     seen.add(url.href);
-    hits.push({ url: url.href, title: hit.title.slice(0, 1000), snippet: hit.snippet.slice(0, 4000), ...(rankingKind === 'ranked' ? { rank: item.results.indexOf(rawHit) + 1 } : {}) });
+    hits.push({ url: url.href, title: hit.title.slice(0, 1000), snippet: hit.snippet.slice(0, 4000), ...(ranked ? { rank: rawResults.indexOf(rawHit) + 1 } : {}) });
   }
-  return { query, provider, rankingKind, responseId: typeof result.responseId === 'string' ? result.responseId : undefined, results: hits };
+  return hits;
+}
+
+/** Never ingest generated search answers or snippets as original evidence. */
+export function normalizeDiscovery(raw: unknown, query: string, provider: string): DiscoveryResult {
+  const { result, item } = queryItem(raw, query);
+  if (item.provider !== undefined && item.provider !== provider) throw new Error('Provider binding changed');
+  if (item.providers !== undefined && !Array.isArray(item.providers)) throw new Error('Malformed provider identity list');
+  const returnedProviders = Array.isArray(item.providers) ? item.providers : item.provider ? [item.provider] : [];
+  if (returnedProviders.length > 1 || returnedProviders.some(p => p !== provider)) throw new Error('Provider binding changed or multiple providers returned');
+  const rankingKind = returnedProviders.length === 0 ? 'unknown' : provider === 'brave' ? 'ranked' : ['gemini', 'openai'].includes(provider) ? 'citation-list' : 'unknown';
+  return { query, provider, rankingKind, responseId: typeof result.responseId === 'string' ? result.responseId : undefined, results: candidateHits(item, rankingKind === 'ranked') };
+}
+
+/**
+ * Normalize a reply to a discovery call that named no provider, so the tool resolved
+ * its configured default. A single reported provider keeps its own ranking semantics;
+ * aggregated, ambiguous or unlabeled replies keep no rank because concatenation and
+ * deduplication do not establish a fused ranking. Identity is the reported provider
+ * name, the comma-joined names actually used, or `unknown`.
+ */
+export function normalizeConfiguredDiscovery(raw: unknown, query: string): DiscoveryResult {
+  const { result, item } = queryItem(raw, query);
+  const reported = item.provider;
+  if (reported !== undefined && typeof reported !== 'string') throw new Error('Malformed provider identity');
+  const listed = item.providers;
+  if (listed !== undefined) {
+    if (!Array.isArray(listed) || listed.length === 0) throw new Error('Malformed provider identity list');
+    if (listed.some(name => typeof name !== 'string' || !name || /[\s,]/.test(name))) throw new Error('Malformed provider identity list');
+    if (new Set(listed).size !== listed.length) throw new Error('Malformed provider identity list');
+  }
+  const named = typeof reported === 'string' && reported !== 'all' && reported !== 'auto' ? reported : undefined;
+  // A concrete label contradicting the reported list is an inconsistent reply, not a default.
+  if (named !== undefined && Array.isArray(listed) && !listed.includes(named)) throw new Error('Provider binding changed');
+  const providers = Array.isArray(listed) ? listed as string[] : named ? [named] : [];
+  const aggregate = providers.length > 1 || reported === 'all';
+  const identity = providers.length ? providers.join(',') : 'unknown';
+  const rankingKind = aggregate || providers.length !== 1 ? 'unknown' : identity === 'brave' ? 'ranked' : identity === 'gemini' || identity === 'openai' ? 'citation-list' : 'unknown';
+  return { query, provider: identity, rankingKind, responseId: typeof result.responseId === 'string' ? result.responseId : undefined, results: candidateHits(item, rankingKind === 'ranked') };
 }
 
 export function combineUsage(usages: Usage[]): Usage | undefined {
