@@ -60,6 +60,19 @@ External work requires explicit command authorization in TUI or RPC mode. Model-
 - Model token control is estimated, not a guaranteed provider-side tokenizer limit or total monetary cap. The research ledger covers the extension's nested interpretation/synthesis calls, not the enclosing Pi conversation. The adapter marks incomplete/unreported usage explicitly; offline tests exercise conservative unknown-usage propagation. Pi-native money figures are model-rate estimates, not confirmed invoices.
 - Choose non-personal research topics and screen sources before distributing corpora; fetched public pages can contain incidental personal metadata. No privacy-filtering guarantee is claimed.
 
+## Web acquisition and crawling safeguards
+
+Pi Research does not run an unconstrained web scraper. Because page fetches consume user-authorized budget, acquisition applies strict quality and efficiency safeguards:
+- **URL deduplication & route filtering**: Normalizes candidate URLs (stripping tracking tags, AMP prefixes, and default ports) and skips non-article routes (video platforms, social feeds, login gateways) before spending fetch credits.
+- **Bot-challenge & thin-content rejection**: Classifies Cloudflare challenges and thin pages (<80 characters) as blocked rather than indexing anti-bot text into the evidence corpus.
+- **Host circuit breaker**: Stops requesting a domain for the rest of the run if it denies access (403, 429, or CAPTCHA).
+- **Publication dates & canonical metadata**: Extracts `datePublished`, `dateModified`, and canonical URLs from JSON-LD / OpenGraph to trace source freshness.
+- **In-article link harvesting**: Harvests links from model-judged relevant passages as free candidate sources without spending search credits.
+- **Syndication & wire-service duplicate detection**: Groups identical passages across different domains into duplicate groups to prevent syndicated news copies from falsifying multi-source consensus.
+- **Acquisition yield summary**: `/research-sources` displays an aggregated crawl report with yield rates and categorized failure reasons.
+
+See [docs/web-acquisition.md](docs/web-acquisition.md) for the detailed architecture and implementation details.
+
 ## Offline replay demo
 
 `npm run demo` exercises the real engine, index, immutable store and SQLite ledger with synthetic `example.org` sources and fake model/discovery/acquisition hosts. It prints source → TF-IDF candidate → branch/alias → selected action, BM25 contributions, follow-up corpus reuse, revised citation spans and simulated-operation counters. Its checks fail with a nonzero exit code. No real model or network calls are made; HTTP transport is not exercised. Random UUIDs can change tied action order; the canonicalized behavior digest is stable.
