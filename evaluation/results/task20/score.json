@@ -1,0 +1,13 @@
+{
+  "label": "pi-research-2026-11-22T18-12-59-663Z",
+  "task": 20,
+  "total_0_100": 83.04,
+  "dims_0_100": {
+    "comprehensiveness": 78.0,
+    "insight": 87.75,
+    "instruction_following": 79.5,
+    "readability": 88.25
+  },
+  "parse": "json",
+  "finish": "stop"
+}

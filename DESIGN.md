@@ -41,11 +41,11 @@ The full water-utility investigation is the first end-to-end demonstration targe
 
 ### Decisions taken
 
-- **Build the evidence library:** plan the needs and repeat search → select → crawl → retrieve → assess → expand while useful queries remain. Code owns acquisition and retrieval; the model judges the evidence and proposes expansion queries. Only extracted source text enters the library. Show the brief and progress without pausing for input.
+- **Build the evidence library:** plan the needs and repeat search → select → read → retrieve → assess → expand while useful queries remain. Code owns acquisition and retrieval; the model judges the evidence and proposes expansion queries. Only extracted source text enters the library. Show the brief and progress without pausing for input.
 - **Synthesize from the library:** save the evidence first, then write from ranked passages and unresolved needs, not the search transcript.
 - The report is the deliverable: standalone, cited, readable cold.
 - We start over in a clean workspace instead of trimming the old controller.
-- We reuse three things: Pi's web search, crawling that respects site policy, and passage-level retrieval for citations.
+- We reuse Pi's web search and page reader, Riya's URL filtering, and passage-level retrieval for citations.
 
 ## 2. What the user does
 
@@ -72,7 +72,7 @@ The brief is visible, but the run continues on its own. The user can interrupt i
 
 Two pieces do this work, and both show up in what the user sees.
 
-**The crawler reads the pages.** Search results are only leads. Each promising result is fetched and its actual text kept, along with the URL it came from and when it was read. The crawler identifies itself, respects each site's instructions and delays, and refuses private or address-internal targets. When a page is blocked, behind a challenge screen, or an unreadable PDF, that is recorded as a failure and shown — never quietly filled in by the model.
+**Pi's page reader reads the pages.** Search results are only leads. The extension calls `fetch_content` in readable mode and retains the extracted text, its URL, and retrieval time. Blocked and unreadable pages are recorded as failures, not filled in by the model.
 
 **Passage retrieval finds candidate evidence.** Read text is split into passages and ranked against each part of the research question. The writer sees relevant passages, not whole 80-page documents, and selects the exact supporting sentence or span for each citation. The reader can check that span in the stored source text without redoing the search.
 

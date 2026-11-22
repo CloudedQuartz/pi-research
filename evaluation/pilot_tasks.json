@@ -1,0 +1,37 @@
+[
+ {
+  "id": 29,
+  "systems": [
+   "openai-deepresearch",
+   "grok-deeper-search"
+  ]
+ },
+ {
+  "id": 20,
+  "systems": [
+   "openai-deepresearch",
+   "grok-deeper-search"
+  ]
+ },
+ {
+  "id": 9,
+  "systems": [
+   "grok-deeper-search",
+   "openai-deepresearch"
+  ]
+ },
+ {
+  "id": 41,
+  "systems": [
+   "gemini-2.5-pro-deepresearch",
+   "grok-deeper-search"
+  ]
+ },
+ {
+  "id": 48,
+  "systems": [
+   "gemini-2.5-pro-deepresearch",
+   "perplexity-Research"
+  ]
+ }
+]

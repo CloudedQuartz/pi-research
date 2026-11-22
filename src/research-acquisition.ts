@@ -29,8 +29,8 @@ const moduleRequire = createRequire(import.meta.url);
  *
  * Owns the network boundary: public-unicast-only DNS validation whose result is
  * pinned on the actual socket (hostname preserved for TLS SNI and the Host
- * header), robots.txt policy per origin via a real robots parser, one shared
- * per-hostname delay scheduler across protocols and ports, manual bounded
+ * header), one shared per-hostname delay scheduler across protocols and ports,
+ * manual bounded
  * redirects with per-hop revalidation, byte/time bounds, MIME routing to
  * Readability/LinkeDOM, unpdf or plain text, and terminable extraction workers.
  */
@@ -39,8 +39,6 @@ export type AcquisitionErrorCode =
   | 'invalid-url'
   | 'policy'
   | 'dns'
-  | 'robots-denied'
-  | 'robots-unavailable'
   | 'redirect'
   | 'timeout'
   | 'network'
@@ -99,11 +97,6 @@ const DEFAULT_DNS_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_EXTRACTION_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 5;
-/**
- * Supported upper bound on a robots crawl-delay. A larger request fails closed:
- * clamping would crawl faster than the server asked for.
- */
-const MAX_CRAWL_DELAY_MS = 30_000;
 const DEFAULT_USER_AGENT = 'PiResearchBot/0.1 (academic course research assistant)';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -120,20 +113,12 @@ function abortReason(signal: AbortSignal): Error {
   return reason instanceof Error ? reason : new Error(String(reason ?? 'Aborted'));
 }
 
-interface RobotsRules {
-  isAllowed(url: string, ua?: string): boolean | undefined;
-  getCrawlDelay(ua?: string): number | undefined;
-}
-interface RobotsEntry { allowAll: boolean; rules?: RobotsRules; }
-/** robots-parser ships CJS; require() binds the factory without default-interop ambiguity. */
-const createRobots = moduleRequire('robots-parser') as (url: string, body: string) => RobotsRules;
 interface ExtractionPackages { linkedom: string; readability: string; unpdf: string; }
 interface Services {
   lastRequest: Map<string, number>;
   resolver: AcquisitionResolver;
   transport: AcquisitionTransport;
   packages: ExtractionPackages;
-  robotsCache: Map<string, RobotsEntry>;
   userAgent: string;
   minDelayMs: number;
   timeoutMs: number;
@@ -526,19 +511,17 @@ const defaultTransport: AcquisitionTransport = ({ url, address, headers, timeout
   });
 
 // ---------------------------------------------------------------------------
-// Robots policy
+// Page requests and redirects
 // ---------------------------------------------------------------------------
 
-async function exchange(target: URL, signal: AbortSignal, gateRobots: boolean, services: Services): Promise<{ response: TransportResponse; finalUrl: URL }> {
+async function exchange(target: URL, signal: AbortSignal, services: Services): Promise<{ response: TransportResponse; finalUrl: URL }> {
   let current = target;
   let redirects = 0;
   const visited = new Set<string>([current.href]);
   for (;;) {
-    let crawlDelayMs = 0;
-    if (gateRobots) crawlDelayMs = await robotsAllows(current, signal, services);
     const address = await resolveAddress(current, services.resolver, signal, services.dnsTimeoutMs);
     const host = current.hostname;
-    const spacing = Math.max(services.minDelayMs, crawlDelayMs);
+    const spacing = services.minDelayMs;
     let remaining = (services.lastRequest.get(host) ?? 0) + spacing - Date.now();
     while (remaining > 0) {
       await wait(remaining, undefined, { signal });
@@ -571,63 +554,6 @@ async function exchange(target: URL, signal: AbortSignal, gateRobots: boolean, s
     }
     return { response, finalUrl: current };
   }
-}
-
-async function ensureRobots(pageUrl: URL, signal: AbortSignal, services: Services): Promise<RobotsEntry> {
-  const key = pageUrl.origin;
-  const cached = services.robotsCache.get(key);
-  if (cached) return cached;
-  const robotsUrl = new URL('/robots.txt', key);
-  let result: { response: TransportResponse; finalUrl: URL };
-  try {
-    // Robots retrieval uses the same guarded transport and scheduling.
-    result = await exchange(robotsUrl, signal, false, services);
-  } catch (error) {
-    if (signal.aborted || (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))) throw error;
-    // Definitive target/address-validation failures stay labelled as such; only fetch-level failures become unavailable.
-    if (error instanceof AcquisitionError && (error.code === 'policy' || error.code === 'invalid-url' || error.code === 'dns')) throw error;
-    throw new AcquisitionError('robots-unavailable', `Robots policy unavailable for ${key}: ${message(error)}`, robotsUrl.href);
-  }
-  const { response, finalUrl } = result;
-  let entry: RobotsEntry;
-  if (response.status === 404 || response.status === 410) {
-    entry = { allowAll: true };
-  } else if (response.status !== 200) {
-    throw new AcquisitionError('robots-unavailable', `Robots.txt HTTP ${response.status} for ${key}`, finalUrl.href, response.status);
-  } else if (finalUrl.origin !== key) {
-    // robots-parser binds rules to one origin; a cross-origin file cannot establish policy here.
-    throw new AcquisitionError('robots-unavailable', `Robots.txt redirected off-origin for ${key}`, finalUrl.href);
-  } else {
-    // An undecodable body would parse as "no rules" and fail open; policy must be establishable or the origin is closed.
-    const encoding = firstHeader(response.headers['content-encoding']);
-    if (encoding && encoding.trim().toLowerCase() !== 'identity') {
-      throw new AcquisitionError('robots-unavailable', `Robots.txt came back compressed for ${key}`, finalUrl.href, response.status);
-    }
-    if (response.body.length > services.maxBytes) {
-      throw new AcquisitionError('robots-unavailable', `Robots.txt exceeded ${services.maxBytes} bytes for ${key}`, finalUrl.href, response.status);
-    }
-    const charset = parseMediaType(firstHeader(response.headers['content-type'])).charset;
-    const rules = createRobots(finalUrl.href, decodeText(response.body, charset ?? 'utf-8'));
-    entry = { allowAll: false, rules };
-  }
-  services.robotsCache.set(key, entry);
-  return entry;
-}
-
-async function robotsAllows(url: URL, signal: AbortSignal, services: Services): Promise<number> {
-  const entry = await ensureRobots(url, signal, services);
-  if (entry.allowAll) return 0;
-  const allowed = entry.rules?.isAllowed(url.href, services.userAgent);
-  if (allowed !== true) throw new AcquisitionError('robots-denied', `Robots.txt denies ${url.href}`, url.href);
-  const crawlDelay = entry.rules?.getCrawlDelay(services.userAgent);
-  if (typeof crawlDelay === 'number' && Number.isFinite(crawlDelay) && crawlDelay > 0) {
-    const delayMs = crawlDelay * 1000;
-    if (delayMs > MAX_CRAWL_DELAY_MS) {
-      throw new AcquisitionError('policy', `Robots.txt requests a crawl-delay of ${crawlDelay}s, above the supported maximum of ${MAX_CRAWL_DELAY_MS}ms; refusing to crawl faster than requested`, url.href);
-    }
-    return delayMs;
-  }
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -922,7 +848,7 @@ async function extractPdf(body: Buffer, services: Services, signal: AbortSignal)
 async function acquire(rawUrl: string, signal: AbortSignal, services: Services): Promise<Snapshot> {
   signal.throwIfAborted();
   const requested = parseTarget(rawUrl);
-  const { response, finalUrl } = await exchange(requested, signal, true, services);
+  const { response, finalUrl } = await exchange(requested, signal, services);
   if (response.status !== 200) {
     throw new AcquisitionError('http-status', `HTTP ${response.status} for ${finalUrl.href}`, finalUrl.href, response.status);
   }
@@ -993,7 +919,6 @@ export function AcquisitionService(options: AcquisitionOptions = {}): Acquisitio
     resolver: options.resolver ?? defaultResolver,
     transport: options.transport ?? defaultTransport,
     packages,
-    robotsCache: new Map(),
     userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
     minDelayMs: Math.max(MIN_HOST_DELAY_MS, requestedDelay),
     timeoutMs: positiveNumber(options.timeoutMs, DEFAULT_TIMEOUT_MS),
