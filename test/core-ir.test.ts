@@ -8,7 +8,7 @@
  * Run: ./node_modules/.bin/tsx test/core-ir.test.ts   (exit 1 on any failed check)
  */
 import assert from 'node:assert/strict';
-import { PassageIndex, expandedQuery, mmr, segment, stem, tokenize } from '../src/core-ir.js';
+import { PassageIndex, expandedQuery, mmr, rocchioQuery, segment, stem, tokenize } from '../src/core-ir.js';
 import type { Concept, Passage, SearchHit, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
@@ -286,6 +286,21 @@ check('SDM ranks adjacent ordered phrases above separated or reversed terms', ()
   assert.equal(hits[0]!.passage.id, 'phrase', 'exact adjacent ordered phrase (#1) ranks highest');
   assert.equal(hits[1]!.passage.id, 'unordered', 'nearby unordered terms (#8) rank second');
   assert.equal(hits[2]!.passage.id, 'separated', 'separated terms rank lowest');
+});
+
+check('rocchio relevance feedback boosts relevant terms and subtracts irrelevant terms', () => {
+  const useful = [P('u1', 's1', 'feature pipeline latency skew drift')];
+  const irrelevant = [P('i1', 's2', 'camera image ocr optical skew')];
+  const q = rocchioQuery('skew detection', useful, irrelevant);
+
+  assert.ok(q['skew']! > 0, 'original anchor terms are retained');
+  assert.ok(q['detection']! > 0, 'original anchor terms are retained');
+  assert.ok(q['pipeline']! > 0, 'positive feedback terms are promoted');
+  assert.ok(q['latency']! > 0, 'positive feedback terms are promoted');
+  assert.equal(q['camera'], undefined, 'negative feedback terms are penalized/omitted');
+  assert.equal(q['ocr'], undefined, 'negative feedback terms are penalized/omitted');
+  const sum = Object.values(q).reduce((acc, w) => acc + w, 0);
+  close(sum, 1.0, 'rocchio query weights are L1-normalized');
 });
 
 if (failures.length) {

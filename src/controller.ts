@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { expandedQuery } from './core-ir.js';
+import { expandedQuery, rocchioQuery } from './core-ir.js';
 import type { ActionKind, Branch, Investigation, SourceCandidate } from './types.js';
 
 export interface ProposedAction {
@@ -29,7 +29,13 @@ export function rankingQuery(state: Investigation, branch: Branch, expand = true
     if (!candidates.length) return anchor;
     const latest = new Map<string, string>();
     for (const f of state.feedback) if (f.kind === 'useful' || f.kind === 'irrelevant') latest.set(f.targetId, f.kind);
-    const query = expandedQuery(anchor, candidates, state.passages.filter(p => latest.get(p.id) === 'irrelevant'));
+    const useful = state.passages.filter(p => latest.get(p.id) === 'useful');
+    const irrelevant = state.passages.filter(p => latest.get(p.id) === 'irrelevant');
+    if (useful.length > 0 || irrelevant.length > 0) {
+      const rocchio = rocchioQuery(anchor, useful, irrelevant);
+      if (Object.keys(rocchio).length) return rocchio;
+    }
+    const query = expandedQuery(anchor, candidates, irrelevant);
     return Object.keys(query).length ? query : anchor;
   } catch { return anchor; }
 }

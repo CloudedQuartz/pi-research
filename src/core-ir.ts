@@ -1309,3 +1309,113 @@ export function expandedQuery(
   }
   return out;
 }
+
+export interface RocchioOptions {
+  alpha?: number;
+  beta?: number;
+  gamma?: number;
+  maxTerms?: number;
+}
+
+/**
+ * Classic Rocchio Relevance Feedback (Salton & Buckley, 1990; Manning et al. 2008):
+ * q' = α * q_0 + β * (1/|D_rel|) * Σ d_rel - γ * (1/|D_irrel|) * Σ d_irrel
+ *
+ * Promotes discriminative vocabulary from user-judged useful evidence while penalizing
+ * non-relevant noise (preventing topic drift). Negative weights are truncated to 0,
+ * and top maxTerms expansion terms are merged with the anchor into an L1-normalized query.
+ */
+export function rocchioQuery(
+  anchor: string | Record<string, number>,
+  usefulPassages: Passage[],
+  irrelevantPassages: Passage[],
+  index?: PassageIndex,
+  options?: RocchioOptions,
+): Record<string, number> {
+  const alpha = options?.alpha ?? 1.0;
+  const beta = options?.beta ?? 0.75;
+  const gamma = options?.gamma ?? 0.25;
+  const maxTerms = options?.maxTerms ?? 5;
+
+  const baseWeights = queryWeights(anchor);
+  if (!baseWeights.size) return {};
+
+  const baseTotal = [...baseWeights.values()].reduce((sum, w) => sum + w, 0);
+  const q0 = new Map<string, number>();
+  for (const [term, weight] of baseWeights) q0.set(term, weight / (baseTotal || 1));
+
+  const passageVector = (p: Passage): Map<string, number> => {
+    const stream = keyTerms(p.text);
+    const tf = new Map<string, number>();
+    for (const term of stream) tf.set(term, (tf.get(term) ?? 0) + 1);
+    const vec = new Map<string, number>();
+    let sq = 0;
+    const n = index ? index.documentCount() : 10;
+    for (const [term, freq] of tf) {
+      const df = index ? index.documentFrequency(term) : 1;
+      const idf = Math.log(1 + (n - df + 0.5) / (df + 0.5));
+      const w = freq * idf;
+      vec.set(term, w);
+      sq += w * w;
+    }
+    const norm = Math.sqrt(sq) || 1;
+    for (const [term, w] of vec) vec.set(term, w / norm);
+    return vec;
+  };
+
+  const relSum = new Map<string, number>();
+  if (usefulPassages.length > 0) {
+    for (const p of usefulPassages) {
+      const vec = passageVector(p);
+      for (const [term, w] of vec) {
+        relSum.set(term, (relSum.get(term) ?? 0) + w / usefulPassages.length);
+      }
+    }
+  }
+
+  const irrelSum = new Map<string, number>();
+  if (irrelevantPassages.length > 0) {
+    for (const p of irrelevantPassages) {
+      const vec = passageVector(p);
+      for (const [term, w] of vec) {
+        irrelSum.set(term, (irrelSum.get(term) ?? 0) + w / irrelevantPassages.length);
+      }
+    }
+  }
+
+  const candidateScores = new Map<string, number>();
+  const allTerms = new Set([...q0.keys(), ...relSum.keys(), ...irrelSum.keys()]);
+
+  for (const term of allTerms) {
+    const qVal = q0.get(term) ?? 0;
+    const relVal = relSum.get(term) ?? 0;
+    const irrelVal = irrelSum.get(term) ?? 0;
+    const newWeight = alpha * qVal + beta * relVal - gamma * irrelVal;
+    if (newWeight > 0) {
+      candidateScores.set(term, newWeight);
+    }
+  }
+
+  const expansionTerms: [string, number][] = [];
+  for (const [term, score] of candidateScores) {
+    if (!q0.has(term)) expansionTerms.push([term, score]);
+  }
+  expansionTerms.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const retainedExpansion = new Set(expansionTerms.slice(0, maxTerms).map(e => e[0]));
+
+  const result: Record<string, number> = {};
+  let totalScore = 0;
+  for (const [term, score] of candidateScores) {
+    if (q0.has(term) || retainedExpansion.has(term)) {
+      result[term] = score;
+      totalScore += score;
+    }
+  }
+
+  if (totalScore > 0) {
+    for (const term of Object.keys(result)) {
+      result[term] = result[term]! / totalScore;
+    }
+  }
+  return result;
+}
