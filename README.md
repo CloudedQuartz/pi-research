@@ -6,9 +6,9 @@ A Pi extension that builds a passage corpus from fetched public sources, retriev
 
 ## Implementation status
 
-Native Pi RPC runs verified command authorization, nested DeepSeek planning, Exa discovery, public HTML acquisition, and corpus reuse on a follow-up with no new search or fetch. With the 12,000-token report ceiling now in the code, a live report update on a retained Google ML Crash Course snapshot produced a synthesized answer with five resolving citations. The answer was limited by source coverage: it explained the production-system context but did not establish a definition of training-serving skew or a label-free detection method. An earlier live follow-up reused two snapshots with no new search or fetch; its report used the extractive fallback. Offline regression checks and the [human-judged retrieval benchmark](#cisi-benchmark-result) cover separate parts of the system. See the [handover](docs/handover.md) and [implementation plan](docs/project-plan.md) for scope and limitations.
+[Live Pi RPC runs](docs/live-verification.md) verified Exa discovery, source acquisition, and reuse of stored snapshots without new searches or fetches. A separate live report update produced five resolving citations from a retained Google ML Crash Course snapshot. Its answer was limited by what that source covered.
 
-The [live run under the former eight-minute default](docs/live-verification.md) retained eight snapshots and 84 passages, but timed out before synthesis. It produced no report, and no follow-up was sent. A single fresh session completing both turns remains unverified.
+A useful cited answer on both turns of one fresh session remains unverified. The latest attempt reached command authorization, but the outer model declined to invoke `research_run`, so discovery never started. The first-follow-up budget reserve and smaller synthesis packet passed offline regression checks; that live attempt did not exercise them. The [CISI benchmark](#cisi-benchmark-result) measures document retrieval separately.
 
 ## Development setup
 
