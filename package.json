@@ -1,0 +1,24 @@
+{
+  "name": "pi-research-fresh",
+  "version": "1.0.0",
+  "description": "`/research` runs a tool-using deep-research workflow on the active Pi session model. Start it and walk away: the target is a substantial, cited Markdown report in about ten minutes. It writes a brief, searches and reads sources, follows gaps, ranks passages, and writes the report without asking for approval. The assistant draft is visible in Pi; the saved Markdown resolves its passage IDs into linked citations.",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "ipaddr.js": "2.5.0",
+    "linkedom": "0.16.11",
+    "robots-parser": "3.0.1",
+    "typebox": "1.3.27",
+    "unpdf": "1.6.2"
+  }
+}
