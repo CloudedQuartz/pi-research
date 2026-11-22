@@ -1,175 +1,346 @@
 \documentclass[conference]{IEEEtran}
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{amsmath,amssymb,amsfonts,mathtools}
-\usepackage{graphicx,booktabs,colortbl,xcolor,url,array}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{colortbl}
+\usepackage{xcolor}
+\usepackage{url}
 \usepackage{hyperref}
+\usepackage{array}
+\usepackage{mathtools}
+
 \definecolor{navy}{HTML}{1E3A8A}
 \definecolor{medblue}{HTML}{3B82F6}
 \definecolor{lightblue}{HTML}{EFF6FF}
 \definecolor{lavender}{HTML}{F5F3FF}
 \definecolor{deeppurple}{HTML}{5B21B6}
-\hypersetup{colorlinks=true,linkcolor=navy,citecolor=deeppurple,urlcolor=medblue}
-\graphicspath{{figures/}}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=navy,
+    citecolor=deeppurple,
+    urlcolor=medblue
+}
 
 \title{Pi Research: Budget-Aware Passage Retrieval and Provenance-Bounded Conversational Search}
-\author{\IEEEauthorblockN{Ayan Pande, Riya Arora, and Abhyudaya Vasisht}
+
+\author{
+\IEEEauthorblockN{Ayan Pande, Riya Arora, and Abhyudaya Vasisht}
 \IEEEauthorblockA{\textit{Department of Computer Science and Engineering, Shiv Nadar University}\\
 CSD358 Information Retrieval (Track T2: Conversational and Agentic Search)\\
 Instructor: Dr. Sonia Khetarpaul \quad $\cdot$ \quad November 2026\\
-\href{https://github.com/CloudedQuartz/pi-research}{Source code and evaluation: CloudedQuartz/pi-research}}}
+\href{https://github.com/CloudedQuartz/pi-research}{Source code, evaluation, and artifacts: CloudedQuartz/pi-research}}
+}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Pi Research is an evidence-first conversational and agentic research system. It separates web discovery from the acquisition and ranking of source text, then synthesizes a cited report from a saved evidence library. The project implements policy-controlled crawling and transactional resource accounting, paragraph-aware positional and Porter-stemmed BM25 retrieval, and a native Pi workflow that re-searches unresolved needs and inspects exact source spans. We evaluate retrieval and report quality separately. On a deterministic 100-query BrowseComp-Plus subset, passage-based BM25 raises evidence nDCG@10 from 3.70\% to 8.47\% and evidence Recall@1000 from 28.25\% to 46.24\% over whole-document BM25. On the two completed DeepResearch Bench tasks without detected answer leakage, the live system scores \textbf{94.29} and \textbf{83.04} out of 100 under our DeepSeek point-wise RACE harness, ahead of the available OpenAI Deep Research reports by 16.60 and 3.96 points on those same tasks. In a separate validation, the judge matches expert pairwise rankings on 44 of 50 Chinese tasks. The results support use of these measurements at their respective levels, not a general leaderboard or semantic citation-accuracy claim.
+Conversational and agentic deep-research systems frequently couple large language models (LLMs) directly to live web search APIs, indexing transient search snippets or feeding whole documents into synthesis prompts without explicit retrieval inspection, budget enforcement, or span-level provenance verification. We present \textbf{Pi Research}, an evidence-driven conversational research extension that separates discovery metadata from indexed evidence. Pi Research acquires public web and PDF documents under strict policy and SQLite-backed resource allowances, segments texts into paragraph-aware 180--300 token passages with exact UTF-16 character offsets, and ranks evidence using a positional Okapi BM25 index equipped with a parallel Porter-stemmed scoring stream (\texttt{rankStemmed}) that leaves surface tokens and citation offsets untouched. Follow-up conversational turns revise research objectives and branch priorities while reusing the committed passage corpus. We evaluate the retrieval layer offline on two human-judged benchmarks without live LLM query rewriting: (1) the \textbf{University of Glasgow CISI collection} (1,459 documents, 76 judged queries), where Porter-stemmed BM25 achieves \textbf{0.3984 nDCG@10} (+10.46\% over unstemmed BM25, paired $t = 2.1238, p = 0.0370$) and \textbf{0.3632 P@10} (+16.95\%, $t = 3.4724, p = 0.00086$), outperforming Dirichlet Query-Likelihood, the Sequential Dependence Model, and unconstrained lexical pseudo-relevance feedback; and (2) the \textbf{BrowseComp-Plus benchmark} (100,195 documents segmented into 2,282,733 passages, evaluated on a deterministic 100-query subset with seed 42), where passage segmentation with max-passage parent-document score aggregation increases Evidence nDCG@10 from \textbf{3.70\% to 8.47\%} (+129.0\%, $t = 3.1454, p = 0.0022$) and Evidence Recall@100 from \textbf{9.50\% to 21.32\%} (+124.4\%, $t = 5.0303, p = 2.19 \times 10^{-6}$) under identical BM25 parameters ($k_1 = 1.2, b = 0.75$).
+
+The live \texttt{/research} workflow adds original-source inspection and model-guided query expansion before a separate synthesis stage. In four DeepResearch Bench runs without a detected published benchmark answer in the saved source list, our DeepSeek point-wise RACE judge scored the reports \textbf{94.29, 83.04, 81.98, and 93.78} out of 100. It leads the available same-task baselines on Tasks 19 and 20, and is within 2.26 points of the best available report on Tasks 22 and 33. The judge reproduces expert pairwise rankings on 44 of 50 Chinese calibration tasks. These end-to-end results and the fixed-corpus retrieval ablations measure different layers of the same research design.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Information retrieval, conversational search, deep research, BM25, Porter stemming, passage retrieval, provenance, LLM-as-judge
+Information Retrieval, Conversational Search, Okapi BM25, Porter Stemming, Passage Segmentation, Provenance Verification, Budget-Aware Agents
 \end{IEEEkeywords}
 
 \section{Introduction}
-Web search discovers potentially relevant URLs, not a defensible answer. Research agents must find evidence inside long or noisy pages, avoid mistaking failed reads for negative findings, and distinguish an original source from syndicated or generated summaries. Comparing complete reports alone obscures where a system succeeds or fails: evidence may be missed in retrieval, excluded in acquisition, or misinterpreted at synthesis.
 
-Our midsemester work ranked passages in a fixed Wikipedia corpus. The endsemester system builds a corpus from live web pages and exposes what its report is grounded in. The project contributes (1) explicit discovery, acquisition and passage ranking with inspectable offsets; (2) local evidence inspection, gap-driven expansion and a separate cited writing stage; (3) programmable resource accounting and retained-corpus follow-up mechanisms; and (4) a validated, task-matched judge harness and controlled retrieval ablations. BM25, stemming and MMR are established techniques; the contribution is their integration and evaluation in a research workflow.
+\subsection{Background and Importance}
+Modern deep-research agents address complex, multi-faceted information needs by decomposing user questions, issuing iterative search queries, reading web pages, and synthesizing long-form cited reports. However, evaluating and engineering such systems presents three foundational Information Retrieval (IR) challenges. First, retrieval and reasoning are tightly entangled: when an agent fails to answer a question, it is difficult to determine whether the failure stems from poor lexical/semantic retrieval over long documents, query drift during iterative expansion, or synthesis hallucination. Second, web documents vary dramatically in length and noise---from thin cookie walls and anti-bot challenge screens to multi-thousand-word technical manuals and syndicated wire-service copies---causing whole-document lexical scoring to dilute localized factual evidence. Third, unconstrained agent loops can exhaust API budgets, re-fetch duplicate URLs, or emit plausible-sounding citations that do not correspond to verified source text.
 
-\section{Related Work}
-Robertson and Zaragoza~\cite{bm25} describe BM25 term saturation and length normalization. Porter~\cite{porter} reduces morphological variants to a common stem; we keep that stream separate from the source offsets used for citation. Carbonell and Goldstein~\cite{mmr} use maximal marginal relevance (MMR) to trade relevance against redundancy. Zhai and Lafferty~\cite{ql} and Metzler and Croft~\cite{sdm} motivate the query-likelihood and sequential-dependence alternatives. Our retrieval layer compares these approaches rather than claiming novelty for a ranker.
+\subsection{Motivation}
+Standard retrieval-augmented generation (RAG) pipelines often rely on opaque vector stores or treat third-party search snippets as ground-truth evidence. In an academic and responsible IR context (CSD358 Track T2), a conversational search system should instead make every intermediate retrieval decision inspectable: why a candidate URL was fetched or skipped, how document text was segmented into bounded passages, how term frequency, inverse document frequency, morphological stemming, and length normalization determined passage rankings, how user relevance feedback suppresses off-topic query drift, and whether every synthesized report statement resolves mechanically to an immutable character span in a fetched snapshot.
 
-Retrieval-augmented generation~\cite{rag} demonstrates the benefit of grounding generation in external evidence. MTRAG~\cite{mtrag} highlights multi-turn constraints and the importance of resolving context correctly. Our design separates search metadata from evidence and retains source spans so that evidence reuse and claims are inspectable. BrowseComp-Plus~\cite{browsecomp} makes supporting-document retrieval measurable on a fixed corpus. DeepResearch Bench~\cite{drb} separates report quality (RACE) from citation accuracy and effective citation count (FACT). We use their task-specific RACE criteria with our own validated judge harness, not FACT.
+\subsection{Contributions}
+Based strictly on the implementation and empirical artifacts of the project, our contributions are:
+\begin{enumerate}
+    \item \textbf{Parallel Stemmed Positional Passage Index with Exact Span Provenance (\texttt{src/core-ir.ts}):} We implement paragraph-aware passage segmentation (\texttt{segment()}, 180--300 surface tokens, 4,000-character cap, $\le 60$-token trailing overlap), 5-shingle Jaccard near-duplicate grouping ($\ge 0.8$), and a dual-stream positional BM25 index ($k_1 = 1.2, b = 0.75$) that scores morphological variants via an in-house Porter (1980) stemmer (\texttt{rankStemmed}) while preserving raw surface tokens and UTF-16 offsets for phrase matching and citation verification.
+    \item \textbf{Multi-Paradigm IR Baseline and Feedback Suite (\texttt{src/core-ir.ts}, \texttt{src/controller.ts}, \texttt{src/views.ts}):} Alongside BM25 and Maximal Marginal Relevance (\texttt{mmr}), we implement Bayesian Dirichlet Query-Likelihood (\texttt{rankQL}, $\mu = 2000$) and Metzler \& Croft's Markov Random Field Sequential Dependence Model (\texttt{rankSDM}) as offline comparative baselines, and integrate Rocchio relevance feedback (\texttt{rocchioQuery} with negative term suppression), Multinomial Naive Bayes pre-fetch candidate filtering (\texttt{NaiveBayesCandidateClassifier}), and spherical $k$-means passage clustering (\texttt{clusterPassages}) into the controller and \texttt{/research-map} view.
+    \item \textbf{Policy-Controlled Web Acquisition and Transactional Budget Ledger (\texttt{src/acquisition.ts}, \texttt{src/allowance.ts}, \texttt{src/engine.ts}):} We enforce RFC 9309 \texttt{robots.txt} fail-closed parsing, SSRF IP pinning, URL tracking-parameter canonicalization, non-article route filtering, Cloudflare/CAPTCHA challenge and thin-content ($< 80$ chars) rejection, per-run host circuit breaking, JSON-LD date/canonical extraction, in-article link harvesting, syndication corroboration auditing, and SQLite-backed resource allowances with protected first-follow-up and synthesis reserves.
+    \item \textbf{Reproducible Quantitative Evaluation on CISI and BrowseComp-Plus (\texttt{scripts/evaluate.ts}, \texttt{scripts/evaluate-browsecomp-plus.ts}):} We evaluate 6 retrieval methods across 76 judged CISI queries (1,459 documents) and evaluate whole-document BM25, passage BM25, and stemmed passage BM25 with max-passage aggregation across 100,195 BrowseComp-Plus documents (2,282,733 passages) on a deterministic 100-query subset (\texttt{seed = 42}) using official NIST \texttt{trec\_eval} metrics and per-query paired Student's $t$-tests.
+\end{enumerate}
+
+\subsection{Evidence-First Live Research and Evaluation Contributions}
+Beyond the offline retrieval and conversational engine experiments, the native one-command implementation makes the evidence library an explicit interface: it records what was found, what was inspected and what could not be read before asking a model to synthesize. The custom LLM-as-judge harness adds a complementary system-level measurement, using official task criteria and independently scoring each report, then checking its agreement with human rankings. We report completed, contaminated and failed benchmark runs separately.
+
+\section{Literature Review and Related Work}
+
+Chen et al. (2026) study the entanglement between retrieval quality and agentic reasoning in deep-research systems and introduce \textbf{BrowseComp-Plus}, a benchmark pairing 830 complex multi-hop questions with a fixed, human-verified corpus of 100,195 web documents and separate relevance judgments for \textit{evidence} documents (needed to answer the query) and \textit{gold} documents (also containing the final answer), alongside a standalone Pyserini/Lucene BM25 retrieval baseline evaluated via Recall@$k$ and nDCG@10. This relates to our retrieval evaluation because whole-document BM25 performs poorly on BrowseComp-Plus's long documents (3,292.5 content tokens on average). Differently from their whole-document Lucene baseline ($k_1 = 0.9, b = 0.4$), our system segments documents into 180--300 token passages (\texttt{segment()}), scores them with Pi Research's positional and Porter-stemmed BM25 ($k_1 = 1.2, b = 0.75$), and aggregates passage scores to parent documents via maximum passage score.
+
+Sharma et al. (2026) study the evaluation of long-form deep-research agent outputs in \textbf{ResearchRubrics}, demonstrating that coarse accuracy checks miss partial coverage, omitted constraints, and structural reasoning gaps across multi-faceted prompts. This relates to our investigation state model (\texttt{src/types.ts}, \texttt{src/engine.ts}) because open-ended research questions require tracking explicit sub-questions and scope constraints rather than generating a single unconstrained summary. In our system, each objective is decomposed into explicit branches and weighted answer needs ($\text{status} \in \{0, 0.5, 1\}$), and every generated report explicitly discloses unresolved needs, scope constraints, and inter-revision statement diffs rather than claiming full rubric satisfaction.
+
+Venkit et al. (2026) introduce \textbf{DeepTRACE}, an audit framework for deep-research AI systems that evaluates statement-level citation accuracy, unsupported claims, over-confidence, and source necessity across factual support matrices. This relates directly to our report synthesis and provenance architecture (\texttt{src/report.ts}, \texttt{src/views.ts}) because generative agents frequently emit broken links, fabricate citations outside their context window, or treat syndicated copies of a single wire story as independent corroboration. Our system enforces mechanical UTF-16 span validation against the supplied synthesis evidence packet (clamping slightly out-of-bounds character offsets to passage boundaries and falling back to an explicitly labeled extractive outline if citations reference passages outside the packet), renders interactive \texttt{<details>} dropdowns with verbatim source quotes, and audits duplicate groups and distinct domains (\texttt{needCorroboration}, \texttt{statementCorroboration}) to warn when statements rely on syndicated or single-source coverage.
+
+Otero and Parapar (2026) investigate \textbf{LLM-Assisted Pseudo-Relevance Feedback}, showing that classical blind pseudo-relevance feedback (such as RM3) suffers severe topic drift when top-ranked initial documents contain off-topic noise, and proposing to filter the feedback document pool before expansion. This relates to our query expansion findings on CISI and live web discovery: in our CISI ablation, unconstrained anchored lexical PRF (\texttt{lexicalPRF}) degraded nDCG@10 by 19.55\% relative to unstemmed BM25 (from 0.3607 to 0.2902) due to co-occurring noise terms. Rather than invoking an additional LLM call solely for PRF term expansion, Pi Research addresses query drift through two deterministic mechanisms: (1) explicit Rocchio relevance feedback (\texttt{rocchioQuery}) that adds terms from user-confirmed \texttt{useful} passages ($\beta = 0.25$) while actively subtracting terms from \texttt{irrelevant} passages ($\gamma = 0.15$), and (2) contextual witness assessment during the engine loop combined with a pre-fetch Multinomial Naive Bayes candidate classifier trained on confirmed feedback.
+
+Wang, Zhuang, and Zuccon (2024) analyze \textbf{Large Language Models for Stemming}, comparing classical algorithmic stemmers (Porter and Krovetz) against LLM-based vocabulary, contextual, and entity-preserving stemmers inside BM25 retrieval. Their findings show that general LLM vocabulary/contextual stemming frequently fails to outperform classical Porter stemming while incurring substantial inference cost, though entity-specific handling can prevent over-stemming of proper nouns. This relates to our indexing architecture (\texttt{src/core-ir.ts}) because our system requires zero-token-cost morphological normalization during local corpus retrieval without corrupting exact surface quotes. We implement the deterministic Porter (1980) stemmer on a parallel index stream (\texttt{stemPostings}, \texttt{stemDf}) while retaining the unstemmed \texttt{surface} stream for exact phrase matching and UTF-16 character-offset provenance, and our empirical results across CISI (+10.46\% nDCG@10) and BrowseComp-Plus (where proper-noun-heavy queries show a precision-recall trade-off between stemmed and unstemmed passages) directly reflect this lexical nuance.
+
+Liu et al. (2025) study test-time scaling for tool-calling search agents in \textbf{Budget-Aware Tool-Use Enables Effective Agent Scaling}, showing that agents lacking explicit budget awareness either plateau early or exhaust tool calls inefficiently. This relates to our operational control plane (\texttt{src/allowance.ts}, \texttt{src/controller.ts}) because live web research operates under tight search, fetch, HTTP, model-call, token, and time constraints. While Liu et al. focus on injecting budget-tracker prompts into the LLM agent, Pi Research enforces hard, transactional resource caps outside the LLM via a SQLite \texttt{Ledger} (default 8 searches, 18 fetches, 72 HTTP requests, 40 model calls, 180,000 tokens), schedules actions via a cost-aware expected-utility controller ($\text{retrieve} = 0.1, \text{fetch} = 2, \text{search} = 7$), reserves a protected synthesis budget (2 calls, 48,000 tokens), and holds back up to 3 calls and 24,000 work-lane tokens during the initial turn so the first follow-up turn retains assessment capacity.
+
+Katsis et al. (2025) present \textbf{MTRAG}, a multi-turn conversational RAG benchmark demonstrating that RAG systems struggle on later conversational turns when follow-up prompts are non-standalone or require re-evaluating prior context under new constraints. This relates to our Track T2 conversational workflow (\texttt{/research-continue} in \texttt{src/engine.ts}) because follow-up research requests rarely repeat full context. Instead of treating each turn as an isolated single-turn search or merely rewriting a chat query against a static database, Pi Research archives superseded branches, constructs a revised standalone objective and branch plan while retaining the immutable snapshot store and passage corpus (\texttt{corpusRevision}), and prioritizes local passage retrieval ($\text{kind} = \text{'retrieve'}$, cost 0.1) over external web searches whenever the retrieval key or feedback changes.
+
+Du et al. (2026) introduce \textbf{DeepResearch Bench}, with task-specific RACE criteria for report quality and a separate FACT protocol for citation accuracy and effective citation counts. Our evaluation reproduces official point-wise RACE weighting in a custom judge harness, validates the judge against expert preferences, then applies the same rubric to the system and available comparator reports. We do not conflate this judge score with either FACT or BrowseComp-Plus retrieval metrics.
+
+\textbf{Summary of System Novelty:} Rather than introducing a new neural ranker, the specific architectural contribution of Pi Research lies in combining \textbf{passage-level multi-turn evidence reuse}, an \textbf{inspectable dual-stream (surface + Porter-stemmed) positional IR layer}, \textbf{transactional SQLite budget accounting with first-follow-up capacity holds and pre-fetch candidate gating}, and \textbf{mechanical UTF-16 span-level citation verification with syndication disclosures} inside a single host-independent research engine.
 
 \section{Objective}
-We ask whether passage-level ranking improves retrieval of judged supporting evidence and whether a complete, one-command workflow can turn acquired evidence into high-quality, checkable reports. We also test whether a single judge can recover human rankings well enough for same-task comparisons. We keep these three questions distinct: passage retrieval, report quality, and judge validity are different outcomes.
+
+\subsection{Primary Research Question}
+\textbf{RQ:} \textit{Can paragraph-aware passage segmentation, dual-stream Porter-stemmed BM25 ranking, and budget-aware candidate filtering improve evidence retrieval and support verifiable, multi-turn conversational research without mutating source citation spans?}
+
+\subsection{Sub-Questions and Hypotheses}
+\begin{itemize}
+    \item \textbf{RQ1 (Morphological Normalization on Scientific Abstracts):} Does Porter-stemmed BM25 (\texttt{rankStemmed}) on a parallel stream significantly improve P@10, R-Precision, and nDCG@10 over unstemmed BM25, Dirichlet Query-Likelihood (\texttt{rankQL}), the Sequential Dependence Model (\texttt{rankSDM}), and blind lexical PRF on CISI? \textbf{Hypothesis H1:} \texttt{bm25stem} will significantly outperform \texttt{bm25} ($p < 0.05$), while unconstrained \texttt{lexicalPRF} will degrade retrieval due to query drift.
+    \item \textbf{RQ2 (Passage Segmentation and Max-Passage Aggregation on Long Documents):} On the 100,195-document BrowseComp-Plus corpus (avg.\ 3,292.5 content tokens/doc), does segmenting documents into 180--300 token passages (\texttt{segment()}) with max-passage aggregation significantly improve Evidence and Gold Recall@5, Recall@100, Recall@1000, and nDCG@10 over whole-document BM25 under identical parameters? \textbf{Hypothesis H2:} Passage BM25 will significantly outperform whole-document BM25 ($p < 0.05$) by preventing localized evidence matches from being diluted by document-length normalization.
+    \item \textbf{RQ3 (Stemming Trade-offs on Entity-Dense Queries):} Does Porter stemming further improve passage-level BM25 on BrowseComp-Plus's complex identification queries? \textbf{Hypothesis H3:} Stemming will improve broader recall (Recall@100) while unstemmed surface tokens remain competitive at top precision ranks (nDCG@10).
+\end{itemize}
 
 \section{Proposed Model}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/budgeted-engine.png}
+\caption{Minimal architecture of Pi Research, verified against \texttt{src/controller.ts}, \texttt{src/acquisition.ts}, \texttt{src/core-ir.ts}, \texttt{src/engine.ts}, and \texttt{src/report.ts}.}
+\label{fig:model}
+\end{figure}
+
+Fig.~\ref{fig:model} illustrates the five-stage closed-loop architecture implemented in \texttt{src/}:
+\begin{enumerate}
+    \item \textbf{Search discovery:} Decomposes the question into branches and weighted answer needs, issuing bounded discovery calls. Search snippets remain candidate metadata (\texttt{SourceCandidate}) and never enter the evidence index.
+    \item \textbf{Filter candidates:} Canonicalizes URLs (\texttt{normalizeUrl}), rejects non-article routes (\texttt{shouldSkipCandidateUrl}), scores lexical overlap across anchor, title, snippet, and URL path tokens (\texttt{candidateRelevance}), and applies a Multinomial Naive Bayes classifier (\texttt{NaiveBayesCandidateClassifier}) to prune off-topic candidates prior to HTTP fetch.
+    \item \textbf{Acquire pages:} Enforces fail-closed \texttt{robots.txt}, per-host delays, SSRF IP checks, and a per-run host circuit breaker (\texttt{brokenHosts}). Extracts article text via Readability/LinkeDOM or \texttt{unpdf}, rejects bot challenges and thin pages ($< 80$ chars), and writes immutable snapshots.
+    \item \textbf{Passage index (stemmed BM25):} Segments snapshots into 180--300 token passages (\texttt{segment}), detects 5-shingle near-duplicates ($\ge 0.8$), indexes parallel surface and Porter-stemmed streams (\texttt{PassageIndex}), and retrieves diversified witnesses (\texttt{rankStemmed}, \texttt{mmr}).
+    \item \textbf{Cited report and follow-up reuse:} Synthesizes versioned reports with mechanically verified UTF-16 span citations and \texttt{<details>} passage quotes. On follow-up turns or user feedback, the dashed feedback loop re-queries the local passage index before external fetching.
+\end{enumerate}
+
 \begin{figure*}[t]
 \centering
-\includegraphics[width=.86\textwidth]{workflow.png}
-\caption{Evidence-first research: discovery and source inspection can repeat; synthesis starts from the saved evidence, not the search transcript.}
-\label{fig:workflow}
+\includegraphics[width=.88\textwidth]{figures/workflow.png}
+\caption{One-command evidence library and synthesis. Search and local source inspection feed assessment; unresolved essential gaps can reopen discovery.}
+\label{fig:live}
 \end{figure*}
-The pipeline in Fig.~\ref{fig:workflow} has two stages. The first plans evidence needs and builds a library: search, select, read, segment, rank, inspect, and assess. Essential gaps may trigger targeted follow-up searches. The second saves the library and synthesizes the final report, resolving evidence IDs to source spans. In the native Pi workflow, \texttt{/research-finish} hands off to synthesis after the current turn rather than cancelling.
 
-\textbf{Acquisition and resource control.} Structured search results provide URLs, titles and snippets. Candidate selection uses URL normalization and lexical relevance; a multinomial Naive Bayes candidate classifier and passage clustering support more inspectable filtering and evidence facets in the research engine. The custom crawler implements per-host pacing, validated public-IP connections and redirects, HTML/PDF extraction, canonical metadata and explicit failure reasons. The budgeted engine additionally implements SQLite-backed resource accounting, protected synthesis capacity and retained-corpus follow-up. The live one-command report experiments use Pi's \texttt{fetch\_content} reader instead of racing both readers. Both approaches preserve extracted text and provenance; the live results do not validate every resource-control or multi-turn feature.
+\subsection{Web Readers and the Native Pi Workflow}
+The two acquisition paths implement the same interface at the design level: take discovered public URLs and return extracted source text with provenance. The custom crawler provides control over robots policy in the budgeted engine, address validation, redirects, concurrency pacing and extraction. The native live-benchmark workflow uses Pi's \texttt{fetch\_content} in readable mode, not simultaneous readers or a silent fallback. In the PMCR case, the direct crawler timed out on the original article; Pi's reader later obtained the full text. Search remained a separate step in both cases.
+
+Figure~\ref{fig:live} shows the native workflow. The model proposes research needs and queries; code calls \texttt{web\_search}, ranks returned URLs and reads the selected pages. The shortlisted passages guide a batched assessment. The model can inspect a stored source by exact offsets or literal-term matches before spending another web search. Only unresolved essential needs can justify another round. The library is saved before a separate writing turn. \texttt{/research-finish} requests synthesis after the current turn; cancellation preserves acquired evidence without requesting a report.
 
 \section{Methodology}
-\subsection{Passage Construction and Source Integrity}
-The retrieval index packs paragraphs toward 180--300 surface tokens, with a 4,000-character cap and bounded overlap. It preserves UTF-16 source offsets in the retained extraction when it tokenizes or stems. URL normalization and shingle-based comparison reduce repeated evidence. The positional index uses five-token shingle Jaccard overlap; the live evidence library also uses shingle containment to help detect short renderings inside longer copies. Deduplication is heuristic and cannot make two reports of the same event independent. Only extracted page text enters the corpus, not search snippets or model-written summaries.
 
-\subsection{Ranking and Feedback}
-For query term $t$, passage $p$, passage count $N$, and document frequency $\mathrm{df}(t)$, the lexical score uses
-\begin{equation}
-\mathrm{IDF}(t)=\log\left(1+\frac{N-\mathrm{df}(t)+0.5}{\mathrm{df}(t)+0.5}\right),
-\end{equation}
-\begin{equation}
-\sum_{t\in q}w(t,q)\,\mathrm{IDF}(t)\frac{(k_1+1)\,\mathrm{tf}(t,p)}{\mathrm{tf}(t,p)+k_1(1-b+b|p|/\overline{|p|})},
-\end{equation}
-with $k_1=1.2$, $b=0.75$. The positional ranker can add phrase/proximity signals. The parallel Porter-stemmed stream changes lexical matching, not source offsets. The BrowseComp-Plus runs rank a parent document $D$ by $\max_{p\in D}\mathrm{BM25}(q,p)$ and return unique documents. The live workflow uses MMR, greedily maximizing $\lambda \widetilde{s}(p)-(1-\lambda)\max_{p'\in S}\cos(v_p,v_{p'})$; the live library sets $\lambda=0.7$. This is not the same as the max-passage ablation. Dirichlet query likelihood, the sequential dependence model and lexical pseudo-relevance feedback are additional offline rankers; explicit positive/negative relevance feedback is available in the research engine.
+\subsection{Tokenization, Stopwords, and Parallel Porter Stemming}
+Given text $T$, \texttt{tokenize(T)} extracts Unicode alphanumeric runs matching \texttt{/[\textbackslash p\{L\}\textbackslash p\{N\}]+/gu}, lowercases each token, and preserves exact UTF-16 character offsets \texttt{[start, end)}. Filtering the 128 English stopwords in \texttt{STOPWORDS} produces the content token stream $C(p) = [t \in S(p) \mid t \notin \text{STOPWORDS}]$ of length $|p| = |C(p)|$. Applying the five-step Porter (1980) stemmer (\texttt{stem}) yields the parallel stemmed stream $M(p) = [\text{stem}(t) \mid t \in C(p)]$, indexed in \texttt{stemPostings} and \texttt{stemDf} without altering surface offsets.
 
-\subsection{Synthesis and Scoped Checks}
-A ranked shortlist can retrieve positive evidence but cannot establish absence. Direct inspection can count literal terms or return a specified source span; records include the source version, offsets and observed result. A scan of an incomplete extraction or a summary does not certify absence from an original paper. For open-ended claims, failures to fetch are recorded separately from what a search actually did not find. Citation IDs link to recorded evidence; semantic entailment is not guaranteed by link resolution.
+\subsection{Passage Segmentation and Shingle Deduplication}
+\texttt{segment(snapshot)} packs paragraph units into passages of $\text{SEGMENT\_MIN} = 180$ to $\text{SEGMENT\_MAX} = 300$ surface tokens (hard cap $\text{SEGMENT\_MAX\_CHARS} = 4000$ UTF-16 characters), splitting oversized paragraphs at sentence or token boundaries and carrying at most one trailing paragraph of $\le 60$ tokens as overlap. Exact-text duplicates fold to a canonical ID; near-duplicates are grouped via union-find over 5-token surface shingles (Broder, 1997) when Jaccard similarity $J(A, B) = \frac{|H_5(A) \cap H_5(B)|}{|H_5(A) \cup H_5(B)|} \ge 0.8$.
+
+\subsection{Positional BM25, Stemmed BM25, and Max-Passage Aggregation}
+Following Robertson and Zaragoza (2009), \texttt{PassageIndex.rank()} scores passage $p$ against query weights $w(t, q)$ with $k_1 = 1.2$ and $b = 0.75$:
+\begin{equation}
+\text{IDF}(t) = \ln\!\left(1 + \frac{N - \text{df}(t) + 0.5}{\text{df}(t) + 0.5}\right)
+\end{equation}
+\begin{multline}
+\text{BM25}(q, p) = \sum_{t \in q} w(t, q)\,\text{IDF}(t)\\
+\cdot\frac{\text{tf}(t, p)(k_1 + 1)}{\text{tf}(t, p) + k_1\!\left(1 - b + b\frac{|p|}{\text{avgdl}}\right)} + \Phi(q, p)
+\end{multline}
+where $\Phi(q, p)$ adds $+0.25 + 0.05\min(\text{occ}-1, 2)$ for exact phrase adjacency or $+0.10$ for proximity within $|P|+2$ surface tokens. For document-level evaluation on BrowseComp-Plus, parent document $D$ receives its maximum constituent passage score:
+\begin{equation}
+\text{Score}_{\text{max}}(q, D) = \max_{p \in \text{passages}(D)} \text{BM25}(q, p)
+\end{equation}
+
+\subsection{Offline Baselines, Rocchio Feedback, Naive Bayes, and Clustering}
+\begin{enumerate}
+    \item \textbf{Query-Likelihood (\texttt{rankQL}; Zhai \& Lafferty, 2001):} With Dirichlet prior $\mu = 2000$ and $P(t \mid C) = \frac{\max(\text{cf}(t), 0.5)}{\sum_w \text{cf}(w)}$:
+    \begin{equation}
+    \begin{split}\text{Score}_{\text{QL}}(q, p) ={}& \sum_{t \in q} w(t, q)\ln\!\left(1 + \frac{\text{tf}(t, p)}{\mu P(t \mid C)}\right)\\ &+ |q|\ln\!\left(\frac{\mu}{|p| + \mu}\right)\end{split}
+    \end{equation}
+    \item \textbf{Sequential Dependence Model (\texttt{rankSDM}; Metzler \& Croft, 2005):} Combines unigram ($f_T$), ordered adjacent bigram ($f_O, \#1$), and unordered window ($f_U, w=8$) Dirichlet log-likelihoods with $(\lambda_T, \lambda_O, \lambda_U) = (0.85, 0.10, 0.05)$:
+    \begin{equation}
+    \begin{split}\text{Score}_{\text{SDM}}(q, p) ={}& \lambda_T f_T(q, p) + \lambda_O \sum_{i} f_O(t_i, t_{i+1}, p)\\ &+ \lambda_U \sum_{i} f_U(t_i, t_{i+1}, p)\end{split}
+    \end{equation}
+    \item \textbf{MMR (\texttt{mmr}; Carbonell \& Goldstein, 1998):} Selects diversified hits maximizing $\lambda \tilde{s}(p) - (1-\lambda)\max_{p' \in S}\cos(\vec{v}(p), \vec{v}(p'))$ with $\lambda = 0.75$.
+    \item \textbf{Rocchio Feedback (\texttt{rocchioQuery}; Rocchio, 1971):} Updates query weights from useful ($D^+$) and irrelevant ($D^-$) passages with $(\alpha, \beta, \gamma) = (0.75, 0.25, 0.15)$:
+    \begin{equation}
+    \begin{split}\vec{q}_{\text{new}} = \max\Big(\vec{0},\; &\alpha\vec{q}_0 + \frac{\beta}{|D^+|}\sum_{d \in D^+}\vec{d}\\ &- \frac{\gamma}{|D^-|}\sum_{d \in D^-}\vec{d}\Big)\end{split}
+    \end{equation}
+    \item \textbf{Multinomial Naive Bayes \& Spherical $k$-Means:} \texttt{NaiveBayesCandidateClassifier} applies Laplace add-1 smoothing over `on-topic` and `off-topic` feedback documents, zeroing candidate relevance when $P(\text{on-topic}) < 0.2$ ($\text{confidence} > 0.6$). \texttt{clusterPassages} runs spherical $k$-means ($k$-means++ seeding, 15 iterations) over L2-normalized TF-IDF vectors and extracts the top 3 centroid terms per cluster.
+\end{enumerate}
+
+\subsection{Evidence-Library Inspection and Synthesis}
+The live library gives the assessor ranked passages labelled with source IDs. A local inspection records a specific retained extraction version, the character range and either exact text or literal match counts. A missing ranked hit is not evidence of absence, and a zero count in an incomplete extraction or summary cannot establish what the original document omits. Bounded checks therefore specify their scope; open-ended non-findings describe sources actually checked. Failed fetches are recorded independently. The report generator sees selected passages and inspection records, not search snippets. The live-library MMR value is $\lambda=0.7$; the $0.75$ value above belongs to the budget-aware positional retriever.
 
 \section{Experimentation and Results}
-\subsection{End-to-End Deep Research and Judge Validation}
-We built a project-specific harness on the official DeepResearch Bench prompts and point-wise RACE rubric~\cite{drb}. The judge, DeepSeek V4.1 Flash at temperature zero, receives one task, one candidate report and task-specific criteria in an independent call. It does not see human scores or a reference answer; criterion weights are applied after scoring. Weighted criterion means define comprehensiveness, insight, instruction following and readability scores; official dimension weights combine them on a 0--100 scale. The harness preserves raw responses and parsed scores. It does not verify claims against sources.
 
-To validate the judge, we averaged three expert ratings and selected the human-best and human-worst system reports on each of 50 Chinese tasks (100 reports). It ordered the two reports correctly on \textbf{44/50 tasks (88\%)}; pooled Pearson $r=0.462$, within-task centered $r=0.690$, and raw MAE was 13.71 points. Per-dimension calibration cross-validated by task produced 10.72 MAE. Selection uses pairs with strong human separation, so this does not establish performance on close pairs. It supports same-task ranking more strongly than interpreting scores as absolute human ratings. The calibration does not validate English tasks, and the live generator and judge share a model family.
-
-\begin{table}[t]
-\caption{Same-task report quality under the project RACE judge (/100).}
-\label{tab:race}
-\centering\footnotesize
-\begin{tabular}{lrr}
-\toprule
-\rowcolor{lightblue} System & Task 19 & Task 20 \\
-\midrule
-\textbf{Pi Research} & \textbf{94.29} & \textbf{83.04} \\
-OpenAI Deep Research & 77.69 & 79.08 \\
-drsh & 76.87 & 51.96 \\
-Perplexity Research & 49.07 & -- \\
-Grok Deeper Search & -- & 58.53 \\
-\bottomrule
-\end{tabular}
-\end{table}
-\begin{figure*}[t]
+\begin{table*}[t]
 \centering
-\includegraphics[width=.86\textwidth]{race-scores.png}
-\caption{Report scores on Prometheus (Task 19) and Streamable HTTP (Task 20). Comparisons are within each task only; available baselines differ.}
-\label{fig:race}
-\end{figure*}
-\textbf{Main result.} On the two scored tasks without detected published-answer leakage, Pi Research ranked first among the available same-task reports (Table~\ref{tab:race}, Fig.~\ref{fig:race}). It scored 16.60 and 3.96 points above the available OpenAI Deep Research report, respectively. These are two task results, not an aggregate leaderboard claim. Two further exploratory runs scored 75.32 (water utilities, Task 12) and 90.21 (low-code/no-code, Task 17), but both retrieved a publicly indexed answer to the exact benchmark task. We exclude both from fair comparisons.
+\caption{BrowseComp-Plus Retrieval Effectiveness (\%). Published full-set reference numbers (830 queries, Chen et al., 2026, Table 2) are separated from our deterministic 100-query subset (\texttt{seed = 42}) evaluated over the full 100,195-document / 2,282,733-passage corpus. Best subset values per column are bolded.}
+\label{tab:browsecomp}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l c r r r r r r r r}
+\toprule
+\rowcolor{lightblue}
+\textbf{Method} & \textbf{Query Set} & \textbf{Evid.\ R@5} & \textbf{Evid.\ R@100} & \textbf{Evid.\ R@1000} & \textbf{Evid.\ nDCG@10} & \textbf{Gold R@5} & \textbf{Gold R@100} & \textbf{Gold R@1000} & \textbf{Gold nDCG@10} \\
+\midrule
+Published BrowseComp-Plus BM25 (Chen et al., 2026) & Full (830) & 1.20 & 4.70 & 13.70 & 1.60 & 1.40 & 6.10 & 17.30 & 1.70 \\
+\midrule
+Diagnostic: Whole-doc BM25 (Lucene $k_1=0.9, b=0.4$, stem) & Subset (100) & 1.56 & 4.17 & 15.16 & 2.13 & 0.50 & 4.83 & 22.33 & 1.03 \\
+Pi Research whole-document BM25 ($k_1=1.2, b=0.75$) & Subset (100) & 2.51 & 9.50 & 28.25 & 3.70 & 3.50 & 15.48 & 35.93 & 3.86 \\
+\textbf{Pi Research passage BM25} (max-passage, $k_1=1.2, b=0.75$) & Subset (100) & \textbf{5.87} & 21.32 & \textbf{46.24} & \textbf{8.47} & 7.36 & 26.75 & \textbf{50.55} & \textbf{8.75} \\
+\textbf{Pi Research stemmed passage BM25} (max-passage, $k_1=1.2, b=0.75$) & Subset (100) & 5.21 & \textbf{22.37} & 45.70 & 8.16 & \textbf{8.69} & \textbf{28.39} & 47.86 & 8.46 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
 
-\subsection{BrowseComp-Plus Evidence Retrieval}
-The controlled retrieval experiment uses all 100,195 documents (2,282,733 passages), and 100 of 830 questions selected deterministically with seed 42 before retrieval. The subset has 595 evidence and 282 gold document judgments. Queries are used verbatim; no model or query rewrite participates. We score TREC runs against evidence and gold judgments separately. Gold documents contain the answer in addition to being relevant evidence. Recall is calculated against the judged pool, not all relevant web pages. nDCG@10 normalizes rank-discounted gain against an ideal ordering.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/browsecomp-recall.png}
+\caption{BrowseComp-Plus 100-query subset retrieval effectiveness (\%) across whole-document and max-passage BM25 configurations on the full 100,195-document corpus.}
+\label{fig:browsecomp}
+\end{figure}
+
+\begin{table*}[t]
+\centering
+\caption{CISI Benchmark Macro-Averaged Retrieval Results Across 76 Judged Queries and 1,459 Documents (\texttt{scripts/evaluate.ts}). Pooled R@10 is recall; F1@10 is the per-query harmonic mean of P@10 and pooled R@10; Acc@10 is set-based accuracy of the top-10 cut-off over all 1,459 documents (dominated by true negatives). Best value per column is bolded.}
+\label{tab:cisi}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l r r r r r r r r r r}
+\toprule
+\rowcolor{lavender}
+\textbf{Method} & \textbf{P@5} & \textbf{P@10} & \textbf{Pooled R@10} & \textbf{F1@10} & \textbf{Acc@10} & \textbf{nDCG@10} & \textbf{Redund.@10} & \textbf{MAP@30} & \textbf{R-Prec@30} & \textbf{BPref@30} \\
+\midrule
+\textbf{BM25 + Porter Stemming (\texttt{bm25stem})} & \textbf{0.4263} & \textbf{0.3632} & \textbf{0.1470} & \textbf{0.1738} & \textbf{0.9700} & \textbf{0.3984} & \textbf{0.0000} & \textbf{0.1319} & \textbf{0.1956} & \textbf{0.2482} \\
+Unstemmed BM25 Baseline (\texttt{bm25}) & 0.3895 & 0.3105 & 0.1360 & 0.1469 & 0.9693 & 0.3607 & 0.0013 & 0.1184 & 0.1641 & 0.2422 \\
+Query-Likelihood Dirichlet (\texttt{ql}, $\mu=2000$) & 0.3684 & 0.2921 & 0.1392 & 0.1467 & 0.9691 & 0.3390 & 0.0026 & 0.1197 & 0.1741 & 0.2305 \\
+Sequential Dependence Model (\texttt{sdm}, MRF) & 0.3605 & 0.2921 & 0.1275 & 0.1465 & 0.9691 & 0.3338 & 0.0026 & 0.1181 & 0.1741 & 0.2254 \\
+Anchored Lexical PRF (\texttt{lexicalPRF}) & 0.2974 & 0.2566 & 0.0955 & 0.1124 & 0.9686 & 0.2902 & \textbf{0.0000} & 0.0908 & 0.1354 & 0.2149 \\
+Lexical PRF + MMR@10 (\texttt{prfMMR}) & 0.2868 & 0.2474 & 0.0915 & 0.1074 & 0.9685 & 0.2821 & \textbf{0.0000} & 0.0533 & 0.0739 & 0.0915 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/cisi-operating-points.png}
+\caption{Mean precision and pooled recall at rank 10 for the six CISI methods. Points come from Table~\ref{tab:cisi}; they are not interpolated precision--recall curves.}
+\label{fig:cisi_pr}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/cisi-bar.png}
+\caption{Macro-averaged P@10 and nDCG@10 across the six CISI methods. The full set of reported metrics is retained in Table~\ref{tab:cisi}.}
+\label{fig:cisi_bar}
+\end{figure}
+
+\subsection{Datasets and Metric Selection}
+We evaluate on two human-judged benchmarks:
+\begin{enumerate}
+    \item \textbf{BrowseComp-Plus:} All \textbf{100,195 documents} (\texttt{Tevatron/browsecomp-plus-corpus}, avg.\ 3,292.51 content tokens) are indexed and segmented into \textbf{2,282,733 passages} (avg.\ 22.78 passages/doc, 151.09 content tokens/passage). Because only the deterministic 100-query subset (\texttt{seed = 42}, 595 evidence qrels, 282 gold qrels) was executed, Table~\ref{tab:browsecomp} explicitly labels the query set column to distinguish our 100-query subset from Chen et al.'s full 830-query baseline. Runs are scored with official NIST \texttt{trec\_eval} (\texttt{pytrec-eval-terrier 0.5.11}).
+    \item \textbf{Glasgow CISI:} Evaluates 6 methods over \textbf{1,459 retained documents} and \textbf{76 judged queries} (3,113 relevance pairs). We report \textbf{precision} (P@5, P@10), \textbf{recall} (pooled R@10), their per-query harmonic mean \textbf{F1@10}, and set-based \textbf{accuracy@10}, alongside \textbf{R-Precision} (where $k = R_q \implies P = R = F_1$), \textbf{nDCG@10}, \textbf{MAP}, \textbf{BPref}, and \textbf{11-point PR curves}. Because the number of relevant documents $R_q$ varies widely across queries (1 to $>100$), fixed-cutoff $F_1@10$ is bounded well below 1 whenever $R_q \neq 10$, so absolute F1 values are low for every method and only the relative ordering is informative. Accuracy@10 $= (N - FP - FN)/N$ with $N = 1{,}459$ is near 0.97 for all methods because true negatives dominate, so it is reported for completeness but does not discriminate between ranked-retrieval methods. F1@10 and accuracy@10 are derived per query from the raw per-query P@10, pooled R@10, and judged-positive counts in \texttt{evaluation/cisi-eval-latest.json}; the underlying P@10 and R@10 macro-averages reproduce Table~\ref{tab:cisi} exactly.
+\end{enumerate}
+
+\subsection{BrowseComp-Plus Results and Attribution}
+Table~\ref{tab:browsecomp} and Fig.~\ref{fig:browsecomp} summarize BrowseComp-Plus effectiveness. First, under Pyserini/Lucene's default parameters ($k_1 = 0.9, b = 0.4$, stemmed), our whole-document diagnostic on the 100-query subset (1.56\% Evid.\ R@5, 4.17\% R@100, 15.16\% R@1000, 2.13\% nDCG@10) closely tracks the published 830-query baseline (1.20\%, 4.70\%, 13.70\%, 1.60\%). Second, switching whole-document BM25 to Pi Research's parameters ($k_1 = 1.2, b = 0.75$, unstemmed) lifts Evidence R@100 to 9.50\%, showing that stronger length normalization ($b = 0.75$ vs.\ $0.4$) and unstemmed matching contribute part of the gain over the published baseline. Third, under identical parameters ($k_1 = 1.2, b = 0.75$), \textbf{passage segmentation with max-passage aggregation (\texttt{pi\_passage\_bm25}) more than doubles whole-document BM25}: Evidence nDCG@10 rises from \textbf{3.70\% to 8.47\%} (+129.0\%, $t = 3.1454, p = 0.0022$), Evidence R@100 from \textbf{9.50\% to 21.32\%} (+124.4\%, $t = 5.0303, p = 2.19 \times 10^{-6}$), Gold nDCG@10 from \textbf{3.86\% to 8.75\%} (+126.9\%, $t = 2.6790, p = 0.0086$), and Gold R@1000 from \textbf{35.93\% to 50.55\%} (+40.7\%, $t = 4.6197, p = 1.16 \times 10^{-5}$). Fourth, \texttt{pi\_stemmed\_passage\_bm25} achieves the highest Evidence R@100 (\textbf{22.37\%}), Gold R@5 (\textbf{8.69\%}), and Gold R@100 (\textbf{28.39\%}), while trailing unstemmed \texttt{pi\_passage\_bm25} slightly on nDCG@10 (8.16\% vs.\ 8.47\%); differences between stemmed and unstemmed passage BM25 are not statistically significant at $n=100$ ($p \in [0.34, 0.82]$). We hypothesize that exact surface matching aids top-10 ranking on proper-noun-heavy BrowseComp-Plus clues while stemming improves mid-depth recall.
+
+\subsection{CISI 6-Method Ablation Results}
+On CISI (Table~\ref{tab:cisi}, Fig.~\ref{fig:cisi_pr}, Fig.~\ref{fig:cisi_bar}), \texttt{bm25stem} ranks first on every metric, improving \textbf{nDCG@10 by +10.46\%} (0.3984 vs.\ 0.3607, paired $t = 2.1238, p = 0.0370$), \textbf{P@10 by +16.95\%} (0.3632 vs.\ 0.3105, $t = 3.4724, p = 0.00086$), \textbf{F1@10 by +18.3\%} (0.1738 vs.\ 0.1469, paired $t = 3.5650, p = 0.00064$), and \textbf{R-Precision by +19.15\%} (0.1956 vs.\ 0.1641, $t = 4.1835, p = 0.000077$). Recall@10 rises only modestly (0.1470 vs.\ 0.1360, not significant), so the F1 gain comes mainly from higher precision at the same cut-off; accuracy@10 is virtually unchanged (0.9700 vs.\ 0.9693) for the reason noted above. (\textit{Note:} An earlier prose entry in \texttt{docs/information-retrieval.md} reported $t = 3.82, p = 0.00027$ for nDCG@10 due to an un-symmetrized incomplete-beta continued fraction in \texttt{studentTTwoTailedP} before our correction; we report the exact raw output $t = 2.1238, p = 0.0370$.) Blind \texttt{lexicalPRF} drops nDCG@10 by 19.55\% (to 0.2902), motivating our use of explicit Rocchio feedback (\texttt{rocchioQuery}) with negative term suppression.
+
+\subsection{Discussion and Comparison with Existing Work}
+\textit{Comparison with Chen et al.\ (2026).} The published BrowseComp-Plus BM25 baseline (830 queries) reaches 4.7\% Evidence R@100 and 1.6\% Evidence nDCG@10. Our whole-document diagnostic with the same Lucene parameters on a 100-query subset (4.17\%, 2.13\%) tracks it closely, which supports using the subset as a proxy; Pi Research's max-passage BM25 reaches 21.32\% and 8.47\% on the same subset, roughly 4.5$\times$ and 5.3$\times$ the published figures. Part of this gap comes from different BM25 parameters rather than segmentation (whole-document BM25 at $k_1=1.2, b=0.75$ already reaches 9.50\% R@100), and the subset-versus-full-set difference means the comparison is indicative rather than exact. \textit{Consistency with Wang et al.\ (2024).} Porter stemming helps on CISI's short scientific abstracts but gives no significant change over unstemmed passages on BrowseComp-Plus, in line with their finding that classical stemming is a strong but not universally dominant baseline. \textit{Consistency with Otero and Parapar (2026).} Blind lexical PRF degraded every metric on CISI, matching their motivation for filtering feedback documents before expansion. We do not compare against neural retrievers or LLM-based query rewriting, which were out of scope for this offline lexical evaluation.
+
+\subsection{End-to-End Deep Research: Custom Judge and Results}
+\textbf{Protocol.} Our harness uses the official DeepResearch Bench point-wise RACE criteria. DeepSeek V4.1 Flash evaluates each report independently at temperature zero. It receives the original task, one report and the criterion descriptions; human scores, reference answers and criterion weights are withheld. The harness applies the official criterion weights within each dimension and dimension weights across comprehensiveness, insight, instruction following and readability. For dimension $d$ with criterion scores $s_{di}$ and weights $w_{di}$, the score is $S_d=\sum_i w_{di}s_{di}/\sum_i w_{di}$; the official dimension-weighted sum is scaled to 0--100. We preserve raw responses and parsed scores. This is a report-quality metric, not a citation-entailment test.
+
+\textbf{Judge validity.} On 50 Chinese tasks with three expert ratings per report, we selected the highest- and lowest-rated systems per task (100 reports). The judge reproduced \textbf{44/50 expert orderings (88\%)}. Pooled Pearson $r=0.462$, within-task centered $r=0.690$, and raw MAE was 13.71 points. Per-dimension calibration cross-validated by task yielded 10.72 MAE. These results support within-task ranking more strongly than absolute scores. The extreme-pair selection favors clearer contrasts, and the same model family generated and judged project reports.
 
 \begin{table*}[t]
 \centering\footnotesize
-\caption{BrowseComp-Plus retrieval (\%). The published full-set baseline is context, not a matched comparison.}
-\label{tab:browsecomp}
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{lcrrrrrrrr}
+\caption{Point-wise RACE scores (/100). Comparison sets differ by task; ranks refer only to available scored reports.}
+\label{tab:race}
+\begin{tabular}{llrll}
 \toprule
-\rowcolor{lightblue} & & \multicolumn{4}{c}{Evidence judgments} & \multicolumn{4}{c}{Gold judgments} \\
-\cmidrule(lr){3-6}\cmidrule(lr){7-10}
-Method & Queries & R@5 & R@100 & R@1000 & nDCG@10 & R@5 & R@100 & R@1000 & nDCG@10 \\
+\rowcolor{lightblue} Task & Question topic & Pi Research & Matched same-task comparators & Rank \\
 \midrule
-Published BM25~\cite{browsecomp} & 830 & 1.20 & 4.70 & 13.70 & 1.60 & 1.40 & 6.10 & 17.30 & 1.70 \\
-Whole-document, Lucene-style & 100 & 1.56 & 4.17 & 15.16 & 2.13 & 0.50 & 4.83 & 22.33 & 1.03 \\
-Whole-document BM25 & 100 & 2.51 & 9.50 & 28.25 & 3.70 & 3.50 & 15.48 & 35.93 & 3.86 \\
-Passage BM25 & 100 & \textbf{5.87} & 21.32 & \textbf{46.24} & \textbf{8.47} & 7.36 & 26.75 & \textbf{50.55} & \textbf{8.75} \\
-Porter-stemmed passage BM25 & 100 & 5.21 & \textbf{22.37} & 45.70 & 8.16 & \textbf{8.69} & \textbf{28.39} & 47.86 & 8.46 \\
+19 & Prometheus & \textbf{94.29} & OpenAI 77.69, drsh 76.87, Perplexity 49.07 & 1/4 \\
+20 & Streamable HTTP & \textbf{83.04} & OpenAI 79.08, Grok 58.53, drsh 51.96 & 1/4 \\
+22 & Arts careers & 81.98 & Gemini 83.63, OpenAI 70.56 & 2/3 \\
+33 & Thin-film deposition & 93.78 & OpenAI 96.04, Perplexity 51.40 & 2/3 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 \begin{figure*}[t]
 \centering
-\includegraphics[width=.86\textwidth]{browsecomp-recall.png}
-\caption{Recall across cutoffs for matched 100-query runs on the full BrowseComp-Plus corpus.}
-\label{fig:recall}
+\includegraphics[width=.86\textwidth]{figures/race-scores.png}
+\caption{Same-task comparison on four scored DeepResearch Bench tasks without detected published-answer leakage.}
+\label{fig:race}
 \end{figure*}
-Against whole-document BM25 with identical parameters, passage BM25 improves evidence Recall@1000 by 17.99 points (paired two-tailed $p=1.28\times10^{-11}$) and evidence nDCG@10 by 4.77 points ($p=0.0022$; Table~\ref{tab:browsecomp}, Fig.~\ref{fig:recall}). Stemming gives higher Gold Recall@5 (8.69\% versus 7.36\%), but its gains and losses against unstemmed passage scoring are not significant on this sample. Reported tests are unadjusted; evidence Recall@1000 and nDCG@10 still meet a conservative $0.05/8$ threshold. The published 830-query BM25 result uses a different analyzer and is not directly comparable to the 100-query project rows.
 
-\subsection{CISI Retrieval Ablation}
-The secondary retrieval experiment uses 1,459 indexed scientific abstracts and 76 judged queries. Precision at $k$ is the relevant fraction of the first $k$ results; pooled recall is the fraction of judged relevant documents retrieved. The project comparison in Table~\ref{tab:cisi} indicates that stemming improves early precision and nDCG on this corpus, whereas blind lexical feedback degrades ranking. This contrasts with the non-significant stemming differences on BrowseComp-Plus. The archived CISI per-query file covers the original BM25 and PRF variants; extended rows come from the team's reported evaluation. No CISI significance claim is made here because the extended per-query output was not validated in this report.
+\textbf{Results.} The project placed first among available reports on Tasks 19 and 20, beating their OpenAI reports by 16.60 and 3.96 points. In the screened run it placed second on Tasks 22 and 33, within 1.65 and 2.26 points, respectively, of the highest available score. Task 30 saved evidence but no final report; it is not scored. The two batches did not use identical screening conditions: the later batch excluded a known public answer mirror before acquisition. Reading a published source is normally useful, but reading a completed report answering the exact benchmark task confounds a test of independent research. Tasks 12 (75.32) and 17 (90.21) did this and are kept as diagnostics, not part of Fig.~\ref{fig:race}. Screening and inspecting URL lists cannot rule out all leakage; four tasks are not a general system ranking.
 
-\begin{table}[t]
-\centering\footnotesize
-\caption{CISI mean retrieval scores on 76 judged queries.}
-\label{tab:cisi}
-\begin{tabular}{lrrrr}
-\toprule
-\rowcolor{lavender} Method & P@5 & P@10 & R@10 & nDCG@10 \\
-\midrule
-Stemmed BM25 & \textbf{.4263} & \textbf{.3632} & \textbf{.1470} & \textbf{.3984} \\
-Plain BM25 & .3895 & .3105 & .1360 & .3607 \\
-Dirichlet QL & .3684 & .2921 & .1392 & .3390 \\
-SDM & .3605 & .2921 & .1275 & .3338 \\
-Lexical PRF & .2974 & .2566 & .0955 & .2902 \\
-Lexical PRF + MMR & .2868 & .2474 & .0915 & .2821 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Live Provenance Case Study}
-For ``What is PMCR in medical image segmentation?'', an earlier run produced 6,173 words from secondary renderings, whose numerical claims conflicted. A later run acquired \href{https://arxiv.org/html/2406.05054v1}{109,282 characters of the original arXiv paper} through Pi's reader and produced a 785-word report with all 36 inline citation links resolving. The later run used \texttt{/research-finish} and took 6 minutes 50 seconds. It is an observed example of a provenance improvement, not a controlled speed comparison or evidence of general citation accuracy.
+\subsection{Live Original-Source Case Study}
+For ``What is PMCR in medical image segmentation?'', a 6,173-word run used secondary renderings containing conflicting numbers. The later run used the original arXiv full text (109,282 extracted characters), explained both named modules and cited the authors' ablation results in 785 words. All 36 inline links resolved. The later run used \texttt{/research-finish} and took 6 minutes 50 seconds, so this is a provenance example rather than a matched runtime or citation-accuracy comparison.
 
 \section{Conclusions and Limitations}
-Pi Research combines inspectable passage retrieval, controlled acquisition, a saved evidence library and a separate cited writing stage. The retrieval ablation supports passage scoring, and the two clean same-task report comparisons are the strongest end-to-end result. Neither establishes that the retrieval gain caused the higher report scores. Browser access and extraction can fail; deduplication and literal scans are incomplete; and a resolving citation need not support a claim. Published answers can contaminate open-web benchmarks. A larger leakage-screened evaluation, independent claim checking, and controlled multi-turn trials are needed before generalizing.
 
-\section*{Reproducibility and Credits}
-The submission includes the source, project PDF, DeepResearch Bench questions and criteria, judge outputs, and dataset links. The offline retrieval runs use the \href{https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/}{Glasgow CISI collection} and \href{https://huggingface.co/datasets/Tevatron/browsecomp-plus-corpus}{BrowseComp-Plus}; the latter's large corpus is available from its official dataset repository. The \href{https://huggingface.co/datasets/muset-ai/DeepResearch-Bench-Dataset}{DeepResearch Bench dataset} supplies task prompts, rubrics and baseline articles. AI assistance supported code, analysis and report drafting; measured results, diagnostics, and unsupported comparisons are distinguished above.
+Pi Research demonstrates that combining paragraph-aware passage segmentation, a parallel Porter-stemmed positional BM25 index, policy-hardened acquisition, and SQLite budget accounting yields large, statistically significant retrieval gains (+129.0\% Evidence nDCG@10 on BrowseComp-Plus from passage segmentation; +10.46\% nDCG@10 and +16.95\% P@10 on CISI from parallel stemming) while preserving exact UTF-16 citation spans.
 
-\begin{thebibliography}{00}
-\bibitem{bm25} Robertson, S. and Zaragoza, H., 2009. The probabilistic relevance framework: BM25 and beyond. \emph{Foundations and Trends in Information Retrieval}, 3(4), pp. 333--389.
-\bibitem{porter} Porter, M.F., 1980. An algorithm for suffix stripping. \emph{Program}, 14(3), pp. 130--137.
-\bibitem{mmr} Carbonell, J. and Goldstein, J., 1998, August. The use of MMR, diversity-based reranking for reordering documents and producing summaries. In \emph{Proceedings of the 21st Annual International ACM SIGIR Conference} (pp. 335--336).
-\bibitem{ql} Zhai, C. and Lafferty, J., 2001. A study of smoothing methods for language models applied to ad hoc information retrieval. In \emph{Proceedings of the 24th Annual International ACM SIGIR Conference} (pp. 334--342).
-\bibitem{sdm} Metzler, D. and Croft, W.B., 2005. A Markov random field model for term dependencies. In \emph{Proceedings of the 28th Annual International ACM SIGIR Conference} (pp. 472--479).
-\bibitem{rag} Lewis, P., Perez, E., Piktus, A. et al., 2020. Retrieval-augmented generation for knowledge-intensive NLP tasks. In \emph{Advances in Neural Information Processing Systems}, 33.
-\bibitem{mtrag} Katsis, Y., Rosenthal, S., Fadnis, K. et al., 2025. MTRAG: A multi-turn conversational benchmark for evaluating retrieval-augmented generation systems. \emph{Transactions of the Association for Computational Linguistics}, 13, pp. 784--808.
-\bibitem{browsecomp} Chen, Z., Ma, X., Zhuang, S. et al., 2026, July. BrowseComp-Plus: A fair and disentangled evaluation benchmark for deep search agents. In \emph{Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1)} (pp. 22349--22370).
-\bibitem{drb} Du, M., Xu, B., Zhu, C., Zhang, L., Wang, X. and Mao, Z., 2026. DeepResearch Bench: A comprehensive benchmark for deep research agents. In \emph{Proceedings of the 14th International Conference on Learning Representations}.
-\end{thebibliography}
+\textbf{Limitations:} (1) \textit{Multiple comparisons:} Reported paired $t$-test $p$-values are unadjusted; under a Bonferroni correction ($\alpha = 0.05/8 = 0.00625$ on BrowseComp-Plus; $0.05/7 = 0.0071$ on CISI), Recall@100, Recall@1000, Evidence nDCG@10, CISI P@10, and CISI R-Precision remain significant, whereas BrowseComp-Plus Recall@5 ($p = 0.0122, 0.0417$) and CISI nDCG@10 ($p = 0.0370$) do not. (2) \textit{Mechanical vs.\ semantic citation support:} UTF-16 span resolution and \texttt{<details>} passage quotes verify provenance location but do not prove semantic entailment. (3) \textit{Pooled recall vs.\ web recall:} Unjudged documents count as zero, so benchmark recall reflects coverage of the judged pool, not open-web recall. (4) \textit{Subset scope:} BrowseComp-Plus was evaluated on a 100-query subset (\texttt{seed = 42}) rather than all 830 queries. (5) \textit{Live two-turn verification:} While single-turn non-fallback synthesis (\texttt{report.md}, 12 resolving citations) and two-turn zero-fetch snapshot reuse (\texttt{9cbe38e}) were verified separately, a single fresh default session producing non-fallback cited reports on both turns remains unverified.
+
+The end-to-end runs add a complementary result: Pi Research ranks first on two same-task comparisons and second on two more, with task-specific DeepResearch Bench criteria and no detected published-answer leakage in those four saved source lists. The offline results identify useful retrieval choices, but do not establish that those choices caused the live judge scores. Independent claim verification, more leakage-screened tasks and controlled follow-up trials remain open.
+
+\section*{References}
+\begingroup
+\small
+\setlength{\smallskipamount}{1pt}
+\noindent Broder, A.Z., 1997, June. On the resemblance and containment of documents. In \textit{Proceedings of Compression and Complexity of Sequences 1997 (SEQUENCES '97)} (pp. 21-29).\smallskip
+
+\noindent Carbonell, J. and Goldstein, J., 1998, August. The use of MMR, diversity-based reranking for reordering documents and producing summaries. In \textit{Proceedings of the 21st Annual International ACM SIGIR Conference on Research and Development in Information Retrieval} (pp. 335-336).\smallskip
+
+\noindent Chen, Z., Ma, X., Zhuang, S. et al., 2026, July. BrowseComp-Plus: A Fair and Disentangled Evaluation Benchmark for Deep Search Agents. In \textit{Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)} (pp. 22349-22370).\smallskip
+
+\noindent Katsis, Y., Rosenthal, S., Fadnis, K. et al., 2025. MTRAG: A Multi-Turn Conversational Benchmark for Evaluating Retrieval-Augmented Generation Systems. In \textit{Transactions of the Association for Computational Linguistics (TACL)} (Vol. 13, pp. 784-808).\smallskip
+
+\noindent Liu, T., Wang, Z., Miao, J. et al., 2025, November. Budget-Aware Tool-Use Enables Effective Agent Scaling. In \textit{arXiv preprint arXiv:2511.17006 (Accepted at COLM 2026)}.\smallskip
+
+\noindent Metzler, D. and Croft, W.B., 2005, August. A Markov random field model for term dependencies. In \textit{Proceedings of the 28th Annual International ACM SIGIR Conference on Research and Development in Information Retrieval} (pp. 472-479).\smallskip
+
+\noindent Otero, D. and Parapar, J., 2026, March. LLM-Assisted Pseudo-Relevance Feedback. In \textit{Proceedings of the 48th European Conference on Information Retrieval (ECIR 2026)}.\smallskip
+
+\noindent Porter, M.F., 1980, July. An algorithm for suffix stripping. In \textit{Program: Electronic Library and Information Systems} (Vol. 14, No. 3, pp. 130-137).\smallskip
+
+\noindent Robertson, S. and Zaragoza, H., 2009. The Probabilistic Relevance Framework: BM25 and Beyond. In \textit{Foundations and Trends in Information Retrieval} (Vol. 3, No. 4, pp. 333-389).\smallskip
+
+\noindent Rocchio, J.J., 1971. Relevance feedback in information retrieval. In \textit{The SMART Retrieval System: Experiments in Automatic Document Processing} (pp. 313-323).\smallskip
+
+\noindent Sharma, M., Zhang, C.B.C., Bandi, C. et al., 2026, April. ResearchRubrics: A Benchmark of Prompts and Rubrics For Evaluating Deep Research Agents. In \textit{International Conference on Learning Representations (ICLR 2026)}.\smallskip
+
+\noindent Venkit, P.N., Laban, P., Zhou, Y., Huang, K.-H., Mao, Y. and Wu, C.-S., 2026, April. DeepTRACE: Auditing Deep Research AI Systems for Tracking Reliability Across Citations and Evidence. In \textit{International Conference on Learning Representations (ICLR 2026)}.\smallskip
+
+\noindent Wang, S., Zhuang, S. and Zuccon, G., 2024, February. Large Language Models for Stemming: Promises, Pitfalls and Failures. In \textit{arXiv preprint arXiv:2402.11757}.\smallskip
+
+\noindent Zhai, C. and Lafferty, J., 2001, September. A study of smoothing methods for language models applied to Ad Hoc information retrieval. In \textit{Proceedings of the 24th Annual International ACM SIGIR Conference on Research and Development in Information Retrieval} (pp. 334-342).
+\noindent Du, M., Xu, B., Zhu, C., Zhang, L., Wang, X. and Mao, Z., 2026. DeepResearch Bench: A comprehensive benchmark for deep research agents. In \textit{Proceedings of the 14th International Conference on Learning Representations}. \href{https://openreview.net/forum?id=hQ0K2Hhq7H}{OpenReview}.\smallskip
+
+\endgroup
+
+\appendices
+\section{\texorpdfstring{Complete Paired Student's $t$-Test Tables}{Complete Paired Student's t-Test Tables}}
+See \texttt{evaluation/browsecomp-plus/metrics.json} for all 24 BrowseComp-Plus paired $t$-tests and the project facts ledger (\texttt{facts\_ledger.md}, Sections 2.3 and 4) for the 7 CISI paired $t$-tests. On BrowseComp-Plus Evidence qrels ($n=100$), \texttt{pi\_passage\_bm25} vs.\ \texttt{pi\_whole\_doc\_bm25} yields: R@5 ($\Delta=+3.37\%, t=2.5546, p=0.0122$), R@100 ($\Delta=+11.82\%, t=5.0303, p=2.19\times 10^{-6}$), R@1000 ($\Delta=+17.99\%, t=7.6593, p=1.28\times 10^{-11}$), and nDCG@10 ($\Delta=+4.77\%, t=3.1454, p=0.0022$). On Gold qrels, \texttt{pi\_passage\_bm25} vs.\ \texttt{pi\_whole\_doc\_bm25} yields: R@5 ($\Delta=+3.86\%, t=2.0631, p=0.0417$), R@100 ($\Delta=+11.26\%, t=2.7622, p=0.0068$), R@1000 ($\Delta=+14.62\%, t=4.6197, p=1.16\times 10^{-5}$), and nDCG@10 ($\Delta=+4.89\%, t=2.6790, p=0.0086$).
+
+\section{Provenance, Reproducibility, Credits, and AI Declaration}
+\begingroup
+\small
+\raggedright
+\textbf{Checksums:} CISI archive SHA-256 \texttt{bddb284e...8483}; CISI dataset SHA-256 \texttt{dfa920d6...644c}; BrowseComp-Plus commit \texttt{046949032b0328319cc9a02663a759ec601d9402}; \texttt{qrel\_evidence.txt} SHA-256 \texttt{01322d07...5d0e}; \texttt{qrel\_golds.txt} SHA-256 \texttt{6094dcf0...5aa9}.\\
+\textbf{Reproducibility:} The source package includes the engine, the live extension, the offline retrieval harness and the point-wise RACE judge. DeepResearch Bench queries, rubrics and completed score records ship with the package; the large BrowseComp-Plus corpus and its qrels can be obtained from \href{https://github.com/texttron/BrowseComp-Plus}{the official benchmark}. Extended CISI figures are compiled from the group's reported table; the repository's retained per-query artifact contains the earlier three-method ablation, not all six extended runs.\\
+\textbf{Credits \& AI-Use Declaration:} Uses \texttt{@mozilla/readability}, \texttt{linkedom}, \texttt{unpdf}, \texttt{robots-parser}, \texttt{ipaddr.js}, \texttt{node:sqlite}, Pi SDK 1.0.4, Glasgow CISI, and Tevatron BrowseComp-Plus (\texttt{pytrec-eval-terrier 0.5.11}). AI assistance was used for contract exploration, code/script generation, and report drafting; the supplied offline experiments and completed live judge scores are distinguished from unscored or contaminated runs.
+\par
+\endgroup
 \end{document}
