@@ -20,7 +20,7 @@ import type { EngineOptions } from '../src/engine.js';
 import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
-import { normalizeUrl, shouldSkipCandidateUrl } from '../src/acquisition.js';
+import { isBotChallenge, isThinContent, normalizeUrl, shouldSkipCandidateUrl } from '../src/acquisition.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
@@ -493,7 +493,7 @@ async function caseCandidateFilteringAndDedup(): Promise<void> {
   f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
   f.ctx.acquire = url => {
     fetchedUrls.push(url);
-    return fixtureSnapshot(f.ctx.store, url, longParagraph(seed));
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
   };
   f.ctx.discover = async query => ({
     query, provider: 'brave', rankingKind: 'ranked',
@@ -528,6 +528,72 @@ async function caseCandidateFilteringAndDedup(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+async function caseBotChallengeAndCircuitBreaker(): Promise<void> {
+  // 1. isBotChallenge and isThinContent tests
+  check('I isBotChallenge detects Cloudflare challenge title',
+    isBotChallenge('<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>') === true);
+  check('I isBotChallenge detects challenge-platform and verification markers',
+    isBotChallenge('<div class="cf-browser-verification"><script src="/cdn-cgi/challenge-platform/h/b/scripts/alpha.js"></script></div>') === true &&
+    isBotChallenge('<html><head><title>Verify</title></head><body><div id="px-captcha"></div></body></html>') === true);
+  check('I isBotChallenge exempts pages with <article> tags',
+    isBotChallenge('<html><body><article><h1>Quantum Foxberry Challenges</h1><p>Full article text about challenge-platform research.</p></article></body></html>') === false);
+  check('I isBotChallenge exempts pages with schema.org NewsArticle / Article',
+    isBotChallenge('<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","headline":"Browser Verification"}</script></head><body><p>Article body</p></body></html>') === false);
+  check('I isThinContent flags thin text under 80 characters',
+    isThinContent('Please enable cookies to continue.') === true &&
+    isThinContent('A'.repeat(85)) === false);
+
+  // 2. Circuit breaker in engine
+  const seed = 'circuit-breaker-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const acquireCalls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    acquireCalls.push(url);
+    if (url.includes('blocked-host.example.org/item-1')) {
+      throw new Error('bot-challenge detected (Cloudflare/CAPTCHA challenge screen)');
+    }
+    if (url.includes('blocked-host.example.org/item-2')) {
+      throw new Error('should not be called due to circuit breaker');
+    }
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: 'https://blocked-host.example.org/item-1', title: `Survey item 1 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: 'https://blocked-host.example.org/item-2', title: `Survey item 2 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+      { url: 'https://good-host.example.org/item-3', title: `Survey item 3 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 3 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 3 }).run();
+  try {
+    const cand1 = final.candidates.find(c => c.url.includes('blocked-host.example.org/item-1'));
+    const cand2 = final.candidates.find(c => c.url.includes('blocked-host.example.org/item-2'));
+    const cand3 = final.candidates.find(c => c.url.includes('good-host.example.org/item-3'));
+
+    check('I item 1 was attempted and marked blocked with challenge error',
+      cand1 !== undefined && cand1.status === 'blocked' && /bot-challenge/i.test(cand1.error ?? ''),
+      `status=${cand1?.status} error=${cand1?.error}`);
+
+    check('I item 2 was skipped by circuit breaker without making an acquire call',
+      cand2 !== undefined && cand2.status === 'blocked' && /previously blocked/i.test(cand2.error ?? ''),
+      `status=${cand2?.status} error=${cand2?.error}`);
+
+    check('I good host item 3 was successfully fetched',
+      cand3 !== undefined && cand3.status === 'fetched',
+      `status=${cand3?.status} error=${cand3?.error}`);
+
+    check('I acquire was only called for item 1 and item 3',
+      acquireCalls.length === 2 &&
+      acquireCalls.some(u => u.includes('item-1')) &&
+      acquireCalls.some(u => u.includes('item-3')) &&
+      !acquireCalls.some(u => u.includes('item-2')),
+      `calls=${acquireCalls.join(', ')}`);
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -535,6 +601,7 @@ async function main(): Promise<void> {
   await caseFollowUpReserve(); await caseSmallLaneReserve(); await caseFollowUpCallReserve();
   await caseCompactReportPacket(); await caseReportPacketCitationBound();
   await caseCandidateFilteringAndDedup();
+  await caseBotChallengeAndCircuitBreaker();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

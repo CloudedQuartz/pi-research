@@ -252,6 +252,35 @@ export function shouldSkipCandidateUrl(rawUrl: string): { skip: boolean; reason?
   return { skip: false };
 }
 
+const CAPTCHA_SIGNATURES = [
+  'cf-challenge-running',
+  'challenge-platform',
+  'cf-browser-verification',
+  'captcha-delivery.com',
+  'px-captcha',
+  'distil_r_captcha',
+  'Attention Required! | Cloudflare',
+  '<title>Just a moment...</title>',
+  'Checking your browser before accessing',
+  'Enable JavaScript and cookies to continue',
+];
+
+/**
+ * Detects anti-bot CAPTCHA / challenge interception screens in HTML responses.
+ * Legitimate pages containing Schema.org article metadata or <article> tags are exempted.
+ */
+export function isBotChallenge(html: string): boolean {
+  if (!html || typeof html !== 'string') return false;
+  if (html.includes('schema.org') && (html.includes('Article') || html.includes('NewsArticle') || html.includes('BlogPosting') || html.includes('TechArticle'))) {
+    return false;
+  }
+  if (html.includes('<article') || html.includes('itemprop="articleBody"')) {
+    return false;
+  }
+  const sample = html.slice(0, 8000).toLowerCase();
+  return CAPTCHA_SIGNATURES.some(sig => sample.includes(sig.toLowerCase()));
+}
+
 // ---------------------------------------------------------------------------
 // URL and address policy
 // ---------------------------------------------------------------------------
@@ -670,10 +699,17 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
   }
 }
 
+export const MIN_ARTICLE_TEXT_LENGTH = 80;
+
+export function isThinContent(text: string): boolean {
+  return !text || text.trim().length < MIN_ARTICLE_TEXT_LENGTH;
+}
+
 async function extractHtml(html: string, services: Services, signal: AbortSignal): Promise<{ title: string; text: string }> {
   const result = await runWorker(services, { kind: 'html', html }, signal);
   const text = normalizeText(result.text ?? '');
   if (!text) throw new AcquisitionError('extraction', 'Readability produced empty text');
+  if (isThinContent(text)) throw new AcquisitionError('extraction', `Readability produced thin text (${text.length} chars)`);
   return { title: (result.title ?? '').slice(0, 1000), text };
 }
 
@@ -729,7 +765,11 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   let text: string;
   let pages: NonNullable<Snapshot['pages']> | undefined;
   if (media.kind === 'html') {
-    const extracted = await extractHtml(decodeText(response.body, media.charset), services, signal);
+    const rawHtml = decodeText(response.body, media.charset);
+    if (isBotChallenge(rawHtml)) {
+      throw new AcquisitionError('policy', 'bot-challenge detected (Cloudflare/CAPTCHA challenge screen)', finalUrl.href, response.status);
+    }
+    const extracted = await extractHtml(rawHtml, services, signal);
     title = extracted.title;
     text = extracted.text;
   } else if (media.kind === 'pdf') {

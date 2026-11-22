@@ -245,6 +245,8 @@ export class ResearchEngine {
   private indexCache?: PassageIndex;
   private actions = 0;
   private evalFailures = 0;
+  /** Hosts that returned 403, 429, bot challenge, or robots block; subsequent requests are circuit-broken. */
+  private blockedHosts = new Set<string>();
   /** True only for a `start` run: work-lane dispatches then hold the follow-up reserve. */
   private holdFollowUpReserve = false;
 
@@ -791,14 +793,22 @@ export class ResearchEngine {
       const norm = normalizeUrl(hit.url);
       if (knownUrls.has(norm)) continue;
       knownUrls.add(norm);
+      let isHostBlocked = false;
+      let host = '';
+      try {
+        host = new URL(hit.url).hostname.toLowerCase();
+        isHostBlocked = this.blockedHosts.has(host);
+      } catch { /* ignore */ }
       const skipCheck = shouldSkipCandidateUrl(hit.url);
+      const isBlocked = skipCheck.skip || isHostBlocked;
+      const blockReason = skipCheck.skip ? skipCheck.reason : `host ${host} previously blocked requests`;
       created.push({
         id: createHash('sha256').update(`${proposal.branchId}\0${query}\0${hit.url}`).digest('hex').slice(0, 32),
         branchId: proposal.branchId, query, url: hit.url, title: hit.title, snippet: hit.snippet,
         provider: result.provider, rankingKind: result.rankingKind, ...(hit.rank !== undefined ? { rank: hit.rank } : {}),
         discoveredAt: now(),
-        status: skipCheck.skip ? 'blocked' : 'unread',
-        ...(skipCheck.skip ? { error: `skipped: ${skipCheck.reason}` } : {}),
+        status: isBlocked ? 'blocked' : 'unread',
+        ...(isBlocked ? { error: `skipped: ${blockReason}` } : {}),
       });
     }
     this.commit(draft => {
@@ -820,7 +830,13 @@ export class ResearchEngine {
     const scored = created
       .filter(c => c.status === 'unread')
       .map(c => ({ candidate: c, relevance: hitRelevance(c) }))
-      .filter(entry => entry.relevance > 0);
+      .filter(entry => {
+        if (entry.relevance <= 0) return false;
+        try {
+          const h = new URL(entry.candidate.url).hostname.toLowerCase();
+          return !this.blockedHosts.has(h);
+        } catch { return true; }
+      });
     const eligible = scored
       .sort((a, b) => (b.relevance - a.relevance) ||
         ((a.candidate.rankingKind === 'ranked' ? a.candidate.rank ?? Infinity : Infinity) - (b.candidate.rankingKind === 'ranked' ? b.candidate.rank ?? Infinity : Infinity)) ||
@@ -871,6 +887,18 @@ export class ResearchEngine {
   /** One fetch attempt with its own reservation and checkpoint; never retried automatically. */
   private async fetchCandidate(candidate: SourceCandidate, options: { nextAction?: ProposedAction }): Promise<'fetched' | 'failed' | 'skipped'> {
     if (candidate.status !== 'unread') return 'skipped';
+    let host = '';
+    try { host = new URL(candidate.url).hostname.toLowerCase(); } catch { /* ignore */ }
+    if (host && this.blockedHosts.has(host)) {
+      this.commit(draft => {
+        const stored = draft.candidates.find(c => c.id === candidate.id);
+        if (stored) {
+          stored.status = 'blocked';
+          stored.error = `skipped: host ${host} previously blocked requests`;
+        }
+      });
+      return 'skipped';
+    }
     this.precheck({ fetches: 1 });
     this.assertGuard();
     const operationId = randomUUID();
@@ -912,13 +940,18 @@ export class ResearchEngine {
         throw error;
       }
       this.ledger.settle(operationId, { fetches: 1 }, { error: short(message(error)) });
-      const policy = /robots|policy|private|denied|redirect|invalid url/i.test(message(error));
-      this.finalizeAction(actionId, 'blocked', 0, message(error));
+      const errText = message(error);
+      const policy = /robots|policy|private|denied|redirect|invalid url|challenge/i.test(errText);
+      const hostBlock = /403|429|forbidden|too many requests|challenge|robots-denied/i.test(errText);
+      if (host && hostBlock) {
+        this.blockedHosts.add(host);
+      }
+      this.finalizeAction(actionId, 'blocked', 0, errText);
       this.commit(draft => {
         const stored = draft.candidates.find(c => c.id === candidate.id);
-        if (stored) { stored.status = policy ? 'blocked' : 'failed'; stored.error = short(message(error)); }
+        if (stored) { stored.status = policy ? 'blocked' : 'failed'; stored.error = short(errText); }
       });
-      this.progress(`Source attempt closed as ${policy ? 'blocked' : 'failed'}; not saturation: ${short(message(error))}`);
+      this.progress(`Source attempt closed as ${policy ? 'blocked' : 'failed'}; not saturation: ${short(errText)}`);
       return 'failed';
     }
     this.ledger.settle(operationId, { fetches: 1 });
