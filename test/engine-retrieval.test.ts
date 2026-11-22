@@ -46,9 +46,10 @@ async function main(): Promise<void> {
   const captured: unknown[] = [];
   let delegationError: unknown;
   const originalRank = PassageIndex.prototype.rank;
+  let ledger: Ledger | undefined;
   try {
     const store = new ObjectStore(root);
-    const ledger = new Ledger(join(root, 'ledger.sqlite'));
+    ledger = new Ledger(join(root, 'ledger.sqlite'));
     const allowanceId = ledger.authorize(
       { searches: 20, fetches: 20, http: 40, modelCalls: 20, modelTokens: 100_000, elapsedMs: 300_000 },
       { modelCalls: 5, modelTokens: 30_000 }, `auth-${randomUUID()}`);
@@ -139,6 +140,7 @@ async function main(): Promise<void> {
       delegationError instanceof Error ? delegationError.message : String(delegationError));
   } finally {
     PassageIndex.prototype.rank = originalRank;
+    try { ledger?.close(); } catch { /* closed */ }
     rmSync(root, { recursive: true, force: true });
   }
 

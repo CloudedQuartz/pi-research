@@ -139,6 +139,15 @@ const createFile = (path: string, bytes: Buffer): 'created' | 'exists' => {
     return 'created';
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return 'exists';
+    if (process.platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EPERM') {
+      try {
+        writeFileSync(path, bytes, { flag: 'wx' });
+        return 'created';
+      } catch (wxErr) {
+        if ((wxErr as NodeJS.ErrnoException).code === 'EEXIST') return 'exists';
+        throw new Error(`cannot write ${path}: ${message(wxErr)}`, { cause: wxErr });
+      }
+    }
     throw new Error(`cannot write ${path}: ${message(error)}`, { cause: error });
   } finally {
     try { rmSync(temp, { force: true }); } catch { /* best-effort temp cleanup */ }
