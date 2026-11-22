@@ -20,6 +20,7 @@ import type { EngineOptions } from '../src/engine.js';
 import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
+import { normalizeUrl, shouldSkipCandidateUrl } from '../src/acquisition.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
@@ -469,12 +470,71 @@ async function caseReportPacketCitationBound(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+async function caseCandidateFilteringAndDedup(): Promise<void> {
+  const url1 = 'https://Example.org:443/article/amp/?utm_source=twitter&fbclid=123#header';
+  const url2 = 'https://example.org/article';
+  const url3 = 'http://example.org:80/article?ref=homepage';
+  check('H normalizeUrl strips tracking parameters, ports, amp, trailing slash',
+    normalizeUrl(url1) === 'https://example.org/article' &&
+    normalizeUrl(url2) === 'https://example.org/article' &&
+    normalizeUrl(url3) === 'http://example.org/article');
+
+  check('H shouldSkipCandidateUrl flags non-article video/social/login and binary extensions',
+    shouldSkipCandidateUrl('https://www.youtube.com/watch?v=123').skip === true &&
+    shouldSkipCandidateUrl('https://twitter.com/user/status/123').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/path/login').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/image.png').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/paper.pdf').skip === false &&
+    shouldSkipCandidateUrl('https://example.org/research-article').skip === false);
+
+  const seed = 'filtering-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const fetchedUrls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    fetchedUrls.push(url);
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(seed));
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: `https://example.org/${seed}/article-a?utm_source=feed`, title: `Article A ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: `https://example.org/${seed}/article-a/`, title: `Article A duplicate ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+      { url: 'https://youtube.com/watch?v=quantumfoxberry', title: `Video on quantum foxberry ${seed}`, snippet: 'quantum foxberry video', rank: 3 },
+      { url: `https://example.org/${seed}/unrelated`, title: 'Cooking recipes and kitchen tips', snippet: 'baking cakes and bread recipes', rank: 4 },
+      { url: `https://example.org/${seed}/article-b`, title: `Article B survey methods ${seed}`, snippet: 'quantum foxberry taxonomy notes', rank: 5 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 3 }).run();
+  try {
+    const candidates = final.candidates;
+    const articleACands = candidates.filter(c => c.url.includes('article-a'));
+    check('H tracking-param duplicate is deduped to one candidate', articleACands.length === 1, `count=${articleACands.length}`);
+
+    const videoCand = candidates.find(c => c.url.includes('youtube.com'));
+    check('H non-article video candidate is marked blocked with reason',
+      videoCand !== undefined && videoCand.status === 'blocked' && /skipped: non-article/.test(videoCand.error ?? ''), `status=${videoCand?.status} error=${videoCand?.error}`);
+
+    const offTopicCand = candidates.find(c => c.url.includes('unrelated'));
+    check('H off-topic candidate with zero overlap was not fetched in this episode',
+      offTopicCand !== undefined && offTopicCand.status === 'unread', `status=${offTopicCand?.status}`);
+
+    check('H only relevant article candidates were fetched',
+      fetchedUrls.some(u => u.includes('article-a')) &&
+      fetchedUrls.some(u => u.includes('article-b')) &&
+      !fetchedUrls.some(u => u.includes('youtube') || u.includes('unrelated')),
+      `fetched=${fetchedUrls.join(', ')}`);
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
   await caseEpisodeFetchExhaustion();
   await caseFollowUpReserve(); await caseSmallLaneReserve(); await caseFollowUpCallReserve();
   await caseCompactReportPacket(); await caseReportPacketCitationBound();
+  await caseCandidateFilteringAndDedup();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

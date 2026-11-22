@@ -162,6 +162,97 @@ interface Services {
 }
 
 // ---------------------------------------------------------------------------
+// Candidate URL Normalization & Filtering
+// ---------------------------------------------------------------------------
+
+const TRACKING_PARAMS = new Set(['fbclid', 'gclid', 'mc_cid', 'ref', 'amp_js_v', 'amp']);
+
+const SKIP_DOMAINS = new Set([
+  'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+  'vimeo.com', 'tiktok.com', 'www.tiktok.com',
+  'instagram.com', 'www.instagram.com',
+  'twitter.com', 'x.com', 'facebook.com', 'www.facebook.com',
+  'spotify.com', 'open.spotify.com',
+]);
+
+const SKIP_PATH_PATTERNS = [
+  /\/login(\/|\?|$)/i,
+  /\/signin(\/|\?|$)/i,
+  /\/signup(\/|\?|$)/i,
+  /\/auth(\/|\?|$)/i,
+  /\/cart(\/|\?|$)/i,
+  /\/checkout(\/|\?|$)/i,
+  /\.(png|jpe?g|gif|svg|webp|ico|mp4|webm|mp3|wav|zip|tar|gz|7z|rar|exe|dmg|iso|bin)$/i,
+];
+
+/**
+ * Normalizes a URL for deduplication and canonical matching:
+ * - strips hash fragments
+ * - lowercases scheme and host
+ * - strips default ports (:80 for http, :443 for https)
+ * - drops tracking query parameters (utm_*, fbclid, gclid, etc.)
+ * - normalizes AMP paths and trailing slashes
+ */
+export function normalizeUrl(rawUrl: string): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return rawUrl.trim();
+  }
+  parsed.hash = '';
+  parsed.protocol = parsed.protocol.toLowerCase();
+  parsed.hostname = parsed.hostname.toLowerCase();
+
+  if ((parsed.protocol === 'http:' && parsed.port === '80') || (parsed.protocol === 'https:' && parsed.port === '443')) {
+    parsed.port = '';
+  }
+
+  // Filter tracking parameters
+  const keys = [...parsed.searchParams.keys()];
+  for (const key of keys) {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.startsWith('utm_') || TRACKING_PARAMS.has(lowerKey)) {
+      parsed.searchParams.delete(key);
+    }
+  }
+
+  // Resolve AMP paths and trailing slash
+  let pathname = parsed.pathname;
+  pathname = pathname.replace(/^\/amp(\/|$)/i, '/').replace(/\/amp\/?$/i, '');
+  if (pathname.length > 1 && pathname.endsWith('/')) {
+    pathname = pathname.slice(0, -1);
+  }
+  parsed.pathname = pathname;
+
+  return parsed.href;
+}
+
+/**
+ * Pre-fetch route filter for research candidates:
+ * Skips video/audio streaming, social feed walls, login paths, and binary media assets.
+ */
+export function shouldSkipCandidateUrl(rawUrl: string): { skip: boolean; reason?: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { skip: true, reason: 'malformed URL' };
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (SKIP_DOMAINS.has(host) || [...SKIP_DOMAINS].some(d => host.endsWith(`.${d}`))) {
+    return { skip: true, reason: `non-article domain: ${host}` };
+  }
+  for (const pattern of SKIP_PATH_PATTERNS) {
+    if (pattern.test(parsed.pathname)) {
+      return { skip: true, reason: `non-article route: ${parsed.pathname}` };
+    }
+  }
+  return { skip: false };
+}
+
+// ---------------------------------------------------------------------------
 // URL and address policy
 // ---------------------------------------------------------------------------
 

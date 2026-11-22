@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chooseAction, rankingQuery, retrievalKey, unmetMass } from './controller.js';
+import { normalizeUrl, shouldSkipCandidateUrl } from './acquisition.js';
+import { candidateRelevance, chooseAction, rankingQuery, retrievalKey, unmetMass } from './controller.js';
 import type { ProposedAction } from './controller.js';
 import { PassageIndex, concepts as deriveConcepts, mmr, segment } from './core-ir.js';
 import { validateInvestigation } from './object-store.js';
@@ -784,16 +785,20 @@ export class ResearchEngine {
     }
     this.ledger.settle(operationId, { searches: 1 });
 
-    const knownUrls = new Set(this.state.candidates.map(c => c.url));
+    const knownUrls = new Set(this.state.candidates.map(c => normalizeUrl(c.url)));
     const created: SourceCandidate[] = [];
     for (const hit of result.results) {
-      if (knownUrls.has(hit.url)) continue;
-      knownUrls.add(hit.url);
+      const norm = normalizeUrl(hit.url);
+      if (knownUrls.has(norm)) continue;
+      knownUrls.add(norm);
+      const skipCheck = shouldSkipCandidateUrl(hit.url);
       created.push({
         id: createHash('sha256').update(`${proposal.branchId}\0${query}\0${hit.url}`).digest('hex').slice(0, 32),
         branchId: proposal.branchId, query, url: hit.url, title: hit.title, snippet: hit.snippet,
         provider: result.provider, rankingKind: result.rankingKind, ...(hit.rank !== undefined ? { rank: hit.rank } : {}),
-        discoveredAt: now(), status: 'unread',
+        discoveredAt: now(),
+        status: skipCheck.skip ? 'blocked' : 'unread',
+        ...(skipCheck.skip ? { error: `skipped: ${skipCheck.reason}` } : {}),
       });
     }
     this.commit(draft => {
@@ -803,11 +808,24 @@ export class ResearchEngine {
     });
 
     // One query, then up to N eligible new sources, then evaluation — before rescheduling.
-    const eligible = created
+    // Candidates are scored by lexical overlap between their title/snippet and the branch anchor/needs.
+    // Off-topic candidates (zero title/snippet overlap) are excluded from the episode to prevent budget waste.
+    const branch = this.state.branches.find(b => b.id === proposal.branchId);
+    const hitRelevance = (c: SourceCandidate): number => {
+      if (!branch) return 0.5;
+      const anchor = terms(`${branch.anchor} ${branch.question} ${branch.aliases.join(' ')}`);
+      const meta = terms(`${c.title} ${c.snippet}`);
+      return overlap(anchor, meta);
+    };
+    const scored = created
       .filter(c => c.status === 'unread')
-      .sort((a, b) => (b.branchId === proposal.branchId ? 1 : 0) - (a.branchId === proposal.branchId ? 1 : 0) ||
-        ((a.rankingKind === 'ranked' ? a.rank ?? Infinity : Infinity) - (b.rankingKind === 'ranked' ? b.rank ?? Infinity : Infinity)) ||
-        a.discoveredAt.localeCompare(b.discoveredAt) || a.id.localeCompare(b.id))
+      .map(c => ({ candidate: c, relevance: hitRelevance(c) }))
+      .filter(entry => entry.relevance > 0);
+    const eligible = scored
+      .sort((a, b) => (b.relevance - a.relevance) ||
+        ((a.candidate.rankingKind === 'ranked' ? a.candidate.rank ?? Infinity : Infinity) - (b.candidate.rankingKind === 'ranked' ? b.candidate.rank ?? Infinity : Infinity)) ||
+        a.candidate.discoveredAt.localeCompare(b.candidate.discoveredAt) || a.candidate.id.localeCompare(b.candidate.id))
+      .map(entry => entry.candidate)
       .slice(0, this.options.maxFetchesPerEpisode);
     let attempts = 0;
     let ingested = 0;

@@ -51,7 +51,7 @@ export function nextQuery(branch: Branch, previousQueries: string[] = []): strin
   return variants.find(query => query.trim() && !attempted.has(normalize(query)));
 }
 
-function candidateRelevance(candidate: SourceCandidate, branch: Branch): number {
+export function candidateRelevance(candidate: SourceCandidate, branch: Branch): number {
   const anchor = terms(`${branch.anchor} ${branch.question} ${branch.aliases.join(' ')}`);
   const metadata = terms(`${candidate.title} ${candidate.snippet} ${candidate.query}`);
   const lexical = overlap(anchor, metadata);
