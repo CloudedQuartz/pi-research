@@ -1,0 +1,15 @@
+{
+  "label": "pi-research-2026-11-22T18-47-31-832Z",
+  "task": 17,
+  "total_0_100": 90.21,
+  "dims_0_100": {
+    "comprehensiveness": 87,
+    "insight": 93.25,
+    "instruction_following": 92.25,
+    "readability": 86.25
+  },
+  "parse": "json",
+  "finish": "stop",
+  "contaminated": true,
+  "stopReason": "The user requested synthesis after the current research turn."
+}
