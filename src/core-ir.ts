@@ -1604,8 +1604,8 @@ export class NaiveBayesCandidateClassifier {
 
   predict(text: string): CandidatePrediction {
     const words = keyTerms(text);
-    if (!words.length || (this.numOnTopicDocs === 0 && this.numOffTopicDocs === 0)) {
-      return { label: 'on-topic', score: 0.5, confidence: 0.5 };
+    if (!words.length || this.numOnTopicDocs === 0 || this.numOffTopicDocs === 0) {
+      return { label: 'on-topic', score: 0.5, confidence: 0 };
     }
 
     const V = Math.max(this.vocab.size, 1);

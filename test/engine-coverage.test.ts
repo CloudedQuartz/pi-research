@@ -21,9 +21,9 @@ import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
 import { isBotChallenge, isThinContent, normalizeUrl, parseArticleLinks, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
-import { classifyFailure, formatAcquisitionSummary, needCorroboration, renderProgressBar, renderProgressStatus, renderProgressWidget, sourceList, summarizeAcquisition } from '../src/views.js';
+import { classifyFailure, formatAcquisitionSummary, needCorroboration, renderProgressBar, renderProgressStatus, renderProgressWidget, researchMap, sourceList, summarizeAcquisition } from '../src/views.js';
 import { buildReport, statementCorroboration } from '../src/report.js';
-import { retrievalKey, unmetMass } from '../src/controller.js';
+import { candidateRelevance, chooseAction, retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
@@ -1053,6 +1053,79 @@ async function caseProgressAndUsageRendering(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+async function caseClusterPassagesAndNaiveBayesLive(): Promise<void> {
+  const f = makeFixture('cluster-nb', { ...LIMITS, searches: 5, fetches: 10 });
+  try {
+    f.state.passages = [
+      { id: 'p1', snapshotId: 's1', text: 'machine learning training serving skew pipelines and monitoring', start: 0, end: 60, duplicateGroup: 'g1' },
+      { id: 'p2', snapshotId: 's1', text: 'feature store logging consistency in production ml models', start: 61, end: 120, duplicateGroup: 'g2' },
+      { id: 'p3', snapshotId: 's2', text: 'optical character recognition image angle deskew sensor filters', start: 0, end: 60, duplicateGroup: 'g3' },
+      { id: 'p4', snapshotId: 's2', text: 'scanner photo perspective transform rotation angle deskew', start: 61, end: 120, duplicateGroup: 'g4' },
+    ];
+    const map = researchMap(f.state);
+    check('N researchMap renders semantic topic clusters',
+      map.includes('Semantic topic clusters (passage facets):') &&
+      map.includes('Cluster [') &&
+      map.includes('passage(s)'),
+      `map=${map}`);
+
+    // Test Naive Bayes candidate filtering in live chooseAction
+    f.state.feedback = [
+      { id: 'fb1', targetId: 'p3', kind: 'irrelevant', createdAt: new Date().toISOString() },
+      { id: 'fb2', targetId: 'p4', kind: 'irrelevant', createdAt: new Date().toISOString() },
+      { id: 'fb3', targetId: 'p1', kind: 'useful', createdAt: new Date().toISOString() },
+    ];
+    f.state.candidates = [
+      {
+        id: 'c-off',
+        branchId: f.state.branches[0]!.id,
+        url: 'https://example.com/deskew-scanner',
+        title: 'Scanner photo angle deskew filter',
+        snippet: 'How to correct image perspective and deskew scanned photos using optical character recognition',
+        query: 'deskew',
+        provider: 'exa',
+        rankingKind: 'ranked',
+        rank: 1,
+        status: 'unread',
+        discoveredAt: new Date().toISOString(),
+      },
+      {
+        id: 'c-on',
+        branchId: f.state.branches[0]!.id,
+        url: 'https://example.com/ml-serving-skew',
+        title: 'Quantum foxberry taxonomy survey methods in machine learning',
+        snippet: 'Production guide for detecting training serving skew and feature logging in machine learning',
+        query: 'quantum foxberry taxonomy',
+        provider: 'exa',
+        rankingKind: 'ranked',
+        rank: 1,
+        status: 'unread',
+        discoveredAt: new Date().toISOString(),
+      },
+    ];
+
+    const engine = engineFor(f.ctx, f.state);
+    // @ts-expect-error accessing private method for verification
+    const classifier = engine.buildCandidateClassifier();
+    const offPred = classifier.predict('Scanner photo angle deskew filter optical character recognition');
+    check('N candidate classifier identifies off-topic candidate from negative feedback',
+      offPred.label === 'off-topic' && offPred.confidence > 0.6,
+      `pred=${JSON.stringify(offPred)}`);
+
+    const onPred = classifier.predict(`${f.state.candidates[1]!.title} ${f.state.candidates[1]!.snippet}`);
+
+    // Settle retrievalKey and record initial query so chooseAction evaluates candidate fetch rather than unexplored search
+    f.state.branches[0]!.retrievalKey = retrievalKey(f.state, f.state.branches[0]!, false);
+    f.state.branches[0]!.queries = ['quantum foxberry taxonomy'];
+    const relOn = candidateRelevance(f.state.candidates[1]!, f.state.branches[0]!, classifier);
+    const relOff = candidateRelevance(f.state.candidates[0]!, f.state.branches[0]!, classifier);
+    const proposal = chooseAction(f.state, { mode: 'adaptive', expand: false }, classifier);
+    check('N chooseAction prunes off-topic candidate and selects on-topic candidate',
+      proposal?.kind === 'fetch' && proposal.candidateId === 'c-on',
+      `relOn=${relOn} relOff=${relOff} proposal=${JSON.stringify(proposal)}`);
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -1065,6 +1138,7 @@ async function main(): Promise<void> {
   await caseMetadataExtractionAndCanonicalDedup();
   await caseLinkHarvestingAndCorroboration();
   await caseProgressAndUsageRendering();
+  await caseClusterPassagesAndNaiveBayesLive();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { normalizeUrl, shouldSkipCandidateUrl } from './acquisition.js';
 import { candidateRelevance, chooseAction, rankingQuery, retrievalKey, unmetMass } from './controller.js';
 import type { ProposedAction } from './controller.js';
-import { PassageIndex, concepts as deriveConcepts, mmr, segment } from './core-ir.js';
+import { NaiveBayesCandidateClassifier, PassageIndex, concepts as deriveConcepts, mmr, segment } from './core-ir.js';
 import { validateInvestigation } from './object-store.js';
 import { ModelCallError } from './pi-model.js';
 import { buildReport, reportEvidence } from './report.js';
@@ -652,9 +652,35 @@ export class ResearchEngine {
 
   // ------------------------------------------------------------- controller loop
 
+  private buildCandidateClassifier(): NaiveBayesCandidateClassifier {
+    const classifier = new NaiveBayesCandidateClassifier();
+    const docs: { text: string; label: 'on-topic' | 'off-topic' }[] = [];
+
+    const objective = this.state.objectives.find(o => o.id === this.state.activeObjectiveId);
+    if (objective) {
+      docs.push({ text: `${objective.question} ${objective.constraints.join(' ')}`, label: 'on-topic' });
+    }
+    for (const b of this.state.branches) {
+      if (b.objectiveId === this.state.activeObjectiveId && b.status !== 'rejected') {
+        docs.push({ text: `${b.anchor} ${b.question} ${b.aliases.join(' ')}`, label: 'on-topic' });
+      }
+    }
+    for (const fb of this.state.feedback) {
+      const p = this.state.passages.find(pass => pass.id === fb.targetId);
+      if (p && (fb.kind === 'useful' || fb.kind === 'irrelevant')) {
+        docs.push({ text: p.text, label: fb.kind === 'useful' ? 'on-topic' : 'off-topic' });
+      }
+    }
+    if (docs.length) {
+      classifier.train(docs);
+    }
+    return classifier;
+  }
+
   private async workLoop(): Promise<void> {
     while (true) {
-      const proposal = chooseAction(this.state, { mode: this.options.mode, expand: this.options.expand });
+      const classifier = this.buildCandidateClassifier();
+      const proposal = chooseAction(this.state, { mode: this.options.mode, expand: this.options.expand }, classifier);
       if (!proposal) throw new StopRun(DEFAULT_STOP);
       if (this.actions >= this.options.maxActions) throw new StopRun(`Action limit of ${this.options.maxActions} reached; outstanding needs stay visible.`);
       if (proposal.kind === 'retrieve') await this.runRetrieve(proposal);

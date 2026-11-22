@@ -1,5 +1,6 @@
 import type { Action, Branch, Concept, Contribution, Investigation, Passage, ProgressInfo, SearchHit, Snapshot, SourceCandidate } from './types.js';
 import { normalizeUrl } from './acquisition.js';
+import { clusterPassages } from './core-ir.js';
 
 export type Inspection = Branch | Concept | SourceCandidate | Action | {
   passage: Passage;
@@ -73,6 +74,17 @@ export function researchMap(state: Investigation, snapshots: Snapshot[] = []): s
     if (b.nextAction) lines.push(`  Next: ${b.nextAction.kind} · utility ${b.nextAction.score.toFixed(4)} · ${b.nextAction.reason}`);
     for (const c of state.concepts.filter(c => c.branchId === b.id).slice(-6)) lines.push(`  Concept “${c.term}”: ${c.classification ?? 'pending'} · TF-IDF ${c.score.toFixed(4)} · ${c.decision ?? 'not yet classified'}`);
     lines.push('');
+  }
+  if (state.passages.length >= 2) {
+    const k = Math.min(4, Math.max(2, Math.floor(Math.sqrt(state.passages.length))));
+    const clusters = clusterPassages(state.passages, k);
+    if (clusters.length) {
+      lines.push('Semantic topic clusters (passage facets):');
+      for (const cl of clusters) {
+        lines.push(`  • Cluster [${cl.centroidTerms.join(' · ')}]: ${cl.passageIds.length} passage(s)`);
+      }
+      lines.push('');
+    }
   }
   if (state.stopReason) lines.push(`Stop reason: ${state.stopReason}`);
   return safeText(lines.join('\n'));
