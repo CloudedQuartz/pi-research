@@ -148,10 +148,11 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     `${[...newTexts].filter(t => !oldTexts.has(t)).length} statements added; ${[...oldTexts].filter(t => !newTexts.has(t)).length} previous statements removed or revised.`,
     `Corpus revision ${previous.corpusRevision} → ${state.corpusRevision}.`,
   ] : ['Initial report.'];
-  const footnotes = new Map<string, { p: Passage; s: Snapshot; span: Span }>();
+  const footnotes = new Map<string, { num: number; p: Passage; s: Snapshot; span: Span }>();
+  let footnoteSeq = 1;
   const lines = [`# ${md(objective.question)}`, '',
     `Objective: ${objective.id} · corpus revision: ${state.corpusRevision}`, '',
-    fallback ? '> Extractive evidence outline: model synthesis was unavailable or failed validation. Quotes are not an integrated answer.' : '> Citations resolve mechanically to source spans. Semantic support remains subject to review.', '',
+    fallback ? '> Extractive evidence outline: model synthesis was unavailable or failed validation. Quotes are extracted directly from verified evidence.' : '> Citations resolve mechanically to source spans. Semantic support remains subject to review.', '',
     ...(objective.constraints.length ? ['## Scope constraints', ...objective.constraints.map(c => `- ${md(c)}`), ''] : []),
   ];
   for (const section of sections) {
@@ -159,8 +160,12 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     for (const statement of section.statements) {
       const refs = statement.citations.map(span => {
         const key = `${span.passageId}-${span.start}-${span.end}`;
-        footnotes.set(key, { p: evidence.get(span.passageId)!, s: visible.get(evidence.get(span.passageId)!.snapshotId)!, span });
-        return `[^${key}]`;
+        let entry = footnotes.get(key);
+        if (!entry) {
+          entry = { num: footnoteSeq++, p: evidence.get(span.passageId)!, s: visible.get(evidence.get(span.passageId)!.snapshotId)!, span };
+          footnotes.set(key, entry);
+        }
+        return `[^${entry.num}]`;
       });
       lines.push(`${fallback ? '> ' : ''}${md(statement.text)} ${refs.join(' ')}`, '');
     }
@@ -175,7 +180,7 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
   if (statementSyndications.length > 0) {
     lines.push(`> Responsible IR note: ${statementSyndications.length} statement(s) cite syndicated or duplicate coverage. Duplicate copies are not independent corroboration.`, '');
   }
-  for (const [key, { p, s, span }] of footnotes) {
+  for (const [key, { num, p, s, span }] of footnotes) {
     let url: URL;
     try { url = new URL(s.finalUrl); }
     catch { throw new Error(`Invalid URL in source snapshot ${s.id}`); }
@@ -186,7 +191,7 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     let location = '';
     if (first && last) location = first.page === last.page ? `; page ${first.page}` : `; pages ${first.page}–${last.page}`;
     const datePart = s.publishedAt ? ` · published ${s.publishedAt.slice(0, 10)} (source-claimed)` : '';
-    lines.push(`[^${key}]: ${md(s.title || s.finalUrl)} — ${url.href.replace(/[<>\s]/g, c => encodeURIComponent(c))} — fetched ${s.fetchedAt}${datePart}; snapshot \`${s.id}\`; passage \`${p.id}\`; extracted-text offsets ${start}–${end}${location}.`, '');
+    lines.push(`[^${num}]: [${md(s.title || s.finalUrl)}](${url.href}) — fetched ${s.fetchedAt.slice(0, 10)}${datePart} (passage ${p.id.slice(0, 8)}… span ${start}–${end}${location})`, '');
   }
   return { id: randomUUID(), objectiveId: objective.id, corpusRevision: state.corpusRevision, createdAt: new Date().toISOString(), sections, unresolved, changes, markdown: lines.join('\n'), fallback };
 }
