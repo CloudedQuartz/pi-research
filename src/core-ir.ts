@@ -1560,3 +1560,78 @@ export function clusterPassages(
   }
   return clusters;
 }
+
+export interface CandidatePrediction {
+  label: 'on-topic' | 'off-topic';
+  score: number;
+  confidence: number;
+}
+
+/**
+ * Multinomial Naive Bayes text classifier with Laplace add-1 smoothing.
+ * Filters out off-topic candidate search results prior to HTTP fetch and LLM evaluation,
+ * directly protecting fetch budgets and model call allowances.
+ */
+export class NaiveBayesCandidateClassifier {
+  private onTopicTermCounts = new Map<string, number>();
+  private offTopicTermCounts = new Map<string, number>();
+  private totalOnTopicTerms = 0;
+  private totalOffTopicTerms = 0;
+  private numOnTopicDocs = 0;
+  private numOffTopicDocs = 0;
+  private vocab = new Set<string>();
+
+  train(documents: { text: string; label: 'on-topic' | 'off-topic' }[]): void {
+    for (const doc of documents) {
+      const words = keyTerms(doc.text);
+      if (doc.label === 'on-topic') {
+        this.numOnTopicDocs++;
+        for (const w of words) {
+          this.vocab.add(w);
+          this.onTopicTermCounts.set(w, (this.onTopicTermCounts.get(w) ?? 0) + 1);
+          this.totalOnTopicTerms++;
+        }
+      } else {
+        this.numOffTopicDocs++;
+        for (const w of words) {
+          this.vocab.add(w);
+          this.offTopicTermCounts.set(w, (this.offTopicTermCounts.get(w) ?? 0) + 1);
+          this.totalOffTopicTerms++;
+        }
+      }
+    }
+  }
+
+  predict(text: string): CandidatePrediction {
+    const words = keyTerms(text);
+    if (!words.length || (this.numOnTopicDocs === 0 && this.numOffTopicDocs === 0)) {
+      return { label: 'on-topic', score: 0.5, confidence: 0.5 };
+    }
+
+    const V = Math.max(this.vocab.size, 1);
+    const totalDocs = Math.max(1, this.numOnTopicDocs + this.numOffTopicDocs);
+    const priorOn = Math.log(Math.max(1, this.numOnTopicDocs) / (totalDocs + 1));
+    const priorOff = Math.log(Math.max(1, this.numOffTopicDocs) / (totalDocs + 1));
+
+    let logProbOn = priorOn;
+    let logProbOff = priorOff;
+
+    for (const w of words) {
+      const countOn = this.onTopicTermCounts.get(w) ?? 0;
+      const countOff = this.offTopicTermCounts.get(w) ?? 0;
+      logProbOn += Math.log((countOn + 1) / (this.totalOnTopicTerms + V));
+      logProbOff += Math.log((countOff + 1) / (this.totalOffTopicTerms + V));
+    }
+
+    const maxLog = Math.max(logProbOn, logProbOff);
+    const expOn = Math.exp(logProbOn - maxLog);
+    const expOff = Math.exp(logProbOff - maxLog);
+    const probOn = expOn / (expOn + expOff);
+
+    return {
+      label: probOn >= 0.5 ? 'on-topic' : 'off-topic',
+      score: probOn,
+      confidence: Math.abs(probOn - 0.5) * 2,
+    };
+  }
+}

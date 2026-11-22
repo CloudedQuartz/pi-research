@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { expandedQuery, rocchioQuery } from './core-ir.js';
+import { NaiveBayesCandidateClassifier, expandedQuery, rocchioQuery } from './core-ir.js';
 import type { ActionKind, Branch, Investigation, SourceCandidate } from './types.js';
 
 export interface ProposedAction {
@@ -57,7 +57,13 @@ export function nextQuery(branch: Branch, previousQueries: string[] = []): strin
   return variants.find(query => query.trim() && !attempted.has(normalize(query)));
 }
 
-export function candidateRelevance(candidate: SourceCandidate, branch: Branch): number {
+export function candidateRelevance(candidate: SourceCandidate, branch: Branch, classifier?: NaiveBayesCandidateClassifier): number {
+  if (classifier) {
+    const pred = classifier.predict(`${candidate.title} ${candidate.snippet}`);
+    if (pred.label === 'off-topic' && pred.confidence > 0.6) {
+      return 0; // Filtered out by pre-fetch Naive Bayes classifier
+    }
+  }
   const anchor = terms(`${branch.anchor} ${branch.question} ${branch.aliases.join(' ')}`);
   const metadata = terms(`${candidate.title} ${candidate.snippet} ${candidate.query}`);
   const lexical = overlap(anchor, metadata);
@@ -65,7 +71,7 @@ export function candidateRelevance(candidate: SourceCandidate, branch: Branch): 
 }
 
 /** Pure routing policy; dispatch, ownership, hard allowances and commits live elsewhere. */
-export function chooseAction(state: Investigation, options: ControllerOptions = {}): ProposedAction | undefined {
+export function chooseAction(state: Investigation, options: ControllerOptions = {}, classifier?: NaiveBayesCandidateClassifier): ProposedAction | undefined {
   const branches = state.branches.filter(b => b.objectiveId === state.activeObjectiveId &&
     (b.status === 'active' || b.status === 'cooldown') && b.priority > 0);
   if (!branches.length) return undefined;
@@ -90,7 +96,7 @@ export function chooseAction(state: Investigation, options: ControllerOptions = 
       reason: `Objective, corpus, grounded expansion or feedback changed; evaluate existing evidence before acquisition. ${explain('retrieve', 1)}`,
     });
     if (deficit <= 0) continue; // Changed-context reuse is allowed; addressed needs earn no extra acquisition.
-    const unread = state.candidates.filter(c => c.status === 'unread').map(c => ({ candidate: c, relevance: candidateRelevance(c, branch) })).filter(c => c.relevance > 0);
+    const unread = state.candidates.filter(c => c.status === 'unread').map(c => ({ candidate: c, relevance: candidateRelevance(c, branch, classifier) })).filter(c => c.relevance > 0);
     unread.sort((a, b) => b.relevance - a.relevance ||
       (a.candidate.rankingKind === 'ranked' && b.candidate.rankingKind === 'ranked' ? (a.candidate.rank ?? Infinity) - (b.candidate.rank ?? Infinity) : 0) ||
       a.candidate.id.localeCompare(b.candidate.id));

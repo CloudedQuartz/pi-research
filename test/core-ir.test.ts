@@ -8,7 +8,7 @@
  * Run: ./node_modules/.bin/tsx test/core-ir.test.ts   (exit 1 on any failed check)
  */
 import assert from 'node:assert/strict';
-import { PassageIndex, clusterPassages, expandedQuery, mmr, rocchioQuery, segment, stem, tokenize } from '../src/core-ir.js';
+import { NaiveBayesCandidateClassifier, PassageIndex, clusterPassages, expandedQuery, mmr, rocchioQuery, segment, stem, tokenize } from '../src/core-ir.js';
 import type { Concept, Passage, SearchHit, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
@@ -320,6 +320,24 @@ check('clusterPassages groups topical passages and extracts centroid labels', ()
   assert.ok(bioCluster.passageIds.includes('bio2'), 'both Bio passages are in the same cluster');
   assert.ok(mlCluster.centroidTerms.length > 0, 'ML centroid terms populated');
   assert.ok(bioCluster.centroidTerms.length > 0, 'Bio centroid terms populated');
+});
+
+check('NaiveBayesCandidateClassifier learns on-topic vs off-topic terms and predicts accurately', () => {
+  const nb = new NaiveBayesCandidateClassifier();
+  nb.train([
+    { text: 'training serving skew monitoring real time batch online features pipeline', label: 'on-topic' },
+    { text: 'feature store schema consistency machine learning pipeline latency', label: 'on-topic' },
+    { text: 'digital camera sensor optical character recognition image deskew scanner', label: 'off-topic' },
+    { text: 'opencv python image rotation angle detection ocr perspective transform', label: 'off-topic' },
+  ]);
+
+  const onTopicPred = nb.predict('Detecting training-serving skew in production feature stores');
+  assert.equal(onTopicPred.label, 'on-topic');
+  assert.ok(onTopicPred.score > 0.7, 'high probability for machine learning pipeline candidate');
+
+  const offTopicPred = nb.predict('Correcting document image skew angle with OpenCV OCR');
+  assert.equal(offTopicPred.label, 'off-topic');
+  assert.ok(offTopicPred.score < 0.3, 'low probability for image deskew candidate');
 });
 
 if (failures.length) {
