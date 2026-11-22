@@ -8,7 +8,7 @@
  * Run: ./node_modules/.bin/tsx test/core-ir.test.ts   (exit 1 on any failed check)
  */
 import assert from 'node:assert/strict';
-import { PassageIndex, expandedQuery, mmr, rocchioQuery, segment, stem, tokenize } from '../src/core-ir.js';
+import { PassageIndex, clusterPassages, expandedQuery, mmr, rocchioQuery, segment, stem, tokenize } from '../src/core-ir.js';
 import type { Concept, Passage, SearchHit, Snapshot } from '../src/types.js';
 
 const failures: string[] = [];
@@ -301,6 +301,25 @@ check('rocchio relevance feedback boosts relevant terms and subtracts irrelevant
   assert.equal(q['ocr'], undefined, 'negative feedback terms are penalized/omitted');
   const sum = Object.values(q).reduce((acc, w) => acc + w, 0);
   close(sum, 1.0, 'rocchio query weights are L1-normalized');
+});
+
+check('clusterPassages groups topical passages and extracts centroid labels', () => {
+  const passages = [
+    P('ml1', 's1', 'neural network training and gradient descent optimization methods'),
+    P('ml2', 's2', 'deep learning model training with stochastic gradient descent'),
+    P('bio1', 's3', 'molecular biology gene sequencing genome editing crispr'),
+    P('bio2', 's4', 'genetics genome sequence analysis in molecular biology organisms'),
+  ];
+  const clusters = clusterPassages(passages, 2);
+  assert.equal(clusters.length, 2, '2 distinct clusters formed');
+  // Check that ML passages grouped together and Bio passages grouped together
+  const mlCluster = clusters.find(c => c.passageIds.includes('ml1'))!;
+  const bioCluster = clusters.find(c => c.passageIds.includes('bio1'))!;
+  assert.notEqual(mlCluster.id, bioCluster.id, 'ML and Bio passages are in separate clusters');
+  assert.ok(mlCluster.passageIds.includes('ml2'), 'both ML passages are in the same cluster');
+  assert.ok(bioCluster.passageIds.includes('bio2'), 'both Bio passages are in the same cluster');
+  assert.ok(mlCluster.centroidTerms.length > 0, 'ML centroid terms populated');
+  assert.ok(bioCluster.centroidTerms.length > 0, 'Bio centroid terms populated');
 });
 
 if (failures.length) {

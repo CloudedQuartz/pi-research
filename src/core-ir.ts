@@ -1419,3 +1419,144 @@ export function rocchioQuery(
   }
   return result;
 }
+
+export interface PassageCluster {
+  id: string;
+  label: string;
+  centroidTerms: string[];
+  passageIds: string[];
+}
+
+/**
+ * Spherical k-means clustering over passage TF-IDF vectors (Manning et al., 2008).
+ * Labels each cluster with its top centroid terms to surface data-driven research facets.
+ */
+export function clusterPassages(
+  passages: Passage[],
+  k?: number,
+  maxIterations = 20,
+): PassageCluster[] {
+  if (!passages.length) return [];
+  const uniquePassages = [...new Map(passages.map(p => [p.id, p])).values()];
+  if (uniquePassages.length === 1) {
+    const stream = keyTerms(uniquePassages[0]!.text);
+    const topTerms = [...new Set(stream)].slice(0, 3);
+    return [{
+      id: 'cluster-1',
+      label: topTerms.join(' | ') || 'general',
+      centroidTerms: topTerms,
+      passageIds: [uniquePassages[0]!.id],
+    }];
+  }
+
+  const numClusters = Math.min(
+    uniquePassages.length,
+    Math.max(2, k ?? Math.min(6, Math.round(Math.sqrt(uniquePassages.length)))),
+  );
+
+  const corpusDf = new Map<string, number>();
+  const passageTokens = uniquePassages.map(p => keyTerms(p.text));
+  for (const stream of passageTokens) {
+    for (const term of new Set(stream)) {
+      corpusDf.set(term, (corpusDf.get(term) ?? 0) + 1);
+    }
+  }
+
+  const n = uniquePassages.length;
+  const vectors: Map<string, number>[] = passageTokens.map(stream => {
+    const tf = new Map<string, number>();
+    for (const t of stream) tf.set(t, (tf.get(t) ?? 0) + 1);
+    const vec = new Map<string, number>();
+    let sq = 0;
+    for (const [t, count] of tf) {
+      const df = corpusDf.get(t) ?? 1;
+      const weight = count * Math.log(1 + (n - df + 0.5) / (df + 0.5));
+      vec.set(t, weight);
+      sq += weight * weight;
+    }
+    const norm = Math.sqrt(sq) || 1;
+    for (const [t, w] of vec) vec.set(t, w / norm);
+    return vec;
+  });
+
+  const centroids: Map<string, number>[] = [];
+  centroids.push(new Map(vectors[0]!));
+
+  while (centroids.length < numClusters) {
+    let bestIdx = -1;
+    let maxDist = -1;
+    for (let i = 0; i < vectors.length; i++) {
+      const v = vectors[i]!;
+      let minSim = 1.0;
+      for (const c of centroids) {
+        const sim = cosine(v, c);
+        if (sim < minSim) minSim = sim;
+      }
+      const dist = 1 - minSim;
+      if (dist > maxDist) {
+        maxDist = dist;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) centroids.push(new Map(vectors[bestIdx]!));
+    else centroids.push(new Map(vectors[centroids.length]!));
+  }
+
+  let assignments = new Array<number>(uniquePassages.length).fill(0);
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    let changed = false;
+    for (let i = 0; i < vectors.length; i++) {
+      const v = vectors[i]!;
+      let bestSim = -1;
+      let bestCluster = 0;
+      for (let c = 0; c < numClusters; c++) {
+        const sim = cosine(v, centroids[c]!);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestCluster = c;
+        }
+      }
+      if (assignments[i] !== bestCluster) {
+        assignments[i] = bestCluster;
+        changed = true;
+      }
+    }
+    if (!changed && iter > 0) break;
+
+    for (let c = 0; c < numClusters; c++) {
+      const memberIndices = assignments.map((a, idx) => a === c ? idx : -1).filter(idx => idx >= 0);
+      if (!memberIndices.length) continue;
+      const sumVec = new Map<string, number>();
+      for (const idx of memberIndices) {
+        for (const [t, w] of vectors[idx]!) {
+          sumVec.set(t, (sumVec.get(t) ?? 0) + w);
+        }
+      }
+      let sq = 0;
+      for (const w of sumVec.values()) sq += w * w;
+      const norm = Math.sqrt(sq) || 1;
+      const newCentroid = new Map<string, number>();
+      for (const [t, w] of sumVec) newCentroid.set(t, w / norm);
+      centroids[c] = newCentroid;
+    }
+  }
+
+  const clusters: PassageCluster[] = [];
+  for (let c = 0; c < numClusters; c++) {
+    const memberPassages = uniquePassages.filter((_, idx) => assignments[idx] === c);
+    if (!memberPassages.length) continue;
+    const sortedTerms = [...centroids[c]!.entries()]
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+      .map(entry => entry[0]);
+    const topTerms = sortedTerms.slice(0, 3);
+    const label = topTerms.join(' | ') || `facet-${c + 1}`;
+    clusters.push({
+      id: `cluster-${c + 1}`,
+      label,
+      centroidTerms: topTerms,
+      passageIds: memberPassages.map(p => p.id),
+    });
+  }
+  return clusters;
+}
