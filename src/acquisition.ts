@@ -110,7 +110,7 @@ const MAX_REDIRECTS = 5;
  * clamping would crawl faster than the server asked for.
  */
 const MAX_CRAWL_DELAY_MS = 30_000;
-const EXTRACTION_VERSION = '1';
+const EXTRACTION_VERSION = '2';
 const DEFAULT_USER_AGENT = 'PiResearchBot/0.1 (academic course research assistant)';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -279,6 +279,88 @@ export function isBotChallenge(html: string): boolean {
   }
   const sample = html.slice(0, 8000).toLowerCase();
   return CAPTCHA_SIGNATURES.some(sig => sample.includes(sig.toLowerCase()));
+}
+
+export interface HtmlMetadata {
+  canonicalUrl?: string;
+  publishedAt?: string;
+  modifiedAt?: string;
+  jsonLdTitle?: string;
+  jsonLdBody?: string;
+}
+
+/**
+ * Extracts canonical URL, source-claimed publication/modified timestamps, and JSON-LD content.
+ */
+export function parseHtmlMetadata(html: string): HtmlMetadata {
+  const result: HtmlMetadata = {};
+  if (!html || typeof html !== 'string') return result;
+
+  // 1. Canonical link
+  const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i) ||
+    html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']canonical["']/i);
+  if (canonicalMatch && canonicalMatch[1]) {
+    result.canonicalUrl = canonicalMatch[1].trim();
+  }
+
+  // 2. OpenGraph URL fallback
+  if (!result.canonicalUrl) {
+    const ogUrlMatch = html.match(/<meta[^>]+(?:property|name)=["']og:url["'][^>]+content=["']([^"']+)["']/i) ||
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:url["']/i);
+    if (ogUrlMatch && ogUrlMatch[1]) {
+      result.canonicalUrl = ogUrlMatch[1].trim();
+    }
+  }
+
+  // 3. Published date from meta tags
+  const pubMetaMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:article:published_time|publication_date|date|og:published_time|dc\.date|sailthru\.date)["'][^>]+content=["']([^"']+)["']/i) ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:article:published_time|publication_date|date|og:published_time|dc\.date|sailthru\.date)["']/i);
+  if (pubMetaMatch && pubMetaMatch[1]) {
+    const val = pubMetaMatch[1].trim();
+    if (!isNaN(Date.parse(val))) result.publishedAt = new Date(val).toISOString();
+  }
+
+  // 4. Modified date from meta tags
+  const modMetaMatch = html.match(/<meta[^>]+(?:property|name)=["'](?:article:modified_time|og:updated_time|last-modified|dc\.date\.modified)["'][^>]+content=["']([^"']+)["']/i) ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:article:modified_time|og:updated_time|last-modified|dc\.date\.modified)["']/i);
+  if (modMetaMatch && modMetaMatch[1]) {
+    const val = modMetaMatch[1].trim();
+    if (!isNaN(Date.parse(val))) result.modifiedAt = new Date(val).toISOString();
+  }
+
+  // 5. JSON-LD structured data extraction
+  const jsonLdRegex = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = jsonLdRegex.exec(html)) !== null) {
+    try {
+      const raw = JSON.parse(match[1] || '');
+      const items = Array.isArray(raw) ? raw : (raw && Array.isArray(raw['@graph'])) ? raw['@graph'] : [raw];
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        const type = String(item['@type'] || '');
+        const isArticle = /Article|NewsArticle|BlogPosting|TechArticle|Report|WebPage/i.test(type);
+        if (!result.publishedAt && item.datePublished && !isNaN(Date.parse(String(item.datePublished)))) {
+          result.publishedAt = new Date(String(item.datePublished)).toISOString();
+        }
+        if (!result.modifiedAt && item.dateModified && !isNaN(Date.parse(String(item.dateModified)))) {
+          result.modifiedAt = new Date(String(item.dateModified)).toISOString();
+        }
+        if (isArticle) {
+          if (!result.jsonLdTitle && (item.headline || item.name)) {
+            result.jsonLdTitle = String(item.headline || item.name).trim();
+          }
+          if (!result.canonicalUrl && item.url && typeof item.url === 'string') {
+            result.canonicalUrl = item.url.trim();
+          }
+          if (!result.jsonLdBody && typeof item.articleBody === 'string' && item.articleBody.trim().length >= 80) {
+            result.jsonLdBody = item.articleBody.trim();
+          }
+        }
+      }
+    } catch { /* ignore malformed JSON-LD */ }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -618,7 +700,14 @@ function decodeText(body: Buffer, charset: string | undefined): string {
 // ---------------------------------------------------------------------------
 
 type WorkerJob = { kind: 'html'; html: string } | { kind: 'pdf'; bytes: Buffer };
-interface WorkerResult { text?: string; title?: string; pages?: string[]; }
+interface WorkerResult {
+  text?: string;
+  title?: string;
+  pages?: string[];
+  canonicalUrl?: string;
+  publishedAt?: string;
+  modifiedAt?: string;
+}
 
 /**
  * Runs as CommonJS inside `new Worker(source, { eval: true })`; packages are
@@ -635,14 +724,95 @@ const run = async () => {
   if (job.kind === 'html') {
     const { parseHTML } = req(workerData.packages.linkedom);
     const { Readability } = req(workerData.packages.readability);
-    const { document } = parseHTML(String(job.html));
+    const htmlStr = String(job.html);
+    const { document } = parseHTML(htmlStr);
     const documentTitle = String(document.title || '').trim();
+
+    // 1. Canonical URL from <link rel="canonical"> or OpenGraph
+    let canonicalUrl = '';
+    const canonicalLink = document.querySelector('link[rel="canonical"]');
+    if (canonicalLink) {
+      canonicalUrl = String(canonicalLink.getAttribute('href') || '').trim();
+    }
+    if (!canonicalUrl) {
+      const ogUrl = document.querySelector('meta[property="og:url"], meta[name="og:url"]');
+      if (ogUrl) canonicalUrl = String(ogUrl.getAttribute('content') || '').trim();
+    }
+
+    // 2. Publication and modified timestamps from meta tags
+    let publishedAt = '';
+    let modifiedAt = '';
+    const pubMeta = document.querySelector('meta[property="article:published_time"], meta[name="article:published_time"], meta[name="publication_date"], meta[name="date"], meta[property="og:published_time"], meta[name="dc.date"], meta[name="DC.date"], meta[name="sailthru.date"]');
+    if (pubMeta) {
+      const val = String(pubMeta.getAttribute('content') || '').trim();
+      if (val && !isNaN(Date.parse(val))) publishedAt = new Date(val).toISOString();
+    }
+    const modMeta = document.querySelector('meta[property="article:modified_time"], meta[name="article:modified_time"], meta[property="og:updated_time"], meta[name="last-modified"], meta[name="dc.date.modified"]');
+    if (modMeta) {
+      const val = String(modMeta.getAttribute('content') || '').trim();
+      if (val && !isNaN(Date.parse(val))) modifiedAt = new Date(val).toISOString();
+    }
+
+    // 3. Schema.org JSON-LD extraction
+    let jsonLdBody = '';
+    let jsonLdTitle = '';
+    let jsonLdCanonical = '';
+    try {
+      const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (const script of scripts) {
+        try {
+          const raw = JSON.parse(script.textContent || '');
+          const items = Array.isArray(raw) ? raw : (raw && Array.isArray(raw['@graph'])) ? raw['@graph'] : [raw];
+          for (const item of items) {
+            if (!item || typeof item !== 'object') continue;
+            const type = String(item['@type'] || '');
+            const isArticleType = /Article|NewsArticle|BlogPosting|TechArticle|Report|WebPage/i.test(type);
+            if (!publishedAt && item.datePublished && !isNaN(Date.parse(String(item.datePublished)))) {
+              publishedAt = new Date(String(item.datePublished)).toISOString();
+            }
+            if (!modifiedAt && item.dateModified && !isNaN(Date.parse(String(item.dateModified)))) {
+              modifiedAt = new Date(String(item.dateModified)).toISOString();
+            }
+            if (isArticleType) {
+              if (!jsonLdTitle && (item.headline || item.name)) {
+                jsonLdTitle = String(item.headline || item.name).trim();
+              }
+              if (!jsonLdCanonical && item.url && typeof item.url === 'string') {
+                jsonLdCanonical = item.url.trim();
+              }
+              if (!jsonLdBody && typeof item.articleBody === 'string' && item.articleBody.trim().length >= 80) {
+                jsonLdBody = item.articleBody.trim();
+              }
+            }
+          }
+        } catch { /* ignore malformed JSON-LD block */ }
+      }
+    } catch { /* ignore query errors */ }
+
+    if (!canonicalUrl && jsonLdCanonical) canonicalUrl = jsonLdCanonical;
+
+    // 4. Readability extraction with JSON-LD deterministic text fallback
     let article = null;
     try { article = new Readability(document).parse(); } catch (error) { article = null; }
-    if (!article || typeof article.textContent !== 'string' || !article.textContent.trim()) {
+    let text = (article && typeof article.textContent === 'string') ? String(article.textContent) : '';
+    let title = (article && String(article.title || '').trim()) || jsonLdTitle || documentTitle;
+
+    if (!text.trim() && jsonLdBody) {
+      text = jsonLdBody;
+    }
+
+    if (!text || !text.trim()) {
       return fail('Readability found no extractable article content');
     }
-    parentPort.postMessage({ ok: true, text: String(article.textContent), title: String(article.title || '').trim() || documentTitle });
+
+    parentPort.postMessage({
+      ok: true,
+      text,
+      title: title || documentTitle,
+      canonicalUrl: canonicalUrl || undefined,
+      publishedAt: publishedAt || undefined,
+      modifiedAt: modifiedAt || undefined,
+    });
     return;
   }
   if (job.kind === 'pdf') {
@@ -683,9 +853,25 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
       }, services.extractionTimeoutMs);
       signal.addEventListener('abort', onAbort, { once: true });
       worker.once('message', (raw: unknown) => finish(() => {
-        const result = raw as { ok?: boolean; error?: string; text?: string; title?: string; pages?: string[] };
+        const result = raw as {
+          ok?: boolean;
+          error?: string;
+          text?: string;
+          title?: string;
+          pages?: string[];
+          canonicalUrl?: string;
+          publishedAt?: string;
+          modifiedAt?: string;
+        };
         if (result && result.ok) {
-          resolve({ text: result.text ?? '', title: result.title ?? '', pages: Array.isArray(result.pages) ? result.pages : undefined });
+          resolve({
+            text: result.text ?? '',
+            title: result.title ?? '',
+            pages: Array.isArray(result.pages) ? result.pages : undefined,
+            canonicalUrl: result.canonicalUrl,
+            publishedAt: result.publishedAt,
+            modifiedAt: result.modifiedAt,
+          });
         } else {
           reject(new AcquisitionError('extraction', (result && result.error) || 'Extraction failed'));
         }
@@ -705,12 +891,24 @@ export function isThinContent(text: string): boolean {
   return !text || text.trim().length < MIN_ARTICLE_TEXT_LENGTH;
 }
 
-async function extractHtml(html: string, services: Services, signal: AbortSignal): Promise<{ title: string; text: string }> {
+async function extractHtml(html: string, services: Services, signal: AbortSignal): Promise<{
+  title: string;
+  text: string;
+  canonicalUrl?: string;
+  publishedAt?: string;
+  modifiedAt?: string;
+}> {
   const result = await runWorker(services, { kind: 'html', html }, signal);
   const text = normalizeText(result.text ?? '');
   if (!text) throw new AcquisitionError('extraction', 'Readability produced empty text');
   if (isThinContent(text)) throw new AcquisitionError('extraction', `Readability produced thin text (${text.length} chars)`);
-  return { title: (result.title ?? '').slice(0, 1000), text };
+  return {
+    title: (result.title ?? '').slice(0, 1000),
+    text,
+    canonicalUrl: result.canonicalUrl,
+    publishedAt: result.publishedAt,
+    modifiedAt: result.modifiedAt,
+  };
 }
 
 async function extractPdf(body: Buffer, services: Services, signal: AbortSignal): Promise<{ text: string; pages: NonNullable<Snapshot['pages']> }> {
@@ -764,6 +962,9 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   let title = '';
   let text: string;
   let pages: NonNullable<Snapshot['pages']> | undefined;
+  let canonicalUrl = finalUrl.href;
+  let publishedAt: string | undefined;
+  let modifiedAt: string | undefined;
   if (media.kind === 'html') {
     const rawHtml = decodeText(response.body, media.charset);
     if (isBotChallenge(rawHtml)) {
@@ -772,6 +973,17 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
     const extracted = await extractHtml(rawHtml, services, signal);
     title = extracted.title;
     text = extracted.text;
+    if (extracted.canonicalUrl) {
+      try {
+        const resolved = new URL(extracted.canonicalUrl, finalUrl);
+        if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+          resolved.hash = '';
+          canonicalUrl = resolved.href;
+        }
+      } catch { /* keep finalUrl.href */ }
+    }
+    publishedAt = extracted.publishedAt;
+    modifiedAt = extracted.modifiedAt;
   } else if (media.kind === 'pdf') {
     const extracted = await extractPdf(response.body, services, signal);
     text = extracted.text;
@@ -791,7 +1003,7 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   const identity = {
     requestedUrl: requested.href,
     finalUrl: finalUrlHref,
-    canonicalUrl: finalUrlHref,
+    canonicalUrl,
     fetchedAt,
     mime: media.mime,
     status: response.status,
@@ -800,7 +1012,17 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
     extraction,
     extractionVersion: EXTRACTION_VERSION,
   };
-  const snapshot: Snapshot = { id: sha256(JSON.stringify(identity)), ...identity, rawBlob, textBlob, title, text, ...(pages ? { pages } : {}) };
+  const snapshot: Snapshot = {
+    id: sha256(JSON.stringify(identity)),
+    ...identity,
+    rawBlob,
+    textBlob,
+    title,
+    text,
+    ...(pages ? { pages } : {}),
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(modifiedAt ? { modifiedAt } : {}),
+  };
   await services.store.saveSnapshot(snapshot);
   return snapshot;
 }

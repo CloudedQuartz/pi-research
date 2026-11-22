@@ -1,4 +1,5 @@
 import type { Action, Branch, Concept, Contribution, Investigation, Passage, SearchHit, Snapshot, SourceCandidate } from './types.js';
+import { normalizeUrl } from './acquisition.js';
 
 export type Inspection = Branch | Concept | SourceCandidate | Action | {
   passage: Passage;
@@ -38,7 +39,13 @@ export function sourceList(state: Investigation, snapshots: Snapshot[] = []): st
   }
   const warnings = [...hosts].filter(([, count]) => visible.length > 1 && count / visible.length > 0.6)
     .map(([host, count]) => `Source concentration: ${count}/${visible.length} acquired snapshot records are from ${host}. This is not credibility or factual confidence.`);
-  const sources = state.candidates.map(c => `${c.id} [${c.status}] ${c.title}\n  ${c.url}\n  ${c.provider} / ${c.rankingKind}${c.rank ? ` rank ${c.rank}` : ''} · query: ${c.query}${c.error ? `\n  ${c.error}` : ''}`).join('\n\n') || 'No discovered sources.';
+  const snapshotById = new Map(snapshots.map(s => [s.id, s]));
+  const sources = state.candidates.map(c => {
+    const snap = c.snapshotId ? snapshotById.get(c.snapshotId) : undefined;
+    const dateInfo = snap?.publishedAt ? ` · published: ${snap.publishedAt.slice(0, 10)} (source-claimed)` : '';
+    const canonicalInfo = (snap?.canonicalUrl && normalizeUrl(snap.canonicalUrl) !== normalizeUrl(c.url)) ? `\n  canonical: ${snap.canonicalUrl}` : '';
+    return `${c.id} [${c.status}] ${c.title}\n  ${c.url}${canonicalInfo}\n  ${c.provider} / ${c.rankingKind}${c.rank ? ` rank ${c.rank}` : ''} · query: ${c.query}${dateInfo}${c.error ? `\n  ${c.error}` : ''}`;
+  }).join('\n\n') || 'No discovered sources.';
   const summary = summarizeAcquisition(state, snapshots);
   const summaryText = formatAcquisitionSummary(summary);
   return safeText([...warnings, 'Discovery metadata is not original evidence; snapshot/domain counts are not confidence.', '', sources, '', summaryText].join('\n'));

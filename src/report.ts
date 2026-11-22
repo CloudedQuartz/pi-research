@@ -136,7 +136,8 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
     const last = s.pages?.find(page => page.start <= end - 1 && end - 1 < page.end);
     let location = '';
     if (first && last) location = first.page === last.page ? `; page ${first.page}` : `; pages ${first.page}–${last.page}`;
-    lines.push(`[^${key}]: ${md(s.title || s.finalUrl)} — ${url.href.replace(/[<>\s]/g, c => encodeURIComponent(c))} — fetched ${s.fetchedAt}; snapshot \`${s.id}\`; passage \`${p.id}\`; extracted-text offsets ${start}–${end}${location}.`, '');
+    const datePart = s.publishedAt ? ` · published ${s.publishedAt.slice(0, 10)} (source-claimed)` : '';
+    lines.push(`[^${key}]: ${md(s.title || s.finalUrl)} — ${url.href.replace(/[<>\s]/g, c => encodeURIComponent(c))} — fetched ${s.fetchedAt}${datePart}; snapshot \`${s.id}\`; passage \`${p.id}\`; extracted-text offsets ${start}–${end}${location}.`, '');
   }
   return { id: randomUUID(), objectiveId: objective.id, corpusRevision: state.corpusRevision, createdAt: new Date().toISOString(), sections, unresolved, changes, markdown: lines.join('\n'), fallback };
 }

@@ -20,8 +20,9 @@ import type { EngineOptions } from '../src/engine.js';
 import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
-import { isBotChallenge, isThinContent, normalizeUrl, shouldSkipCandidateUrl } from '../src/acquisition.js';
+import { isBotChallenge, isThinContent, normalizeUrl, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
 import { classifyFailure, formatAcquisitionSummary, sourceList, summarizeAcquisition } from '../src/views.js';
+import { buildReport } from '../src/report.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
@@ -675,6 +676,161 @@ async function caseAcquisitionSummaryView(): Promise<void> {
     renderedList.indexOf('Page 1') < renderedList.indexOf('=== Acquisition Summary ==='));
 }
 
+async function caseMetadataExtractionAndCanonicalDedup(): Promise<void> {
+  // 1. parseHtmlMetadata
+  const htmlWithMeta = `<html><head>
+    <link rel="canonical" href="https://example.org/canonical-paper">
+    <meta property="article:published_time" content="2025-11-20T10:00:00Z">
+    <meta property="article:modified_time" content="2025-11-21T12:00:00Z">
+  </head><body><p>Some article text</p></body></html>`;
+  const metaResult = parseHtmlMetadata(htmlWithMeta);
+  check('K parseHtmlMetadata extracts canonical link and meta timestamps',
+    metaResult.canonicalUrl === 'https://example.org/canonical-paper' &&
+    metaResult.publishedAt === '2025-11-20T10:00:00.000Z' &&
+    metaResult.modifiedAt === '2025-11-21T12:00:00.000Z',
+    `meta=${JSON.stringify(metaResult)}`);
+
+  const dummyBody = 'Quantum foxberry taxonomy analysis '.repeat(10);
+  const htmlWithJsonLd = `<html><head>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "Quantum Computing Survey",
+      "url": "https://example.org/qc-survey",
+      "datePublished": "2025-10-15T08:30:00Z",
+      "articleBody": "${dummyBody}"
+    }
+    </script>
+  </head><body></body></html>`;
+  const jsonLdResult = parseHtmlMetadata(htmlWithJsonLd);
+  check('K parseHtmlMetadata extracts JSON-LD metadata and articleBody fallback',
+    jsonLdResult.jsonLdTitle === 'Quantum Computing Survey' &&
+    jsonLdResult.canonicalUrl === 'https://example.org/qc-survey' &&
+    jsonLdResult.publishedAt === '2025-10-15T08:30:00.000Z' &&
+    (jsonLdResult.jsonLdBody?.length ?? 0) >= 80,
+    `jsonLd=${JSON.stringify(jsonLdResult)}`);
+
+  // 2. object-store validation of publishedAt & modifiedAt
+  const tempDir = mkdtempSync(join(tmpdir(), 'obj-meta-test-'));
+  try {
+    const store = new ObjectStore(tempDir);
+    const bodyText = 'Sample article body text for object store metadata validation testing.';
+    const rawBlob = store.put(`<html><body><p>${bodyText}</p></body></html>`);
+    const textBlob = store.put(bodyText);
+    const snap: Snapshot = {
+      id: rawBlob,
+      requestedUrl: 'https://example.org/req',
+      finalUrl: 'https://example.org/final',
+      canonicalUrl: 'https://example.org/canonical',
+      fetchedAt: new Date().toISOString(),
+      contentHash: rawBlob,
+      textHash: textBlob,
+      rawBlob,
+      textBlob,
+      mime: 'text/html',
+      status: 200,
+      title: 'Title',
+      extraction: 'readability',
+      extractionVersion: '2',
+      text: bodyText,
+      publishedAt: '2025-11-20T10:00:00.000Z',
+      modifiedAt: '2025-11-21T12:00:00.000Z',
+    };
+    store.saveSnapshot(snap);
+    const loaded = store.loadSnapshot(snap.id);
+    check('K object store persists and validates publishedAt and modifiedAt',
+      loaded.publishedAt === '2025-11-20T10:00:00.000Z' &&
+      loaded.modifiedAt === '2025-11-21T12:00:00.000Z',
+      `publishedAt=${loaded.publishedAt} modifiedAt=${loaded.modifiedAt}`);
+
+    let caughtInvalid = false;
+    try {
+      store.saveSnapshot({ ...snap, id: textBlob, contentHash: textBlob, rawBlob: textBlob, publishedAt: 'invalid-date' });
+    } catch { caughtInvalid = true; }
+    check('K object store rejects unparseable publishedAt timestamp', caughtInvalid === true);
+  } finally {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  // 3. sourceList and buildReport citations show source-claimed date
+  const snapForView: Snapshot = {
+    id: 'snap-meta-1',
+    requestedUrl: 'https://example.org/page?ref=feed',
+    finalUrl: 'https://example.org/page',
+    canonicalUrl: 'https://example.org/canonical-page',
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    contentHash: 'hash1',
+    textHash: 'hash2',
+    rawBlob: 'hash1',
+    textBlob: 'hash2',
+    mime: 'text/html',
+    status: 200,
+    title: 'Quantum Survey',
+    extraction: 'readability',
+    extractionVersion: '2',
+    text: 'Quantum foxberry survey findings and taxonomy details for investigation report.',
+    publishedAt: '2025-11-20T10:00:00.000Z',
+  };
+  const testState: Investigation = {
+    schema: 1, id: 'inv-meta', revisionId: 'r1', originalQuestion: 'What are survey findings?',
+    activeObjectiveId: 'obj-1', storageRoot: '', allowanceId: '',
+    objectives: [{ id: 'obj-1', input: 'What are survey findings?', question: 'What are survey findings?', constraints: [], createdAt: '2026-01-01' }],
+    branches: [{
+      id: 'b1', objectiveId: 'obj-1', question: 'What are survey findings?', anchor: 'survey',
+      origin: 'initial', introducing: [], priority: 1, status: 'active',
+      needs: [{ id: 'n1', question: 'findings', weight: 1, status: 1 }],
+      aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+    }],
+    passages: [{ id: 'p1', snapshotId: 'snap-meta-1', start: 0, end: snapForView.text.length, text: snapForView.text, duplicateGroup: 'g1' }],
+    concepts: [],
+    contributions: [{ objectiveId: 'obj-1', branchId: 'b1', needId: 'n1', passageId: 'p1', duplicateGroup: 'g1', role: 'support', assessment: 'support' }],
+    actions: [], feedback: [], reports: [], corpusRevision: 1, status: 'complete',
+    snapshotIds: ['snap-meta-1'],
+    candidates: [{
+      id: 'cand-1', branchId: 'b1', query: 'survey', url: 'https://example.org/page?ref=feed',
+      title: 'Quantum Survey', snippet: 'survey', provider: 'brave', rankingKind: 'ranked',
+      discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-meta-1',
+    }],
+  };
+  const renderedSources = sourceList(testState, [snapForView]);
+  check('K sourceList displays source-claimed published date and canonical URL',
+    renderedSources.includes('published: 2025-11-20 (source-claimed)') &&
+    renderedSources.includes('canonical: https://example.org/canonical-page'),
+    renderedSources);
+
+  const report = buildReport(testState, [snapForView]);
+  check('K report footnote includes source-claimed published date',
+    report.markdown.includes('published 2025-11-20 (source-claimed)'),
+    report.markdown);
+
+  // 4. Canonical URL deduplication across search episodes in engine
+  const seed = 'canonical-dedup-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const acquiredUrls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    acquiredUrls.push(url);
+    const snap = fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
+    return { ...snap, canonicalUrl: `https://example.org/${seed}/canonical-destination` };
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: `https://example.org/${seed}/alias-source`, title: `Alias Source ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: `https://example.org/${seed}/canonical-destination`, title: `Canonical Source ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 2 }).run();
+  try {
+    check('K alias source was acquired first',
+      acquiredUrls.includes(`https://example.org/${seed}/alias-source`));
+    const aliasCand = final.candidates.find(c => c.url.includes('alias-source'));
+    check('K alias source candidate is fetched', aliasCand?.status === 'fetched');
+  } finally { retire(f.ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -684,6 +840,7 @@ async function main(): Promise<void> {
   await caseCandidateFilteringAndDedup();
   await caseBotChallengeAndCircuitBreaker();
   await caseAcquisitionSummaryView();
+  await caseMetadataExtractionAndCanonicalDedup();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

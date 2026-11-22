@@ -247,6 +247,8 @@ export class ResearchEngine {
   private evalFailures = 0;
   /** Hosts that returned 403, 429, bot challenge, or robots block; subsequent requests are circuit-broken. */
   private blockedHosts = new Set<string>();
+  /** Canonical and final URLs of acquired snapshots, used to deduplicate discovery hits. */
+  private knownCanonicalUrls = new Set<string>();
   /** True only for a `start` run: work-lane dispatches then hold the follow-up reserve. */
   private holdFollowUpReserve = false;
 
@@ -787,7 +789,7 @@ export class ResearchEngine {
     }
     this.ledger.settle(operationId, { searches: 1 });
 
-    const knownUrls = new Set(this.state.candidates.map(c => normalizeUrl(c.url)));
+    const knownUrls = new Set([...this.state.candidates.map(c => normalizeUrl(c.url)), ...this.knownCanonicalUrls]);
     const created: SourceCandidate[] = [];
     for (const hit of result.results) {
       const norm = normalizeUrl(hit.url);
@@ -971,6 +973,9 @@ export class ResearchEngine {
       });
       return 'failed';
     }
+
+    if (snapshot.canonicalUrl) this.knownCanonicalUrls.add(normalizeUrl(snapshot.canonicalUrl));
+    if (snapshot.finalUrl) this.knownCanonicalUrls.add(normalizeUrl(snapshot.finalUrl));
 
     try {
       this.commit(draft => {

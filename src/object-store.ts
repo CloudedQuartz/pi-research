@@ -410,6 +410,8 @@ const snapshotRecord = (raw: unknown, path: string): Snapshot => {
     text,
   };
   if (pages !== undefined) result.pages = pages;
+  if (v.publishedAt !== undefined) result.publishedAt = time(v.publishedAt, `${path}.publishedAt`);
+  if (v.modifiedAt !== undefined) result.modifiedAt = time(v.modifiedAt, `${path}.modifiedAt`);
   return result;
 };
 

@@ -28,6 +28,8 @@ export interface Snapshot {
   fetchedAt: string; contentHash: string; textHash: string; rawBlob: string; textBlob: string;
   mime: string; status: number; title: string; extraction: string; extractionVersion: string;
   text: string; pages?: { page: number; start: number; end: number }[];
+  publishedAt?: string;
+  modifiedAt?: string;
 }
 export interface Passage {
   id: string; snapshotId: string; start: number; end: number; text: string;
