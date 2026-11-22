@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { PassageIndex } from '../src/core-ir.js';
-import { METHODS, evaluate, metrics, parseDataset } from '../scripts/evaluate.js';
+import { METHODS, evaluate, metrics, pairedTTest, parseDataset, sweepBM25 } from '../scripts/evaluate.js';
 import type { Passage } from '../src/types.js';
 
 const failures: string[] = [];
@@ -144,6 +144,54 @@ check('empty qrels and hostile qrel keys are preserved and scored', () => {
   assert.equal(specialHits.length, 2, 'both special-id hits rank');
   const ungraded = metrics(specialHits, { [parsed.passages[0]!.id]: 1 });
   assert.ok([ungraded.p5, ungraded.p10, ungraded.ndcg10, ungraded.pooledRecall10].every(value => value === 0) && Number.isFinite(ungraded.redundancy10), 'unjudged inherited-name IDs score finite zero even with a positive ideal DCG');
+});
+
+check('MAP, R-Precision, BPref, and 11-point PR curve calculation', () => {
+  const index = new PassageIndex();
+  const ds = parseDataset(near());
+  index.add(ds.passages);
+  const hits = index.rank('neural retrieval baseline', 10);
+  // hits[0] is n1, hits[1] is n2. Judgments: { n1: 1, n2: 3, n3: 0 }. Positives = 2, Negatives = 1.
+  const m = metrics(hits, { n1: 1, n2: 3, n3: 0 });
+  // At rank 1 (n1): P@1 = 1/1 = 1. At rank 2 (n2): P@2 = 2/2 = 1. MAP = (1 + 1)/2 = 1.0.
+  close(m.map, 1.0, 'MAP for perfect top-2 ranking');
+  // R = 2. In top 2, both are relevant. R-Prec = 2/2 = 1.0.
+  close(m.rPrec, 1.0, 'R-Precision for perfect top-2 ranking');
+  // BPref: n1 has 0 non-relevant above it. n2 has 0 non-relevant above it. bpref = (1 + 1)/2 = 1.0.
+  close(m.bpref, 1.0, 'BPref with no non-relevant documents preceding relevant');
+  // 11-point interpolated precision:
+  assert.equal(m.interpolatedPR.length, 11, '11 points on PR curve');
+  assert.equal(m.interpolatedPR[0], 1.0, 'P@recall 0.0 is 1.0');
+  assert.equal(m.interpolatedPR[10], 1.0, 'P@recall 1.0 is 1.0');
+});
+
+check('paired t-test calculates t-statistic and significance', () => {
+  // Method A strictly higher than Method B
+  const sampleA = [0.45, 0.50, 0.48, 0.52, 0.49, 0.55];
+  const sampleB = [0.35, 0.38, 0.36, 0.40, 0.37, 0.41];
+  const test = pairedTTest(sampleA, sampleB, 'methodA', 'methodB', 'ndcg10');
+  assert.equal(test.n, 6);
+  assert.ok(test.meanDiff > 0, 'mean difference is positive');
+  assert.ok(test.tStatistic > 5, 't-statistic is strongly positive');
+  assert.ok(test.pValue < 0.001, 'p-value is highly significant');
+  assert.equal(test.significantAt05, true);
+  assert.equal(test.significantAt01, true);
+
+  // Equal samples
+  const equalTest = pairedTTest(sampleA, sampleA, 'methodA', 'methodA', 'ndcg10');
+  assert.equal(equalTest.meanDiff, 0);
+  assert.equal(equalTest.pValue, 1.0);
+  assert.equal(equalTest.significantAt05, false);
+});
+
+check('BM25 parameter sweep evaluates grid combinations', () => {
+  const ds = parseDataset(near());
+  const gridResults = sweepBM25(ds, { k1: [1.2], b: [0.75] });
+  assert.equal(gridResults.length, 1);
+  assert.equal(gridResults[0]!.k1, 1.2);
+  assert.equal(gridResults[0]!.b, 0.75);
+  assert.ok(gridResults[0]!.ndcg10 > 0, 'nDCG@10 is computed');
+  assert.ok(gridResults[0]!.map > 0, 'MAP is computed');
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join('; ')}` : '\nall cases passed');

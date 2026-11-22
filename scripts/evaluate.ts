@@ -28,7 +28,15 @@ export type Grade = 0 | 1 | 2 | 3;
 export interface JudgedQuery { id: string; text: string; judgments: Record<string, Grade>; }
 export interface Dataset { passages: Passage[]; queries: JudgedQuery[]; }
 export interface Metrics {
-  p5: number; p10: number; ndcg10: number; pooledRecall10: number; redundancy10: number;
+  p5: number;
+  p10: number;
+  ndcg10: number;
+  pooledRecall10: number;
+  redundancy10: number;
+  map: number;
+  rPrec: number;
+  bpref: number;
+  interpolatedPR: number[];
 }
 export type Method = 'bm25' | 'bm25stem' | 'ql' | 'sdm' | 'lexicalPRF' | 'prfMMR';
 export const METHODS: readonly Method[] = ['bm25', 'bm25stem', 'ql', 'sdm', 'lexicalPRF', 'prfMMR'];
@@ -94,13 +102,71 @@ export function metrics(hits: SearchHit[], judgments: Record<string, number>): M
     grades.reduce((sum, value, index) => sum + (2 ** value - 1) / Math.log2(index + 2), 0);
   const ideal = gain(Object.values(judgments).sort((a, b) => b - a).slice(0, 10));
   const positives = Object.values(judgments).filter(value => value > 0).length;
+  const negatives = Object.values(judgments).filter(value => value === 0).length;
   const groups = new Set(top.map(hit => hit.passage.duplicateGroup || hit.passage.id));
+
+  // Mean Average Precision (MAP) at all recall cutoffs
+  let relCount = 0;
+  let apSum = 0;
+  for (let i = 0; i < hits.length; i++) {
+    if (relevant(hits[i]!)) {
+      relCount++;
+      apSum += relCount / (i + 1);
+    }
+  }
+  const map = positives > 0 ? apSum / positives : 0;
+
+  // R-Precision (precision at rank R, where R is total relevant documents)
+  const topR = hits.slice(0, positives);
+  const rPrec = positives > 0 ? topR.filter(relevant).length / positives : 0;
+
+  // BPref (Binary Preference: Buckley & Voorhees, 2004 - robust to incomplete judgments)
+  let nonrelAbove = 0;
+  let bprefSum = 0;
+  const denom = Math.min(positives, Math.max(negatives, 1));
+  for (const hit of hits) {
+    if (!Object.hasOwn(judgments, hit.passage.id)) continue;
+    const g = judgments[hit.passage.id] ?? 0;
+    if (g > 0) {
+      bprefSum += (1 - Math.min(nonrelAbove, positives) / denom);
+    } else {
+      nonrelAbove++;
+    }
+  }
+  const bpref = positives > 0 ? Math.max(0, bprefSum / positives) : 0;
+
+  // 11-point interpolated Precision-Recall curve
+  const prPoints: { recall: number; precision: number }[] = [];
+  let seenRel = 0;
+  for (let i = 0; i < hits.length; i++) {
+    if (relevant(hits[i]!)) {
+      seenRel++;
+      prPoints.push({
+        recall: positives > 0 ? seenRel / positives : 0,
+        precision: seenRel / (i + 1),
+      });
+    }
+  }
+  const interpolatedPR: number[] = [];
+  for (let step = 0; step <= 10; step++) {
+    const targetRecall = step / 10;
+    let maxP = 0;
+    for (const pt of prPoints) {
+      if (pt.recall >= targetRecall && pt.precision > maxP) maxP = pt.precision;
+    }
+    interpolatedPR.push(maxP);
+  }
+
   return {
     p5: hits.slice(0, 5).filter(relevant).length / 5,
     p10: top.filter(relevant).length / 10,
     ndcg10: ideal > 0 ? gain(top.map(grade)) / ideal : 0,
     pooledRecall10: positives > 0 ? top.filter(relevant).length / positives : 0,
     redundancy10: top.length > 0 ? 1 - groups.size / top.length : 0,
+    map,
+    rPrec,
+    bpref,
+    interpolatedPR,
   };
 }
 
@@ -156,18 +222,36 @@ export function evaluate(dataset: Dataset) {
   const macro = {} as Record<Method, Metrics>;
   for (const method of METHODS) {
     const rows = perQuery.map(query => query.metrics[method]);
+    const avgPR = Array.from({ length: 11 }, (_, idx) =>
+      mean(rows.map(row => row.interpolatedPR[idx] ?? 0))
+    );
     macro[method] = {
       p5: mean(rows.map(row => row.p5)),
       p10: mean(rows.map(row => row.p10)),
       ndcg10: mean(rows.map(row => row.ndcg10)),
       pooledRecall10: mean(rows.map(row => row.pooledRecall10)),
       redundancy10: mean(rows.map(row => row.redundancy10)),
+      map: mean(rows.map(row => row.map)),
+      rPrec: mean(rows.map(row => row.rPrec)),
+      bpref: mean(rows.map(row => row.bpref)),
+      interpolatedPR: avgPR,
     };
   }
+  const significance = {
+    bm25stemVsBm25: perQuery.length >= 2
+      ? pairedTTest(
+          perQuery.map(q => q.metrics.bm25stem.ndcg10),
+          perQuery.map(q => q.metrics.bm25.ndcg10),
+          'bm25stem',
+          'bm25',
+          'ndcg10',
+        )
+      : undefined,
+  };
   return {
     scope: {
-      corpus: 'one frozen index shared by all three methods; every query is judged over the same pool',
-      unjudged: 'passages without a human grade count as zero relevance',
+      corpus: 'one frozen index shared by all methods; every query is judged over the same pool',
+      unjudged: 'passages without a human grade count as zero relevance (except BPref which evaluates only judged documents)',
       recall: 'pooledRecall10 is relative to the human-judged pool, not recall over the web',
       lexicalPRF: 'anchored corpus-derived lexical feedback, not the live contextual model assessment',
       excluded: 'this ablation does not evaluate research policy, allocation, conversation or report quality',
@@ -182,7 +266,133 @@ export function evaluate(dataset: Dataset) {
     },
     perQuery,
     macro,
+    significance,
   };
+}
+
+/** Approximate two-tailed p-value for Student's t-distribution with df degrees of freedom. */
+export function studentTTwoTailedP(t: number, df: number): number {
+  if (df <= 0 || !Number.isFinite(t)) return 1.0;
+  const absT = Math.abs(t);
+  if (absT === 0) return 1.0;
+  const a = df / 2;
+  const b = 0.5;
+  const x = df / (df + absT * absT);
+
+  const betaLn = (z: number): number => {
+    const g = 7;
+    const C = [
+      0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+      771.32342877765313, -176.61502916214059, 12.507343278686905,
+      -0.138571095836524, 9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - betaLn(1 - z);
+    z -= 1;
+    let base = C[0]!;
+    for (let i = 1; i < g + 2; i++) base += C[i]! / (z + i);
+    const tVal = z + g + 0.5;
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(tVal) - tVal + Math.log(base);
+  };
+
+  const lnBeta = betaLn(a) + betaLn(b) - betaLn(a + b);
+  let f = 1.0, c = 1.0, d = 0.0;
+  for (let m = 1; m <= 60; m++) {
+    let num = -(a + m - 1) * (a + b + m - 1) * x / ((a + 2 * m - 2) * (a + 2 * m - 1));
+    d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30; d = 1.0 / d;
+    c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+    f *= c * d;
+
+    num = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m));
+    d = 1.0 + num * d; if (Math.abs(d) < 1e-30) d = 1e-30; d = 1.0 / d;
+    c = 1.0 + num / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+    f *= c * d;
+  }
+  const ix = Math.exp(a * Math.log(x) + b * Math.log(1 - x) - lnBeta) * (f / a);
+  return Math.min(1.0, Math.max(0.0, ix));
+}
+
+export interface SignificanceResult {
+  metric: string;
+  methodA: string;
+  methodB: string;
+  n: number;
+  meanA: number;
+  meanB: number;
+  meanDiff: number;
+  tStatistic: number;
+  pValue: number;
+  significantAt05: boolean;
+  significantAt01: boolean;
+}
+
+export function pairedTTest(
+  sampleA: number[],
+  sampleB: number[],
+  methodA: string,
+  methodB: string,
+  metric = 'ndcg10',
+): SignificanceResult {
+  if (sampleA.length !== sampleB.length || sampleA.length < 2) {
+    throw new Error('pairedTTest requires two non-empty equal-length samples of size >= 2');
+  }
+  const n = sampleA.length;
+  const diffs = sampleA.map((a, i) => a - sampleB[i]!);
+  const meanDiff = mean(diffs);
+  const variance = diffs.reduce((acc, d) => acc + (d - meanDiff) ** 2, 0) / (n - 1);
+  const se = Math.sqrt(variance / n);
+  const t = se > 0 ? meanDiff / se : 0;
+  const pValue = se > 0 ? studentTTwoTailedP(t, n - 1) : (meanDiff === 0 ? 1.0 : 0.0);
+  return {
+    metric,
+    methodA,
+    methodB,
+    n,
+    meanA: mean(sampleA),
+    meanB: mean(sampleB),
+    meanDiff,
+    tStatistic: t,
+    pValue,
+    significantAt05: pValue < 0.05,
+    significantAt01: pValue < 0.01,
+  };
+}
+
+export interface ParamSweepResult {
+  k1: number;
+  b: number;
+  p10: number;
+  ndcg10: number;
+  map: number;
+}
+
+export function sweepBM25(
+  dataset: Dataset,
+  grid = {
+    k1: [0.8, 1.2, 1.6, 2.0],
+    b: [0.5, 0.65, 0.75, 0.85],
+  },
+): ParamSweepResult[] {
+  const index = new PassageIndex();
+  index.add(dataset.passages);
+  const results: ParamSweepResult[] = [];
+  for (const k1 of grid.k1) {
+    for (const b of grid.b) {
+      const scores = dataset.queries.map(q => {
+        const hits = index.rankStemmed(q.text, 30);
+        const m = metrics(hits, q.judgments);
+        return { p10: m.p10, ndcg10: m.ndcg10, map: m.map };
+      });
+      results.push({
+        k1,
+        b,
+        p10: mean(scores.map(s => s.p10)),
+        ndcg10: mean(scores.map(s => s.ndcg10)),
+        map: mean(scores.map(s => s.map)),
+      });
+    }
+  }
+  results.sort((a, b) => b.ndcg10 - a.ndcg10);
+  return results;
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';
