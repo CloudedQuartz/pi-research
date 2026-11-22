@@ -39,6 +39,43 @@ export function reportEvidence(state: Investigation, snapshots: Snapshot[]): Pas
   return state.passages.filter(p => ids.has(p.id) && visible.has(p.snapshotId));
 }
 
+export interface Corroboration {
+  rawPassages: number;
+  distinctGroups: number;
+  distinctDomains: number;
+  isSyndicated: boolean;
+}
+
+/**
+ * Computes corroboration metrics for a report statement across its citations,
+ * detecting whether multiple citations originate from the same duplicate group or domain.
+ */
+export function statementCorroboration(
+  statement: Statement,
+  evidence: Map<string, Passage>,
+  visible: Map<string, Snapshot>
+): Corroboration {
+  const rawPassages = statement.citations.length;
+  const groups = new Set<string>();
+  const domains = new Set<string>();
+
+  for (const span of statement.citations) {
+    const p = evidence.get(span.passageId);
+    if (p) {
+      groups.add(p.duplicateGroup || p.id);
+      const s = visible.get(p.snapshotId);
+      if (s) {
+        try { domains.add(new URL(s.finalUrl).hostname.toLowerCase()); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  const distinctGroups = groups.size;
+  const distinctDomains = domains.size;
+  const isSyndicated = rawPassages > 1 && (distinctGroups < rawPassages || (distinctDomains > 0 && distinctDomains < rawPassages));
+  return { rawPassages, distinctGroups, distinctDomains, isSyndicated };
+}
+
 /** Invalid or unavailable synthesis becomes an explicitly extractive outline.
  * Optional packet IDs restrict model citations; the deterministic outline uses visible evidence.
  */
@@ -126,6 +163,13 @@ export function buildReport(state: Investigation, snapshots: Snapshot[], modelVa
   if (!sections.length) lines.push('No contextual evidence was accepted for this objective.', '');
   lines.push('## Unresolved needs', '', ...(unresolved.length ? unresolved.map(u => `- ${md(u)}`) : ['No open needs in the current assessment; this does not establish factual confidence.']), '',
     '## What changed', '', ...changes.map(c => `- ${md(c)}`), '', `Stop reason: ${md(state.stopReason ?? 'report requested')}`, '', '## Sources and exact spans', '');
+  const statementSyndications = sections.flatMap(sec => sec.statements)
+    .filter(st => st.citations.length > 1)
+    .map(st => statementCorroboration(st, evidence, visible))
+    .filter(c => c.isSyndicated);
+  if (statementSyndications.length > 0) {
+    lines.push(`> Responsible IR note: ${statementSyndications.length} statement(s) cite syndicated or duplicate coverage. Duplicate copies are not independent corroboration.`, '');
+  }
   for (const [key, { p, s, span }] of footnotes) {
     let url: URL;
     try { url = new URL(s.finalUrl); }

@@ -10,7 +10,51 @@ export type Inspection = Branch | Concept | SourceCandidate | Action | {
 /** Prevent terminal control sequences from untrusted source strings. */
 export const safeText = (value: string) => value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '');
 
-export function researchMap(state: Investigation): string {
+export interface Corroboration {
+  rawPassages: number;
+  distinctGroups: number;
+  distinctDomains: number;
+  isSyndicated: boolean;
+}
+
+/**
+ * Computes corroboration metrics for a branch need, distinguishing raw passage count
+ * from distinct duplicate groups and distinct source domains (Responsible IR syndication check).
+ */
+export function needCorroboration(
+  state: Investigation,
+  branchId: string,
+  needId: string,
+  snapshots: Snapshot[] = []
+): Corroboration {
+  const needContribs = state.contributions.filter(c => c.branchId === branchId && c.needId === needId && c.role === 'support');
+  const rawPassages = needContribs.length;
+  const groups = new Set(needContribs.map(c => c.duplicateGroup || c.passageId));
+
+  const snapshotById = new Map(snapshots.map(s => [s.id, s]));
+  const passageById = new Map(state.passages.map(p => [p.id, p]));
+  const domains = new Set<string>();
+
+  for (const c of needContribs) {
+    const passage = passageById.get(c.passageId);
+    if (passage) {
+      const snap = snapshotById.get(passage.snapshotId);
+      if (snap) {
+        try {
+          domains.add(new URL(snap.finalUrl).hostname.toLowerCase());
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  const distinctGroups = groups.size;
+  const distinctDomains = domains.size;
+  const isSyndicated = rawPassages > 1 && (distinctGroups < rawPassages || (distinctDomains > 0 && distinctDomains < rawPassages));
+
+  return { rawPassages, distinctGroups, distinctDomains, isSyndicated };
+}
+
+export function researchMap(state: Investigation, snapshots: Snapshot[] = []): string {
   const objective = state.objectives.find(o => o.id === state.activeObjectiveId);
   const lines = [`Investigation ${state.id} · ${state.status}`, `Objective: ${objective?.question ?? state.originalQuestion}`, `Corpus revision ${state.corpusRevision} · ${state.snapshotIds.length} visible snapshots · ${state.passages.length} passages`, 'Answer coverage is not factual confidence.', ''];
   for (const b of state.branches.filter(b => b.objectiveId === state.activeObjectiveId)) {
@@ -18,7 +62,13 @@ export function researchMap(state: Investigation): string {
     const coverage = total ? b.needs.reduce((sum, n) => sum + n.weight * n.status, 0) / total : 0;
     lines.push(`${b.parentId ? '  ↳ ' : ''}${b.question} [${b.status}]`, `  ID ${b.id} · priority ${b.priority.toFixed(2)} · answer coverage ${(100 * coverage).toFixed(0)}%`);
     if (b.introducing.length) lines.push(`  Introduced by ${b.introducing.map(s => `${s.passageId}:${s.start}–${s.end}`).join(', ')}`);
-    for (const need of b.needs) lines.push(`  ${need.status === 1 ? 'addressed' : need.status === 0.5 ? 'partial' : 'open'}: ${need.question}`);
+    for (const need of b.needs) {
+      const corrob = needCorroboration(state, b.id, need.id, snapshots);
+      const corrobNote = corrob.rawPassages > 0
+        ? ` · corroboration: ${corrob.distinctDomains || corrob.distinctGroups} independent origin(s)${corrob.isSyndicated ? ` (${corrob.rawPassages} passages; syndicated duplication detected)` : ''}`
+        : '';
+      lines.push(`  ${need.status === 1 ? 'addressed' : need.status === 0.5 ? 'partial' : 'open'}: ${need.question}${corrobNote}`);
+    }
     lines.push(`  Recent zero-yield search episodes: ${b.zeroYieldEpisodes}`);
     if (b.nextAction) lines.push(`  Next: ${b.nextAction.kind} · utility ${b.nextAction.score.toFixed(4)} · ${b.nextAction.reason}`);
     for (const c of state.concepts.filter(c => c.branchId === b.id).slice(-6)) lines.push(`  Concept “${c.term}”: ${c.classification ?? 'pending'} · TF-IDF ${c.score.toFixed(4)} · ${c.decision ?? 'not yet classified'}`);

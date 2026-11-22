@@ -363,6 +363,33 @@ export function parseHtmlMetadata(html: string): HtmlMetadata {
   return result;
 }
 
+/**
+ * Extracts in-article links from HTML content resolved against a base URL.
+ * Skips in-page anchors, javascript, mailto, and non-http(s) targets.
+ */
+export function parseArticleLinks(html: string, baseUrl: string): { url: string; text: string }[] {
+  const links: { url: string; text: string }[] = [];
+  const seen = new Set<string>();
+  const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const rawHref = (match[1] || '').trim();
+    const rawText = (match[2] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:') || rawHref.startsWith('mailto:')) continue;
+    try {
+      const resolved = new URL(rawHref, baseUrl);
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+      resolved.hash = '';
+      if (!seen.has(resolved.href)) {
+        seen.add(resolved.href);
+        links.push({ url: resolved.href, text: rawText });
+        if (links.length >= 50) break;
+      }
+    } catch { /* ignore invalid url */ }
+  }
+  return links;
+}
+
 // ---------------------------------------------------------------------------
 // URL and address policy
 // ---------------------------------------------------------------------------
@@ -699,7 +726,7 @@ function decodeText(body: Buffer, charset: string | undefined): string {
 // Extraction (terminable worker: Readability and unpdf are synchronous parsers)
 // ---------------------------------------------------------------------------
 
-type WorkerJob = { kind: 'html'; html: string } | { kind: 'pdf'; bytes: Buffer };
+type WorkerJob = { kind: 'html'; html: string; url?: string } | { kind: 'pdf'; bytes: Buffer };
 interface WorkerResult {
   text?: string;
   title?: string;
@@ -707,6 +734,7 @@ interface WorkerResult {
   canonicalUrl?: string;
   publishedAt?: string;
   modifiedAt?: string;
+  links?: { url: string; text: string }[];
 }
 
 /**
@@ -805,6 +833,29 @@ const run = async () => {
       return fail('Readability found no extractable article content');
     }
 
+    // 5. In-article links
+    const extractedLinks = [];
+    const seenLinks = new Set();
+    const anchorEls = document.querySelectorAll('a[href]');
+    for (const a of anchorEls) {
+      try {
+        const rawHref = String(a.getAttribute('href') || '').trim();
+        const linkText = String(a.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+        if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:') || rawHref.startsWith('mailto:')) continue;
+        let resolvedUrl;
+        try {
+          resolvedUrl = new URL(rawHref, String(job.url || 'https://example.org'));
+        } catch (e) { continue; }
+        if (resolvedUrl.protocol !== 'http:' && resolvedUrl.protocol !== 'https:') continue;
+        resolvedUrl.hash = '';
+        const href = resolvedUrl.href;
+        if (seenLinks.has(href)) continue;
+        seenLinks.add(href);
+        extractedLinks.push({ url: href, text: linkText });
+        if (extractedLinks.length >= 50) break;
+      } catch (e) { /* ignore single link error */ }
+    }
+
     parentPort.postMessage({
       ok: true,
       text,
@@ -812,6 +863,7 @@ const run = async () => {
       canonicalUrl: canonicalUrl || undefined,
       publishedAt: publishedAt || undefined,
       modifiedAt: modifiedAt || undefined,
+      links: extractedLinks.length ? extractedLinks : undefined,
     });
     return;
   }
@@ -862,6 +914,7 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
           canonicalUrl?: string;
           publishedAt?: string;
           modifiedAt?: string;
+          links?: { url: string; text: string }[];
         };
         if (result && result.ok) {
           resolve({
@@ -871,6 +924,7 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
             canonicalUrl: result.canonicalUrl,
             publishedAt: result.publishedAt,
             modifiedAt: result.modifiedAt,
+            links: Array.isArray(result.links) ? result.links : undefined,
           });
         } else {
           reject(new AcquisitionError('extraction', (result && result.error) || 'Extraction failed'));
@@ -891,14 +945,15 @@ export function isThinContent(text: string): boolean {
   return !text || text.trim().length < MIN_ARTICLE_TEXT_LENGTH;
 }
 
-async function extractHtml(html: string, services: Services, signal: AbortSignal): Promise<{
+async function extractHtml(html: string, services: Services, signal: AbortSignal, url?: string): Promise<{
   title: string;
   text: string;
   canonicalUrl?: string;
   publishedAt?: string;
   modifiedAt?: string;
+  links?: { url: string; text: string }[];
 }> {
-  const result = await runWorker(services, { kind: 'html', html }, signal);
+  const result = await runWorker(services, { kind: 'html', html, ...(url ? { url } : {}) }, signal);
   const text = normalizeText(result.text ?? '');
   if (!text) throw new AcquisitionError('extraction', 'Readability produced empty text');
   if (isThinContent(text)) throw new AcquisitionError('extraction', `Readability produced thin text (${text.length} chars)`);
@@ -908,6 +963,7 @@ async function extractHtml(html: string, services: Services, signal: AbortSignal
     canonicalUrl: result.canonicalUrl,
     publishedAt: result.publishedAt,
     modifiedAt: result.modifiedAt,
+    links: result.links,
   };
 }
 
@@ -965,12 +1021,13 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   let canonicalUrl = finalUrl.href;
   let publishedAt: string | undefined;
   let modifiedAt: string | undefined;
+  let links: Snapshot['links'] | undefined;
   if (media.kind === 'html') {
     const rawHtml = decodeText(response.body, media.charset);
     if (isBotChallenge(rawHtml)) {
       throw new AcquisitionError('policy', 'bot-challenge detected (Cloudflare/CAPTCHA challenge screen)', finalUrl.href, response.status);
     }
-    const extracted = await extractHtml(rawHtml, services, signal);
+    const extracted = await extractHtml(rawHtml, services, signal, finalUrl.href);
     title = extracted.title;
     text = extracted.text;
     if (extracted.canonicalUrl) {
@@ -984,6 +1041,7 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
     }
     publishedAt = extracted.publishedAt;
     modifiedAt = extracted.modifiedAt;
+    links = extracted.links;
   } else if (media.kind === 'pdf') {
     const extracted = await extractPdf(response.body, services, signal);
     text = extracted.text;
@@ -1022,6 +1080,7 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
     ...(pages ? { pages } : {}),
     ...(publishedAt ? { publishedAt } : {}),
     ...(modifiedAt ? { modifiedAt } : {}),
+    ...(links ? { links } : {}),
   };
   await services.store.saveSnapshot(snapshot);
   return snapshot;

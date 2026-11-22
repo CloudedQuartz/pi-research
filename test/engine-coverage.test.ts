@@ -20,9 +20,9 @@ import type { EngineOptions } from '../src/engine.js';
 import { Ledger } from '../src/allowance.js';
 import { ObjectStore, validateInvestigation } from '../src/object-store.js';
 import { PassageIndex, segment } from '../src/core-ir.js';
-import { isBotChallenge, isThinContent, normalizeUrl, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
-import { classifyFailure, formatAcquisitionSummary, sourceList, summarizeAcquisition } from '../src/views.js';
-import { buildReport } from '../src/report.js';
+import { isBotChallenge, isThinContent, normalizeUrl, parseArticleLinks, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
+import { classifyFailure, formatAcquisitionSummary, needCorroboration, sourceList, summarizeAcquisition } from '../src/views.js';
+import { buildReport, statementCorroboration } from '../src/report.js';
 import { retrievalKey, unmetMass } from '../src/controller.js';
 import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
 
@@ -831,6 +831,152 @@ async function caseMetadataExtractionAndCanonicalDedup(): Promise<void> {
   } finally { retire(f.ctx); }
 }
 
+async function caseLinkHarvestingAndCorroboration(): Promise<void> {
+  // 1. parseArticleLinks
+  const htmlSample = `<html><body>
+    <p>Check the <a href="/research/deep-study">deep study</a> and <a href="https://example.org/docs/analysis">analysis paper</a>.</p>
+    <p>Ignore <a href="#heading">anchor</a> and <a href="javascript:void(0)">js</a> and <a href="mailto:test@example.com">email</a>.</p>
+  </body></html>`;
+  const parsedLinks = parseArticleLinks(htmlSample, 'https://example.org/base/page');
+  check('L parseArticleLinks extracts resolved links and anchor text, filtering internal schemes',
+    parsedLinks.length === 2 &&
+    parsedLinks[0]?.url === 'https://example.org/research/deep-study' &&
+    parsedLinks[0]?.text === 'deep study' &&
+    parsedLinks[1]?.url === 'https://example.org/docs/analysis' &&
+    parsedLinks[1]?.text === 'analysis paper',
+    `parsed=${JSON.stringify(parsedLinks)}`);
+
+  // 2. Corroboration & syndication detection
+  const snapA: Snapshot = {
+    id: 'snap-syn-a', requestedUrl: 'https://wire-service.com/story-1', finalUrl: 'https://wire-service.com/story-1', canonicalUrl: 'https://wire-service.com/story-1',
+    fetchedAt: '2026-01-01', contentHash: 'h1', textHash: 'h2', rawBlob: 'h1', textBlob: 'h2', mime: 'text/html', status: 200,
+    title: 'Wire Story A', extraction: 'readability', extractionVersion: '2', text: 'Quantum foxberry survey findings confirm replication.',
+  };
+  const snapB: Snapshot = {
+    id: 'snap-syn-b', requestedUrl: 'https://syndicated-mirror.com/story-1', finalUrl: 'https://syndicated-mirror.com/story-1', canonicalUrl: 'https://syndicated-mirror.com/story-1',
+    fetchedAt: '2026-01-01', contentHash: 'h3', textHash: 'h4', rawBlob: 'h3', textBlob: 'h4', mime: 'text/html', status: 200,
+    title: 'Wire Story B (Syndicated)', extraction: 'readability', extractionVersion: '2', text: 'Quantum foxberry survey findings confirm replication.',
+  };
+  const snapC: Snapshot = {
+    id: 'snap-indep-c', requestedUrl: 'https://independent-lab.org/results', finalUrl: 'https://independent-lab.org/results', canonicalUrl: 'https://independent-lab.org/results',
+    fetchedAt: '2026-01-01', contentHash: 'h5', textHash: 'h6', rawBlob: 'h5', textBlob: 'h6', mime: 'text/html', status: 200,
+    title: 'Independent Study C', extraction: 'readability', extractionVersion: '2', text: 'Independent lab confirms quantum foxberry taxonomy findings.',
+  };
+
+  const pA: Passage = { id: 'p-a', snapshotId: snapA.id, start: 0, end: snapA.text.length, text: snapA.text, duplicateGroup: 'dup-group-wire' };
+  const pB: Passage = { id: 'p-b', snapshotId: snapB.id, start: 0, end: snapB.text.length, text: snapB.text, duplicateGroup: 'dup-group-wire' }; // same duplicateGroup!
+  const pC: Passage = { id: 'p-c', snapshotId: snapC.id, start: 0, end: snapC.text.length, text: snapC.text, duplicateGroup: 'dup-group-indep' };
+
+  const synState: Investigation = {
+    schema: 1, id: 'inv-syn', revisionId: 'r1', originalQuestion: 'Question',
+    activeObjectiveId: 'obj-1', storageRoot: '', allowanceId: '',
+    objectives: [{ id: 'obj-1', input: 'Q', question: 'Q', constraints: [], createdAt: '2026-01-01' }],
+    branches: [{
+      id: 'b1', objectiveId: 'obj-1', question: 'Survey question', anchor: 'quantum foxberry survey',
+      origin: 'initial', introducing: [], priority: 1, status: 'active',
+      needs: [{ id: 'n-syn', question: 'Need with syndicated support', weight: 1, status: 1 }, { id: 'n-indep', question: 'Need with independent support', weight: 1, status: 1 }],
+      aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+    }],
+    passages: [pA, pB, pC], concepts: [],
+    contributions: [
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-syn', passageId: pA.id, duplicateGroup: pA.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-syn', passageId: pB.id, duplicateGroup: pB.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-indep', passageId: pA.id, duplicateGroup: pA.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-indep', passageId: pC.id, duplicateGroup: pC.duplicateGroup, role: 'support', assessment: 'support' },
+    ],
+    actions: [], feedback: [], reports: [], corpusRevision: 1, status: 'complete',
+    snapshotIds: [snapA.id, snapB.id, snapC.id], candidates: [],
+  };
+
+  const corrobSyn = needCorroboration(synState, 'b1', 'n-syn', [snapA, snapB]);
+  check('L needCorroboration flags syndicated copies sharing duplicateGroup',
+    corrobSyn.rawPassages === 2 &&
+    corrobSyn.distinctGroups === 1 &&
+    corrobSyn.isSyndicated === true,
+    `syn=${JSON.stringify(corrobSyn)}`);
+
+  const corrobIndep = needCorroboration(synState, 'b1', 'n-indep', [snapA, snapC]);
+  check('L needCorroboration recognizes independent corroboration across domains and groups',
+    corrobIndep.rawPassages === 2 &&
+    corrobIndep.distinctGroups === 2 &&
+    corrobIndep.distinctDomains === 2 &&
+    corrobIndep.isSyndicated === false,
+    `indep=${JSON.stringify(corrobIndep)}`);
+
+  const stmtSyn = {
+    text: 'Claim supported by syndicated wire stories',
+    citations: [{ passageId: pA.id, start: 0, end: 10 }, { passageId: pB.id, start: 0, end: 10 }],
+  };
+  const stCorrob = statementCorroboration(stmtSyn, new Map([[pA.id, pA], [pB.id, pB]]), new Map([[snapA.id, snapA], [snapB.id, snapB]]));
+  check('L statementCorroboration flags statement citing syndicated passages',
+    stCorrob.isSyndicated === true && stCorrob.distinctGroups === 1);
+
+  const reportSyn = buildReport(synState, [snapA, snapB], {
+    sections: [{
+      title: 'Findings',
+      statements: [stmtSyn],
+    }],
+  });
+  check('L report includes Responsible IR syndication warning',
+    reportSyn.markdown.includes('Responsible IR note: 1 statement(s) cite syndicated or duplicate coverage'));
+
+  // 3. Link harvesting in engine
+  const seed = 'link-harvest-test';
+  const ctx = createCtx({ ...LIMITS, searches: 5, fetches: 10 });
+  const rawText = longParagraph(seed);
+  const rawHtml = `<html><head><title>Fixture</title></head><body><pre>${rawText}</pre></body></html>`;
+  const rawBlob = ctx.store.put(rawHtml);
+  const textBlob = ctx.store.put(rawText);
+  const snapWithLink: Snapshot = {
+    id: rawBlob, requestedUrl: `https://example.org/${seed}`, finalUrl: `https://example.org/${seed}`,
+    canonicalUrl: `https://example.org/${seed}`, fetchedAt: new Date().toISOString(),
+    contentHash: rawBlob, textHash: textBlob, rawBlob, textBlob, mime: 'text/html', status: 200,
+    title: 'Coverage fixture', extraction: 'fixture', extractionVersion: '1', text: rawText,
+    links: [
+      { url: `https://example.org/${seed}/harvested-study`, text: 'quantum foxberry survey replication' },
+      { url: 'https://youtube.com/watch?v=ignore', text: 'video' },
+    ],
+  };
+  ctx.store.saveSnapshot(snapWithLink);
+
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const branch: Investigation['branches'][number] = {
+    id: `branch-${seed}`, objectiveId: objective.id, question: 'Which survey methods repeat?', anchor: 'quantum foxberry taxonomy',
+    origin: 'initial', introducing: [], priority: 0.7, status: 'active',
+    needs: [{ id: `need-${seed}`, question: 'identify survey methods', weight: 1, status: 0 }],
+    aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  };
+  const index = new PassageIndex(); index.add(segment(snapWithLink));
+  const passages = index.all();
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches: [branch],
+    snapshotIds: [snapWithLink.id], passages, corpusRevision: 1 };
+  validateInvestigation(state);
+  ctx.state = state;
+  const rep = passages[0]!;
+
+  ctx.assess = () => ({
+    relevantPassageIds: [rep.id],
+    contributions: [{ passageId: rep.id, needId: branch.needs[0]!.id, role: 'support', status: 1, assessment: 'supported' }],
+    coverageUpdates: [{ needId: branch.needs[0]!.id, status: 1, passageIds: [rep.id], assessment: 'adequate' }],
+  });
+
+  try {
+    const final = await engineFor(ctx, state, { maxActions: 1 }).run('', 'continue');
+    const harvestedCand = final.candidates.find(c => c.url.includes('harvested-study'));
+    check('L in-article link from relevant passage was harvested as a candidate',
+      harvestedCand !== undefined &&
+      harvestedCand.provider === 'in-article-link' &&
+      harvestedCand.rankingKind === 'citation-list' &&
+      harvestedCand.status === 'unread',
+      `cand=${JSON.stringify(harvestedCand)}`);
+
+    const videoCand = final.candidates.find(c => c.url.includes('youtube.com'));
+    check('L video link from relevant passage was filtered by route filter',
+      videoCand !== undefined && videoCand.status === 'blocked',
+      `video=${JSON.stringify(videoCand)}`);
+  } finally { retire(ctx); }
+}
+
 async function main(): Promise<void> {
   await casePartialToAdequate(); await caseChangedKeyContradiction();
   await caseExplicitDowngrade(); await casePrfFollowUp();
@@ -841,6 +987,7 @@ async function main(): Promise<void> {
   await caseBotChallengeAndCircuitBreaker();
   await caseAcquisitionSummaryView();
   await caseMetadataExtractionAndCanonicalDedup();
+  await caseLinkHarvestingAndCorroboration();
   if (failures.length) {
     console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
     process.exitCode = 1;

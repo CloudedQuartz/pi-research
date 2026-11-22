@@ -412,6 +412,15 @@ const snapshotRecord = (raw: unknown, path: string): Snapshot => {
   if (pages !== undefined) result.pages = pages;
   if (v.publishedAt !== undefined) result.publishedAt = time(v.publishedAt, `${path}.publishedAt`);
   if (v.modifiedAt !== undefined) result.modifiedAt = time(v.modifiedAt, `${path}.modifiedAt`);
+  if (v.links !== undefined) {
+    result.links = list(v.links, `${path}.links`, COUNT.lists).map((l, i) => {
+      const item = object(l, `${path}.links[${i}]`);
+      return {
+        url: httpUrl(item.url, `${path}.links[${i}].url`),
+        text: str(item.text, `${path}.links[${i}].text`, LIMIT.short, true),
+      };
+    });
+  }
   return result;
 };
 

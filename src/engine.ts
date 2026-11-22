@@ -1156,8 +1156,76 @@ export class ResearchEngine {
     // PRF takes only ordinary representative relevant passages: near variants are
     // inspection context, never an independent corroborating source.
     const relevantHits = hits.filter(h => relevant.has(h.passage.id));
+    if (relevantHits.length) await this.harvestLinks(branch, relevantHits);
     if (this.options.expand && relevantHits.length) await this.expand(branch, relevantHits, index);
     return { yield: yieldCount, ok: true };
+  }
+
+  /** Harvests in-article links from snapshots associated with relevant passages, creating grounded candidates without search cost. */
+  private async harvestLinks(branch: Branch, relevantHits: SearchHit[]): Promise<void> {
+    if (!relevantHits.length) return;
+    const seenSnapshotIds = new Set<string>();
+    const anchor = terms(`${branch.anchor} ${branch.question} ${branch.aliases.join(' ')}`);
+    const knownUrls = new Set([...this.state.candidates.map(c => normalizeUrl(c.url)), ...this.knownCanonicalUrls]);
+    const discovered: SourceCandidate[] = [];
+
+    for (const hit of relevantHits) {
+      if (seenSnapshotIds.has(hit.passage.snapshotId)) continue;
+      seenSnapshotIds.add(hit.passage.snapshotId);
+
+      let snapshot: Snapshot;
+      try {
+        snapshot = await this.store.loadSnapshot(hit.passage.snapshotId);
+      } catch { continue; }
+
+      const links = snapshot.links ?? [];
+      for (const link of links) {
+        const norm = normalizeUrl(link.url);
+        if (knownUrls.has(norm)) continue;
+        knownUrls.add(norm);
+
+        const skipCheck = shouldSkipCandidateUrl(link.url);
+        let host = '';
+        let isHostBlocked = false;
+        try {
+          host = new URL(link.url).hostname.toLowerCase();
+          isHostBlocked = this.blockedHosts.has(host);
+        } catch { /* ignore */ }
+
+        // Filter out completely off-topic links: link text and passage context must have some overlap with branch anchor
+        const linkTerms = terms(`${link.text} ${hit.passage.text.slice(0, 300)}`);
+        const relevance = overlap(anchor, linkTerms);
+        if (relevance <= 0 && !skipCheck.skip) continue;
+
+        const isBlocked = skipCheck.skip || isHostBlocked;
+        const blockReason = skipCheck.skip ? skipCheck.reason : `host ${host} previously blocked requests`;
+
+        discovered.push({
+          id: createHash('sha256').update(`${branch.id}\0link\0${link.url}`).digest('hex').slice(0, 32),
+          branchId: branch.id,
+          query: `in-article link from ${snapshot.finalUrl}`,
+          url: link.url,
+          title: link.text || `Link from ${snapshot.title || snapshot.finalUrl}`,
+          snippet: `In-article citation link from passage ${hit.passage.id}: "${hit.passage.text.slice(0, 150)}..."`,
+          provider: 'in-article-link',
+          rankingKind: 'citation-list',
+          discoveredAt: now(),
+          status: isBlocked ? 'blocked' : 'unread',
+          ...(isBlocked ? { error: `skipped: ${blockReason}` } : {}),
+        });
+      }
+    }
+
+    if (discovered.length > 0) {
+      this.commit(draft => {
+        for (const candidate of discovered) {
+          if (!draft.candidates.some(c => c.id === candidate.id)) {
+            draft.candidates.push(structuredClone(candidate));
+          }
+        }
+      });
+      this.progress(`Harvested ${discovered.length} in-article candidate link(s) for branch: ${branch.question}`);
+    }
   }
 
   // ------------------------------------------------------------- expansion and admission

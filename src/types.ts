@@ -23,6 +23,11 @@ export interface SourceCandidate {
   provider: string; rankingKind: RankingKind; rank?: number; discoveredAt: string;
   status: 'unread' | 'fetched' | 'blocked' | 'failed'; snapshotId?: string; error?: string;
 }
+export interface SnapshotLink {
+  url: string;
+  text: string;
+}
+
 export interface Snapshot {
   id: string; requestedUrl: string; finalUrl: string; canonicalUrl: string;
   fetchedAt: string; contentHash: string; textHash: string; rawBlob: string; textBlob: string;
@@ -30,6 +35,7 @@ export interface Snapshot {
   text: string; pages?: { page: number; start: number; end: number }[];
   publishedAt?: string;
   modifiedAt?: string;
+  links?: SnapshotLink[];
 }
 export interface Passage {
   id: string; snapshotId: string; start: number; end: number; text: string;
