@@ -200,3 +200,44 @@ hand-written file above exploited.
 An earlier note on `cba8398` attributed these stops to a settle/message_end race. That
 ordering is real and now hardened against, but it is not the cause: the timing above rules it
 out, and the runs that failed stayed alive for 20 minutes.
+
+## What actually kills a run, measured
+
+Two independent causes were found by reading the sessions, not by guessing at them.
+
+| run | symptom | cause | evidence |
+|---|---|---|---|
+| t62, t57 (frozen build) | `status=stopped`, no report | stage watchdog fired 1202s / 1224s after the last stage prompt | `finishedAt` minus prompt timestamp; the model kept working 90-171s later |
+| t62 (next build) | `Research stopped: The assessment did not judge each research need.` | one need missing from the assessment JSON threw away 4 rounds and 18 sources | tmux pane text, final assistant message |
+
+Both are fixed: the bound is opt-in and off by default, and a partial assessment now leaves the
+unjudged needs unanswered instead of ending the run.
+
+## Where wall-clock goes
+
+Three runs measured from their own sessions (`/tmp/eval/timing.py`):
+
+| run | wall | model time | tool batches | largest batch |
+|---|---|---|---|---|
+| t51 | 486s | 137s | 6 | 105s |
+| t57 | 398s | 33s | 4 | 198s |
+| t62 | 476s | 127s | 19 | 225s |
+
+Tool calls issued in one turn run concurrently, so summing their durations overstates cost; the
+batches above are elapsed. Delegation is the single largest item: three `subagent` calls in one
+turn returned together after ~400-460s each, about 7.6 minutes of wall clock for the batch.
+
+The fastest complete run so far used no delegation at all: 35 sources, 104 passages, 271s,
+`research/2026-11-25T23-26-53-276Z-how-should-a-deep-research-agent-retrieve-pages-that-block-p.md`.
+
+## Recovering refused pages
+
+Against the 44 URLs these runs recorded as walls, measured directly:
+
+| rung | recovered |
+|---|---|
+| Wayback availability API + snapshot | 20 / 44 |
+| local Chromium render (8 sampled from the remainder) | 5 / 8 with substantial text; the rest returned a challenge page |
+| same URL, browser-like User-Agent (acquisition module) | not yet measured in a run |
+
+The ladder is crawler → archive → browser, in that cost order, and a rung can only add a source.
