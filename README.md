@@ -52,12 +52,14 @@ Collection stops when every essential need is answered, when no new queries are 
 
 ## What a run does
 
-## What a run does
-
 1. **Build the evidence library.** The model breaks the question into evidence needs and writes initial search queries. Then the extension repeats this loop:
    - **Search → select → read:** Code runs queued queries, takes URLs directly from structured search results, and ranks and deduplicates unread candidates. Pi’s `fetch_content` reads the selected pages. Only extracted source text enters the library; never snippets or model summaries.
    - **Retrieve → inspect → assess → expand:** Code ranks passages with BM25 and MMR. The model can inspect the stored extraction by offset or scan it for exact terms without any web calls. Inspection records keep the exact source version, range, and result; a zero match is not proof of semantic absence or complete extraction. Only essential gaps drive new web searches, and independent search batches overlap. Collection stops when essential needs are answered, useful queries run out, or you ask it to finish the current turn.
 2. **Synthesize from the library.** The extension saves the evidence first. A separate writing turn sees the ranked passages and open needs, not the search transcript. It cites passage IDs, which code resolves to the source URL, retrieval date, and text offsets.
+
+## Reading a run
+
+`/research-view` opens the last run's journal in a scrollable pager: the question, round by round queries with the sources each one added and the failures it hit, each assessment's coverage and its own reply, the inspections, the stop reason and where the report and child session live. The journal is written as the run goes (`research/<stamp>-<slug>.journal.json`), so it also works after a restart. `/research-stop` ends a hosted run and the child saves the evidence it already collected.
 
 ## Output and save condition
 
@@ -68,6 +70,8 @@ research/<timestamp>-<slug>.md
 ```
 
 A matching `.evidence.json` file holds sources, ranked passages, scoped inspections, needs, search outcomes, and acquisition failures. The library is saved before synthesis; if the run is interrupted during collection, acquired text is saved on cancellation.
+
+Each citation in the report quotes at most 700 characters of its source, clipped at a word boundary and marked with an ellipsis, followed by the source title, URL, retrieval date and the text offsets it covers. A citation is a pointer with enough text to check the claim, not a reprint of the page.
 
 ## Limitations
 
