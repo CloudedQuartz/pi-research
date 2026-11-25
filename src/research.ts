@@ -144,6 +144,8 @@ interface ResearchRun {
 	/** True only while the turn this extension started is running. A subagent notification also
 	 *  settles the agent, and treating that as our turn ending aborted runs with no report. */
 	awaitingSettle?: boolean;
+	/** Settles ignored because they carried no reply; the loop is not ours. */
+	ignoredSettles?: number;
 	finishRequested?: boolean;
 }
 
@@ -784,6 +786,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (!ownsSession(ctx)) return;
 		const current = run!;
 		if (!current.awaitingSettle) return; // a delegated agent's notification, not our turn
+		// A wake caused by a delegated agent's nudge settles with no reply of ours. Acting on it
+		// finished the run with no report. Ignore those, but do not ignore a run forever.
+		if (!current.finalResponse && (current.ignoredSettles ?? 0) < 3) {
+			current.ignoredSettles = (current.ignoredSettles ?? 0) + 1;
+			return;
+		}
+		current.ignoredSettles = 0;
 		current.awaitingSettle = false;
 		const response = current.finalResponse;
 		if (event.aborted || current.stage === "report" || !response || response.stopReason !== "stop") {
