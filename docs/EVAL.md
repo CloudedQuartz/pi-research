@@ -85,7 +85,8 @@ Two real findings stand:
 1. **A throttled provider could end a run without a report.** Fixed: a retryable
    provider error now backs off (20s, 40s, 80s, capped 120s) with four attempts, while
    a permanent error still fails fast.
-2. **The journal still cannot say why a run stopped.** `status=stopped` with
+2. **The journal still cannot say why a run stopped.** A fired stage bound now records its
+   reason, but `status=stopped` can still arrive with
    `stopReason=None` and an empty error list is what all five show, which is exactly
    the failure mode `8f5bd1a` was meant to remove. Reproducing it needs a run that
    stops on an error rather than an empty completion.
@@ -188,8 +189,13 @@ the run is cleared those calls are not evidence collection — one wrote
 `/tmp/sandbox/work/t62/ion-trap-scaling-report.md` (14,240 bytes, no citations, outside the
 pipeline that resolves `[P123]` to a linked footnote).
 
-The watchdog ends the run rather than writing from the evidence already collected, and its
-path sets no `stopReason`, so journals read `status=stopped` with `None`.
+The watchdog ended the run rather than writing from the evidence already collected, and its
+path set no `stopReason`, so journals read `status=stopped` with `None`.
+
+That bound is gone: it is opt-in through `PI_RESEARCH_STAGE_TIMEOUT_MS` and off by default, so a
+turn ends because it is finished rather than because a clock expired. When the bound is set it
+records why it fired. The tool guard also refuses calls once no run exists, which is what the
+hand-written file above exploited.
 
 An earlier note on `cba8398` attributed these stops to a settle/message_end race. That
 ordering is real and now hardened against, but it is not the cause: the timing above rules it

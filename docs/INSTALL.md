@@ -52,7 +52,7 @@ pi
 
 The run happens in a child session. Your transcript shows a todo-style widget, one
 line per round, and a notice when the report is saved. Reports and their journals go
-to `research/`. A 4-round run took about 7 minutes; expect 5–20 minutes depending on
+to `research/`. A 4-round run took about 7 minutes, but turns are not bounded by default; expect 15–40 minutes depending on
 the question and provider.
 
 Afterwards:
