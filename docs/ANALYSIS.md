@@ -52,18 +52,21 @@ prints only scores, so its usage was not captured; it is one request against
 ## What is wrong or weak
 
 - **Fetch failures are the dominant defect, not reasoning.** 12/21/8 failures per run,
-  almost all `HTTP 403` bot walls or `document parse produced no text` on documents
-  that looked like PDFs but were not. On B, 21 failures against 21 successes is a coin
-  flip; the report is built from half the candidate set it wanted.
+  almost all `HTTP 403` bot walls or documents whose parse produced no text. On B, 21
+  failures against 21 successes is a coin flip; the report is built from half the
+  candidate set it wanted. Two of these have since changed: a walled page is marked
+  `[blocked]` in the journal and the round line (`13 failed (2 blocked)`), and a
+  document whose direct download is refused now gets one attempt through the fetch
+  tool before it counts as lost (`854a370`).
 - **Length is driven by citations, not prose.** Evidence is 2.3×, 2.4× and 1.8× the
   prose. With 218 citations in C, the appendix dominates the file (53 KB vs 29 KB).
 - **One round can be enough, and that is suspicious.** C stopped after a single round
   with six essential needs "answered", judged at 99.2 for instruction following — but
   a one-round answer to a three-person comparison was built from 60 passages without a
   second pass to close gaps. The stop rule trusts the assessor.
-- **Nothing surfaces fetch failure to the reader.** The report does not say "21
-  candidate sources were blocked"; only the journal does. A reader cannot tell that
-  half the evidence base was refused.
+- **A reader still cannot see what was missed.** The `[blocked]` marker reaches the
+  journal and the gap list the report is written from, but the saved report itself does
+  not state "12 candidate sources were refused"; that remains the journal's job.
 - **`research-acquisition.ts` is mostly unwired** (see DECISIONS.md): the module
   that looks like it hardens acquisition is not in the fetch path, and robots is not
   enforced anywhere.
