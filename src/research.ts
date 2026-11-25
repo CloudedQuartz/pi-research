@@ -41,7 +41,9 @@ const ADD_URLS_TOOL = "research_add_urls";
 const DELEGATE_TOOLS = ["subagent", "get_subagent_result"];
 const SUBAGENT_TOOL = "subagent";
 const SUBAGENT_RESULT_TOOL = "get_subagent_result";
-const SEARCH_WAIT_MS = 90_000; // Bound one unresponsive search batch, not the investigation.
+const SEARCH_WAIT_MS = 90_000;
+/** Per round, not per run: enough to check a few claims, not to re-read the corpus. */
+const INSPECTIONS_PER_ROUND = 8; // Bound one unresponsive search batch, not the investigation.
 
 /** Package that supplies the search and read tools; installed as a dependency of this package. */
 const WEB_ACCESS_PACKAGE = "pi-web-access";
@@ -111,9 +113,9 @@ interface ResearchRun {
 	stage: "brief" | "research" | "report";
 	startedAt: number;
 	/** This session's file, so the journal can point at the full transcript. */
-		sessionFile?: string;
-		/** Session that owns this run; delegated agent sessions must not touch it. */
-		sessionId?: string;
+	sessionFile?: string;
+	/** Session that owns this run; delegated agent sessions must not touch it. */
+	sessionId?: string;
 	/** Thinking level to restore when the run ends; JSON stages run with thinking off. */
 	previousThinking?: ReturnType<ExtensionAPI["getThinkingLevel"]>;
 	/** Timestamp of the assistant message that carried the final report, if one was produced. */
@@ -125,6 +127,8 @@ interface ResearchRun {
 	gainedEvidence: boolean;
 	/** URLs a delegated agent reported, waiting to be fetched into the corpus. */
 	pendingUrls?: string[];
+	/** Inspections left in this round; a run may not inspect without bound. */
+	inspectionBudget?: number;
 	finishRequested?: boolean;
 }
 
@@ -344,6 +348,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				}
 			}
 			current.packet = loop.evidence();
+			current.inspectionBudget = INSPECTIONS_PER_ROUND;
 			const openHits = new Set(current.packet.needs.filter((need) => !need.answered).flatMap((need) => need.passages));
 			current.gainedEvidence = current.packet.passages.some((passage) => openHits.has(passage.id) && !knownSources.has(passage.sourceId));
 			showProgress(ctx, `Assessing ${current.packet.passages.length} passages from ${loop.library.sources.size} collected sources…`);
@@ -374,6 +379,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		}),
 		async execute(_id, args, _signal, _onUpdate, ctx) {
 			if (run?.stage !== "research" || !run.packet) throw new Error("Collect the round's evidence before inspecting a source.");
+			if ((run.inspectionBudget ?? 0) <= 0) {
+				// Inspections are cheap to call and each one is a full model turn: bound them so a run
+				// cannot spend its budget reading instead of judging.
+				return { content: [{ type: "text", text: JSON.stringify({ error: "Inspection budget for this round is exhausted; judge the needs with the passages you have and return the JSON." }) }], details: {} };
+			}
+			run.inspectionBudget = (run.inspectionBudget ?? 0) - 1;
 			showProgress(ctx, "Inspecting acquired source", args.sourceId);
 			const inspection = run.loop.inspect(args.sourceId, args.terms, args.start, args.end);
 			return { content: [{ type: "text", text: JSON.stringify(inspection) }], details: {} };
