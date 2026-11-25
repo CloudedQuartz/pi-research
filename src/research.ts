@@ -148,6 +148,8 @@ interface ResearchRun {
 	awaitingSettle?: boolean;
 	/** Settles ignored because they carried no reply; the loop is not ours. */
 	ignoredSettles?: number;
+	/** Consecutive stage turns that returned no text at all. */
+	emptyTurns?: number;
 	finishRequested?: boolean;
 }
 
@@ -640,6 +642,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			if (current.stage !== "report" && current.loop.library.sources.size) await saveEvidence(current);
 				if (aborted || current.stage !== "report" || candidate?.stopReason !== "stop") {
 				const saved = current.loop.library.sources.size || current.stage === "report";
+				await writeJournal(current, "stopped");
 				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", journal: journalPathFor(current.path) })}\n`, "utf8");
 				notify(ctx, saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", "warning");
 				if (IS_CHILD) ctx.shutdown();
@@ -850,6 +853,16 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		current.awaitingSettle = false;
 		clearTimeout(stageWatchdog);
 		const response = current.finalResponse;
+		// A provider can return an empty completion. That is not the end of the run: ask again, a
+		// bounded number of times, instead of writing no report at all.
+		if (!response && (current.emptyTurns ?? 0) < 2) {
+			current.emptyTurns = (current.emptyTurns ?? 0) + 1;
+			const again = current.stage === "brief" ? briefPrompt(current.question) : current.stage === "research" ? researchPrompt(current) : reportPrompt(current);
+			showProgress(ctx, "The model returned nothing; asking again…");
+			sendStage(again, current.stage);
+			return;
+		}
+		current.emptyTurns = 0;
 		if (event.aborted || current.stage === "report" || !response || response.stopReason !== "stop") {
 			await finish(ctx, event.aborted);
 			return;
