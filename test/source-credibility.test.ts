@@ -39,9 +39,11 @@ check("an unrated host is neutral, not trusted or penalised", () => {
 });
 
 check("institutions, journals and aggregators are told apart", () => {
-	assert.equal(credibilityOf("https://www.epa.gov/water").tier, "institution");
-	assert.equal(credibilityOf("https://arxiv.org/abs/2406.05054").tier, "journal");
-	assert.equal(credibilityOf("https://www.scribd.com/document/878122637/x").tier, "aggregator");
+	assert.equal(credibilityOf("https://www.epa.gov/water").tier, "institution", "gov");
+	assert.equal(credibilityOf("https://web.stanford.edu/paper.pdf").tier, "institution", "edu");
+	assert.equal(credibilityOf("https://arxiv.org/abs/2406.05054").tier, "journal", "arxiv");
+	assert.equal(credibilityOf("https://doi.org/10.1109/access.2020.3013411").tier, "journal", "DOI");
+	assert.equal(credibilityOf("https://www.scribd.com/document/878122637/x").tier, "aggregator", "aggregator");
 	assert.equal(hostOf("https://WWW.EPA.gov/a"), "epa.gov");
 });
 
