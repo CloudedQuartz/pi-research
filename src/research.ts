@@ -107,8 +107,11 @@ interface RoundEntry {
 	totalSources: number;
 }
 
-/** Documents parsed per round: a scanned PDF costs seconds, so they are budgeted. */
-const DOCUMENTS_PER_ROUND = 4;
+/**
+ * Documents parsed per round. Measured on WRC TT186/02 (66 pages, 39 needing OCR): 150 s for one
+ * file, so four would cost ten minutes in a single round.
+ */
+const DOCUMENTS_PER_ROUND = 2;
 
 const journalPathFor = (reportPath: string) => reportPath.replace(/\.md$/, ".journal.json");
 
