@@ -990,3 +990,29 @@ export async function checkPublicTarget(
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * A page a host refuses is often still readable from a public archive. That is cheaper than a
+ * headless browser, needs no third-party reader, and keeps the corpus citable.
+ */
+export function waybackLookupUrl(url: string): string {
+	return `https://archive.org/wayback/available?url=${encodeURIComponent(url)}`;
+}
+
+/** The closest archived copy, if the availability API reports one. */
+export function pickArchivedSnapshot(payload: unknown): string | undefined {
+	const closest = (payload as { archived_snapshots?: { closest?: { available?: boolean; url?: unknown } } })?.archived_snapshots?.closest;
+	if (!closest?.available || typeof closest.url !== "string" || !closest.url.startsWith("http")) return undefined;
+	return closest.url.replace(/^http:/, "https:");
+}
+
+export async function findArchivedCopy(url: string, signal?: AbortSignal, timeoutMs = 8_000): Promise<string | undefined> {
+	const deadline = AbortSignal.timeout(timeoutMs);
+	try {
+		const response = await fetch(waybackLookupUrl(url), { signal: signal ? AbortSignal.any([signal, deadline]) : deadline });
+		if (!response.ok) return undefined;
+		return pickArchivedSnapshot(await response.json());
+	} catch {
+		return undefined;
+	}
+}

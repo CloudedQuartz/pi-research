@@ -21,7 +21,7 @@ import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
 import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply, stageTimeoutMs } from "./research-loop.js";
-import { checkPublicTarget, classifyFetchFailure } from "./research-acquisition.js";
+import { checkPublicTarget, classifyFetchFailure, findArchivedCopy } from "./research-acquisition.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
 /** Set by the host: this process is the child session doing the actual run. */
@@ -320,6 +320,33 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	/**
+	 * A refused page often exists in a public archive. Try that before recording it lost: it needs
+	 * no third-party reader and the archived copy is as citable as the original URL.
+	 */
+	const ARCHIVE_FALLBACK_LIMIT = 6;
+	const fetchReadable = async (urls: string[], ctx: ExtensionToolContext, signal?: AbortSignal) => {
+		const outcome = await boundedFetch(urls, ctx, signal);
+		type Hit = { url: string; title: string; content: string; error?: string };
+		const pages = (outcome.result.structuredContent as { urls?: Hit[] } | undefined)?.urls;
+		if (!pages) return outcome;
+		const walled = pages
+			.map((page, index) => ({ page, index }))
+			.filter(({ page }) => page?.error && classifyFetchFailure(page.error) === "blocked")
+			.map(({ index }) => index)
+			.slice(0, ARCHIVE_FALLBACK_LIMIT);
+		for (const index of walled) {
+			const snapshot = await findArchivedCopy(urls[index]!, signal);
+			if (!snapshot) continue;
+			const copy = await boundedFetch([snapshot], ctx, signal).catch(() => undefined);
+			const hit = (copy?.result.structuredContent as { urls?: Hit[] } | undefined)?.urls?.[0];
+			if (hit?.content?.trim() && !hit.error) {
+				pages[index] = { url: urls[index]!, title: `${hit.title || urls[index]} (archived copy)`, content: hit.content };
+			}
+		}
+		return outcome;
+	};
+
 	/** Record a fetch failure, marking a bot wall apart from a dead link or a timeout. */
 	const noteFailure = (target: Set<string> | { url: string; reason: string }[], url: string, reason: string) => {
 		const blocked = classifyFetchFailure(reason) === "blocked";
@@ -484,7 +511,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
 				showProgress(ctx, `Reading sources ${index + 1}–${index + batch.length} of ${readable.length}`);
-				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
+				const outcome = await fetchReadable(batch, ctx, signal).catch((error: unknown) => {
 					const reason = error instanceof Error ? error.message : String(error);
 					for (const url of batch) noteFailure(loop.failures, url, reason);
 					return undefined;
@@ -578,7 +605,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			}
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
-				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
+				const outcome = await fetchReadable(batch, ctx, signal).catch((error: unknown) => {
 					const reason = error instanceof Error ? error.message : String(error);
 					for (const url of batch) noteFailure(failed, url, reason);
 					return undefined;

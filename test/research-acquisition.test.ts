@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkPublicTarget, classifyFetchFailure, type AcquisitionResolver } from "../src/research-acquisition.js";
+import { checkPublicTarget, classifyFetchFailure, pickArchivedSnapshot, waybackLookupUrl, type AcquisitionResolver } from "../src/research-acquisition.js";
 
 const resolvesTo = (address: string): AcquisitionResolver => async () => [{ address, family: address.includes(":") ? 6 : 4 }];
 
@@ -32,4 +32,17 @@ test("a public address is allowed and a private one behind a hostname fails clos
 test("non-http schemes and junk are refused", async () => {
 	assert.equal((await checkPublicTarget("file:///etc/passwd", { resolver: resolvesTo("93.184.216.34") })).ok, false);
 	assert.equal((await checkPublicTarget("not a url", { resolver: resolvesTo("93.184.216.34") })).ok, false);
+});
+
+test("the archive lookup encodes a full url as one parameter", () => {
+	const built = waybackLookupUrl("https://example.com/a?b=1&c=2");
+	assert.equal(built, "https://archive.org/wayback/available?url=https%3A%2F%2Fexample.com%2Fa%3Fb%3D1%26c%3D2");
+	assert.equal(new URL(built).searchParams.get("url"), "https://example.com/a?b=1&c=2");
+});
+
+test("only an available snapshot is taken, and it is upgraded to https", () => {
+	assert.equal(pickArchivedSnapshot({ archived_snapshots: { closest: { available: true, url: "http://web.archive.org/web/2024/https://x" } } }), "https://web.archive.org/web/2024/https://x");
+	assert.equal(pickArchivedSnapshot({ archived_snapshots: { closest: { available: false } } }), undefined);
+	assert.equal(pickArchivedSnapshot({ archived_snapshots: {} }), undefined);
+	assert.equal(pickArchivedSnapshot(null), undefined);
 });
