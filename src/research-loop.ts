@@ -40,6 +40,8 @@ export class ResearchLoop {
 	readonly library = new EvidenceLibrary();
 	readonly failures = new Set<string>();
 	readonly searched = new Set<string>();
+	/** Partial assessments are recorded here instead of ending the run they belong to. */
+	readonly assessmentNotes: string[] = [];
 	readonly attempted = new Set<string>();
 	readonly inspections: SourceInspection[] = [];
 	readonly inspectedSources = new Map<string, Source>();
@@ -159,8 +161,15 @@ export class ResearchLoop {
 		const { needs, continueSearching, reason } = modelObject(reply);
 		if (!Array.isArray(needs) || typeof continueSearching !== "boolean") throw new Error("The assessment did not contain coverage and a search decision.");
 		const judgments = new Map(needs.map((entry) => [entry?.id, entry]));
-		if (this.needs.some((need) => typeof judgments.get(need.id)?.answered !== "boolean")) {
-			throw new Error("The assessment did not judge each research need.");
+		// A reply that skips a need is a weaker answer, not a reason to throw away four rounds of
+		// evidence. Missing needs stay unanswered and the omission is recorded for the journal.
+		const unjudged = this.needs.filter((need) => typeof judgments.get(need.id)?.answered !== "boolean");
+		if (unjudged.length) {
+			this.assessmentNotes.push(
+				`The assessment judged ${this.needs.length - unjudged.length} of ${this.needs.length} needs; ${unjudged
+					.map((need) => need.id)
+					.join(", ")} left unanswered.`,
+			);
 		}
 		for (const need of this.needs) {
 			const row = judgments.get(need.id);

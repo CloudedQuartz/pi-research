@@ -72,3 +72,18 @@ check("no new queries stop the loop", () => {
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
 if (failures.length) process.exitCode = 1;
+
+check("a partial assessment leaves the unjudged needs unanswered instead of throwing", () => {
+	const loop = new ResearchLoop();
+	loop.plan(JSON.stringify({ needs: [
+		{ question: "First?", essential: true, queries: ["a"] },
+		{ question: "Second?", essential: true, queries: ["b"] },
+	] }));
+	// Only the first need is judged; the reply is otherwise well formed.
+	const partial = JSON.stringify({ needs: [{ id: 1, answered: false, passages: [], gap: "g", queries: ["a"] }], continueSearching: true, reason: "keep going" });
+	// The stop decision itself follows the usual policy; what matters is that it returns instead of throwing.
+	const stopping = loop.assess(partial, { needs: [{ id: 1, question: "First?", passages: ["P1"] }, { id: 2, question: "Second?", passages: [] }], passages: [], sources: [] } as never, false);
+	assert.equal(typeof stopping, "boolean");
+	assert.equal(loop.needs[1]?.answered, false);
+	assert.match(loop.assessmentNotes.at(-1) ?? "", /judged 1 of 2 needs/);
+});
