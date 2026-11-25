@@ -241,3 +241,21 @@ Against the 44 URLs these runs recorded as walls, measured directly:
 | same URL, browser-like User-Agent (acquisition module) | not yet measured in a run |
 
 The ladder is crawler → archive → browser, in that cost order, and a rung can only add a source.
+
+## Cycle log
+
+### Cycle 1 (impure sandbox, superseded)
+
+Run on a sandbox that inherited globally installed extensions, so it measured a setup a user
+would not have. Three tasks were started; two were still working after 21 minutes and t57 wedged
+entirely - 1034s with no new event, waiting on a `subagent` call that never returned. That wedge is
+the failure mode `PI_RESEARCH_SUBAGENT_WAIT_MS` exists for, and it is now set for the cycles.
+
+`/research` in a pristine install also told the model to call `subagent` although no such tool was
+installed; that is fixed by gating the delegation paragraph on the tool existing.
+
+### Cycle 2 (pristine sandbox, current build)
+
+Environment: `/tmp/sandbox3/agent`, credentials and settings only, this package installed with
+`pi install`, extension list is `research.ts` alone. Model deepseek-v4.1-flash, delegation bounded
+at 120s, fetch ladder enabled, archive fallback active.
