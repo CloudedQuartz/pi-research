@@ -141,6 +141,9 @@ interface ResearchRun {
 	inspectionBudget?: number;
 	/** Document parses left in this round; a scan costs seconds, so they are budgeted. */
 	documentBudget?: number;
+	/** True only while the turn this extension started is running. A subagent notification also
+	 *  settles the agent, and treating that as our turn ending aborted runs with no report. */
+	awaitingSettle?: boolean;
 	finishRequested?: boolean;
 }
 
@@ -251,6 +254,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	// Stage instructions reach the model as user text. `display: false` keeps the long prompts out
 	// of the transcript, where they used to be the bulk of what the user scrolled past.
 	const sendStage = (content: string, stage: ResearchRun["stage"], followUp = false) => {
+		if (run) run.awaitingSettle = true;
 		pi.sendMessage(
 			{ customType: STAGE_MESSAGE, content, display: false, details: { stage } },
 			followUp ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: true },
@@ -738,13 +742,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 
 	pi.on("context", (event, ctx) => {
 		if (run && !ownsSession(ctx)) return;
+		// A delegated agent's completion nudge is for the human, not for this run's prompt.
+		const withoutNudges = event.messages.filter((message) => !(message.role === "custom" && message.customType === "subagent-notification"));
 		const outsideRuns = completedRuns.length
-			? event.messages.filter((message) => {
+			? withoutNudges.filter((message) => {
 				const at = (message as { timestamp?: number }).timestamp;
 				if (typeof at !== "number") return true;
 				return !completedRuns.some((window) => at >= window.from && at < window.to && at !== window.keep);
 			})
-			: event.messages;
+			: withoutNudges;
 		// Each stage gets just its own prompt and any evidence returned in that stage. Stage prompts
 		// are custom messages, so they are a boundary too, not only user messages.
 		const start = outsideRuns.findLastIndex((message) =>
@@ -777,6 +783,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	pi.on("agent_settled", async (event, ctx) => {
 		if (!ownsSession(ctx)) return;
 		const current = run!;
+		if (!current.awaitingSettle) return; // a delegated agent's notification, not our turn
+		current.awaitingSettle = false;
 		const response = current.finalResponse;
 		if (event.aborted || current.stage === "report" || !response || response.stopReason !== "stop") {
 			await finish(ctx, event.aborted);
