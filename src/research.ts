@@ -47,7 +47,9 @@ const SEARCH_WAIT_MS = 90_000;
 /** Bound one unresponsive read batch: a single slow host must not stall the round. */
 const FETCH_WAIT_MS = 60_000;
 /** Per round, not per run: enough to check a few claims, not to re-read the corpus. */
-const INSPECTIONS_PER_ROUND = 8; // Bound one unresponsive search batch, not the investigation.
+const INSPECTIONS_PER_ROUND = 8;
+/** A stage that never comes back must not leave the run waiting forever. */
+const STAGE_WATCHDOG_MS = 20 * 60_000; // Bound one unresponsive search batch, not the investigation.
 
 /** Package that supplies the search and read tools; installed as a dependency of this package. */
 const WEB_ACCESS_PACKAGE = "pi-web-access";
@@ -255,6 +257,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	};
 
 	let run: ResearchRun | undefined;
+	let stageWatchdog: ReturnType<typeof setTimeout> | undefined;
+	let stageContext: ExtensionContext | undefined;
 	/** Child session hosting a run in parent mode, if one is live. */
 	let hosted: HostedRun | undefined;
 	/** Last journal written by a run, so /research-view works after it settles. */
@@ -264,6 +268,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	// of the transcript, where they used to be the bulk of what the user scrolled past.
 	const sendStage = (content: string, stage: ResearchRun["stage"], followUp = false) => {
 		if (run) run.awaitingSettle = true;
+		clearTimeout(stageWatchdog);
+		stageWatchdog = setTimeout(() => {
+			// Nothing came back: end with a reason instead of waiting forever.
+			if (run?.awaitingSettle && stageContext) void finish(stageContext, false);
+		}, STAGE_WATCHDOG_MS);
+		stageWatchdog.unref?.();
 		pi.sendMessage(
 			{ customType: STAGE_MESSAGE, content, display: false, details: { stage } },
 			followUp ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: true },
@@ -332,6 +342,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	};
 
 	const showProgress = (ctx: ExtensionContext, activity?: string, detail?: string) => {
+		stageContext = ctx;
 		clearInterval(progressTimer);
 		if (!ctx.hasUI) return;
 		if (!activity || !run) {
@@ -615,6 +626,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	};
 
 	const finish = async (ctx: ExtensionContext, aborted: boolean) => {
+		clearTimeout(stageWatchdog);
 		const current = run;
 		run = undefined;
 		if (!current) return;
@@ -820,14 +832,18 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (!ownsSession(ctx)) return;
 		const current = run!;
 		if (!current.awaitingSettle) return; // a delegated agent's notification, not our turn
-		// A wake caused by a delegated agent's nudge settles with no reply of ours. Acting on it
-		// finished the run with no report. Ignore those, but do not ignore a run forever.
-		if (!current.finalResponse && (current.ignoredSettles ?? 0) < 3) {
-			current.ignoredSettles = (current.ignoredSettles ?? 0) + 1;
-			return;
+		// A completion nudge also settles the agent. Recognise that wake by what landed last, rather
+		// than by the absence of a reply: a turn can legitimately end without text, and ignoring it
+		// left the run waiting on a stage prompt that was never sent again.
+		try {
+			const branch = ctx.sessionManager.getBranch();
+			const last = [...branch].reverse().find((entry) => entry.type === "custom" || entry.type === "message");
+			if (last?.type === "custom" && (last as { customType?: string }).customType === "subagent-notification") return;
+		} catch {
+			/* no branch access: treat the settle as ours */
 		}
-		current.ignoredSettles = 0;
 		current.awaitingSettle = false;
+		clearTimeout(stageWatchdog);
 		const response = current.finalResponse;
 		if (event.aborted || current.stage === "report" || !response || response.stopReason !== "stop") {
 			await finish(ctx, event.aborted);
