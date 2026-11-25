@@ -332,13 +332,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	const DOCUMENT_URL = /\.(pdf|docx?|pptx?|xlsx?|csv|tiff?|png|jpe?g|webp)(\?|$)/i;
 
 	/** Fetch the bytes and parse them, with OCR, so text-based and image-only documents both land. */
-	const parseDocument = async (url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<{ title?: string; text: string } | undefined> => {
-		if (!pi.getAllTools().some((tool) => tool.name === "document_parse")) return undefined;
+	const parseDocument = async (url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<{ text?: string; reason?: string }> => {
+		if (!pi.getAllTools().some((tool) => tool.name === "document_parse")) return { reason: "no document parser available" };
 		try {
 			const response = await fetch(url, { signal });
-			if (!response.ok) return undefined;
+			// A host can refuse this direct GET while the fetch tool reads the same document, so the
+			// reason matters: "download failed" and "the parser found no text" are different problems.
+			if (!response.ok) return { reason: `download failed: HTTP ${response.status}` };
 			const bytes = Buffer.from(await response.arrayBuffer());
-			if (!bytes.byteLength || bytes.byteLength > 40 * 1024 * 1024) return undefined;
+			if (!bytes.byteLength || bytes.byteLength > 40 * 1024 * 1024) return { reason: "download produced no usable bytes" };
 			const extension = (DOCUMENT_URL.exec(url) ?? ["", "bin"])[1]!.toLowerCase();
 			// The dot matters: the parser infers the format from the suffix.
 			const file = join(tmpdir(), `pi-research-${createHash("sha1").update(url).digest("hex").slice(0, 12)}.${extension}`);
@@ -349,21 +351,34 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				.map((part) => part.text)
 				.join("\n")
 				.trim();
-			return text ? { text } : undefined;
-		} catch {
-			return undefined;
+			return text ? { text } : { reason: "parser produced no text" };
+		} catch (error) {
+			return { reason: error instanceof Error ? error.message : "download failed" };
 		}
 	};
 
-	/** Add a parsed document to the corpus. Returns the passages it produced, or 0. */
-	const addParsedDocument = async (current: ResearchRun, url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<number> => {
-		if ((current.documentBudget ?? 0) <= 0) return 0;
+	/**
+	 * Add a parsed document to the corpus. Returns the passages it produced, or the reason it produced none.
+	 * When the direct download or the parser fails, the fetch tool is tried: it reads documents the raw GET
+	 * cannot reach, and a page of extracted text still beats losing the source entirely.
+	 */
+	const addParsedDocument = async (current: ResearchRun, url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<{ passages: number; reason?: string }> => {
+		if ((current.documentBudget ?? 0) <= 0) return { passages: 0, reason: "document budget for this round is spent" };
 		current.documentBudget = (current.documentBudget ?? 0) - 1;
 		const parsed = await parseDocument(url, ctx, signal);
-		if (!parsed) return 0;
-		const before = current.loop.library.passages.length;
-		const stored = current.loop.library.addSource({ url, title: parsed.title ?? url, text: parsed.text, retrievedAt: new Date().toISOString() });
-		return stored.status === "added" ? current.loop.library.passages.length - before : 0;
+		const add = (text: string, title?: string): number => {
+			const before = current.loop.library.passages.length;
+			const stored = current.loop.library.addSource({ url, title: title ?? url, text, retrievedAt: new Date().toISOString() });
+			return stored.status === "added" ? current.loop.library.passages.length - before : 0;
+		};
+		if (parsed.text) return { passages: add(parsed.text) };
+		const fallback = await boundedFetch([url], ctx, signal).catch(() => undefined);
+		const page = (fallback?.result.structuredContent as { urls?: { url: string; title: string; content: string }[] } | undefined)?.urls?.[0];
+		if (page?.content?.trim()) {
+			const passages = add(page.content, page.title);
+			if (passages > 0) return { passages };
+		}
+		return { passages: 0, reason: parsed.reason ?? "no readable text returned" };
 	};
 
 	const showProgress = (ctx: ExtensionContext, activity?: string, detail?: string) => {
@@ -450,9 +465,9 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const added: RoundEntry["sources"] = [];
 			for (const [index, url] of documents.entries()) {
 				showProgress(ctx, `Parsing document ${index + 1} of ${documents.length}`, url);
-				const passages = await addParsedDocument(current, url, ctx, signal);
-				if (passages > 0) added.push({ title: url, url, retrievedAt: new Date().toISOString() });
-				else loop.failures.add(`${url}: document parse produced no text`);
+				const parsed = await addParsedDocument(current, url, ctx, signal);
+				if (parsed.passages > 0) added.push({ title: url, url, retrievedAt: new Date().toISOString() });
+				else loop.failures.add(`${url}: ${parsed.reason ?? "no readable text"}`);
 			}
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
@@ -545,9 +560,9 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const documents = safeUrls.filter((url) => DOCUMENT_URL.test(url));
 			const readable = safeUrls.filter((url) => !DOCUMENT_URL.test(url));
 			for (const url of documents) {
-				const passages = await addParsedDocument(current, url, ctx, signal);
-				if (passages > 0) added.push({ url, title: url, passages });
-				else skipped.push({ url, reason: "document parse produced no text" });
+				const parsed = await addParsedDocument(current, url, ctx, signal);
+				if (parsed.passages > 0) added.push({ url, title: url, passages: parsed.passages });
+				else skipped.push({ url, reason: parsed.reason ?? "no readable text" });
 			}
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
