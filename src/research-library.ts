@@ -39,7 +39,7 @@ export interface Coverage {
 	enough: boolean;
 }
 
-const MIN_PASSAGE_WORDS = 25;
+const MIN_PASSAGE_WORDS = 8;
 const PASSAGE_TARGET_CHARS = 900;
 const SHINGLE_SIZE = 5;
 const NEAR_DUPLICATE = 0.8;
@@ -96,12 +96,17 @@ export function sourceKey(rawUrl: string): string {
 	}
 }
 
-/** Passages that are mostly navigation, metadata or very short: not evidence. */
+/**
+ * Drop only text that cannot carry a claim: a stub with a handful of words, or a chunk with no
+ * letters at all. Word-count ratios were a bad filter here — they removed one-sentence findings and
+ * measurement tables while letting alphabetic navigation lists through — so length alone decides,
+ * and ranking is left to BM25/MMR.
+ */
 function looksLikeBoilerplate(text: string): boolean {
 	const tokens = text.split(/\s+/).filter(Boolean);
-	if (words(text).length < MIN_PASSAGE_WORDS) return true;
-	const alphabetic = tokens.filter((token) => /^[\p{L}][\p{L}'’-]{2,}[.,;:!?)]?$/u.test(token)).length;
-	return alphabetic / tokens.length < 0.6;
+	if (tokens.length < MIN_PASSAGE_WORDS) return true;
+	// Needs at least a few real words, not a bare number or symbol run.
+	return !/\p{L}[\p{L}'’-]{2,}/u.test(text);
 }
 
 function packSentences(text: string): { start: number; end: number }[] {
@@ -147,8 +152,14 @@ export class EvidenceLibrary {
 				const aliases = [...new Set([existing.url, ...existing.aliases])].filter((url) => url !== input.url);
 				this.sources.set(key, { ...input, id: key, kind, aliases });
 				this.shingleCache.set(key, shingles(input.text));
+				const previous = this.passages.filter((passage) => passage.sourceId === key);
 				for (let i = this.passages.length - 1; i >= 0; i--) if (this.passages[i]!.sourceId === key) this.passages.splice(i, 1);
-				this.addPassages(key, input.text);
+				if (!this.addPassages(key, input.text)) {
+					// The fuller copy produced nothing usable: put the previous passages back.
+					this.sources.set(key, { ...existing });
+					this.passages.push(...previous);
+					return { status: "alias", sourceId: key };
+				}
 				return { status: "alias", sourceId: key };
 			}
 			return { status: "alias", sourceId: key };
@@ -163,16 +174,26 @@ export class EvidenceLibrary {
 		}
 		this.sources.set(key, { ...input, id: key, kind, aliases: [] });
 		this.shingleCache.set(key, fingerprint);
-		this.addPassages(key, input.text);
+		if (!this.addPassages(key, input.text)) {
+			// Nothing citable came out of the text: keep the corpus honest rather than counting a
+			// source the writer can never cite.
+			this.sources.delete(key);
+			this.shingleCache.delete(key);
+			return { status: "empty" };
+		}
 		return { status: "added", sourceId: key };
 	}
 
-	private addPassages(sourceId: string, text: string): void {
+	/** Returns how many citable passages the text produced; zero means the source is unusable. */
+	private addPassages(sourceId: string, text: string): number {
+		let added = 0;
 		for (const span of packSentences(text)) {
 			const passage = text.slice(span.start, span.end);
 			if (!passage.trim() || looksLikeBoilerplate(passage)) continue;
 			this.passages.push({ id: `${sourceId}#${span.start}`, sourceId, start: span.start, end: span.end, text: passage });
+			added += 1;
 		}
+		return added;
 	}
 
 	/** Passages for one subquestion, diverse by MMR and capped per source. */

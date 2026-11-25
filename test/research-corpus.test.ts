@@ -100,5 +100,34 @@ Trailing punctuation, https://example.org/report; and duplicates must not surviv
 	assert.deepEqual(harvestUrls("No links here."), [], "a reply without URLs contributes nothing");
 });
 
+
+check("a one-sentence finding survives and a stub does not", () => {
+	const library = new EvidenceLibrary();
+	library.addSource({
+		url: "https://example.org/finding",
+		title: "Short finding",
+		text: "Acoustic loggers cut non-revenue water by 12% across 240 repairs in the district.",
+		retrievedAt: "2026-11-25T00:00:00.000Z",
+	});
+	assert.ok(library.passages.length > 0, "a compact finding is citable evidence");
+
+	const stub = new EvidenceLibrary();
+	const result = stub.addSource({ url: "https://example.org/stub", title: "Stub", text: "Home About", retrievedAt: "2026-11-25T00:00:00.000Z" });
+	assert.equal(result.status, "empty", "a handful of words is not a source");
+	assert.equal(stub.passages.length, 0);
+	assert.equal(stub.sources.size, 0, "an unusable page is not kept in the corpus");
+});
+
+check("a measurement table with labels survives the filter", () => {
+	const library = new EvidenceLibrary();
+	library.addSource({
+		url: "https://example.org/table",
+		title: "Reported savings",
+		text: "Case A 12.0 1.8 0.9 2022 acoustic measured billing Case B 9.5 0.7 0.4 2023 satellite modelled production estimate",
+		retrievedAt: "2026-11-25T00:00:00.000Z",
+	});
+	assert.ok(library.passages.length > 0, "numeric evidence with labels is kept");
+});
+
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
 if (failures.length) process.exitCode = 1;
