@@ -274,7 +274,9 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			if (!response.ok) return undefined;
 			const bytes = Buffer.from(await response.arrayBuffer());
 			if (!bytes.byteLength || bytes.byteLength > 40 * 1024 * 1024) return undefined;
-			const file = join(tmpdir(), `pi-research-${createHash("sha1").update(url).digest("hex").slice(0, 12)}${(DOCUMENT_URL.exec(url) ?? ["", "bin"])[1]!.toLowerCase()}`);
+			const extension = (DOCUMENT_URL.exec(url) ?? ["", "bin"])[1]!.toLowerCase();
+			// The dot matters: the parser infers the format from the suffix.
+			const file = join(tmpdir(), `pi-research-${createHash("sha1").update(url).digest("hex").slice(0, 12)}.${extension}`);
 			writeFileSync(file, bytes);
 			const outcome = await nested(() => ctx.executeTool("document_parse", { path: file, format: "text", ocr: "auto" }, { signal }));
 			const text = outcome.result.content
