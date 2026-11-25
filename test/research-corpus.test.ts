@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { EvidenceLibrary } from "../src/research-library.js";
 import { ResearchLoop } from "../src/research-loop.js";
 import { harvestUrls } from "../src/research-host.js";
+import { renderReport } from "../src/research-evidence.js";
 
 const failures: string[] = [];
 const check = (label: string, run: () => void) => {
@@ -127,6 +128,29 @@ check("a measurement table with labels survives the filter", () => {
 		retrievedAt: "2026-11-25T00:00:00.000Z",
 	});
 	assert.ok(library.passages.length > 0, "numeric evidence with labels is kept");
+});
+
+
+check("a delegated page becomes a numbered citation in the report", () => {
+	const loop = new ResearchLoop();
+	loop.plan(JSON.stringify({ needs: [{ question: "What measured reductions do acoustic loggers report?", essential: true, queries: ["acoustic logger non-revenue water"] }] }));
+	const stored = loop.library.addSource({
+		url: "https://example.org/delegated-trial",
+		title: "Delegated field trial",
+		text: "Acoustic loggers cut non-revenue water by 12% across 240 repairs, measured from billed consumption over two years.",
+		retrievedAt: "2026-11-25T00:00:00.000Z",
+	});
+	assert.equal(stored.status, "added");
+
+	const packet = loop.evidence();
+	const cited = packet.needs.flatMap((need) => need.passages);
+	assert.ok(cited.length > 0, "the delegated page is cited by the need");
+
+	const passages = packet.passages.map((passage) => ({ ...passage, source: loop.library.sources.get(passage.sourceId)! }));
+	const report = renderReport(`Claim [${cited[0]}].`, passages, []);
+	assert.ok(report.includes("[1](#evidence-1)"), "the citation resolves to a numbered link");
+	assert.ok(report.includes("https://example.org/delegated-trial"), "the entry names the delegated URL");
+	assert.ok(!report.includes("unresolved"), "nothing is left unresolved");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
