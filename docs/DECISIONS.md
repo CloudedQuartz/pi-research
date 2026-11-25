@@ -1,10 +1,15 @@
-# What was taken from `origin/riya`, and what was not
+# Decisions carried over from the earlier IR branch
 
-The earliest branch (`origin/riya`, 23 commits on the old lineage) overlaps this
-tree only partly. This note records each candidate, the decision, and why — so
-nothing is left unexamined.
+The project has two lineages. The earlier one (`origin/riya`, 23 commits) grew a
+full IR core: its own index, rankers, clustering, classifier and metrics. This tree
+came at the same problem from the other end - evidence collection first, with a
+BM25 + MMR library and a citation-first report - so the two overlap where the
+question is the same and diverge where the architecture is different.
 
-## Taken
+This note records what crossed over and what did not, so that the divergence is a
+decision on the record rather than an accident of history.
+
+## Adopted
 
 | Item | From | Why | Test |
 |---|---|---|---|
@@ -23,7 +28,7 @@ contains no robots logic, so robots enforcement is not happening anywhere in thi
 pipeline. Recorded rather than deleted: it is 39 KB of prior work that a future
 change could wire up deliberately.
 
-## Not taken, and why
+## Not adopted, and why
 
 | Item | Reason |
 |---|---|
@@ -38,6 +43,7 @@ change could wire up deliberately.
 
 ## Consequence
 
-The only retrieval change taken from the old branch is stemming. Everything else
-either duplicates what is here, is unmeasurable without judgments, or was rejected
-for a defect recorded above.
+Stemming is the one retrieval change that crossed over. The rest either duplicates
+what is here, cannot be measured without relevance judgments, or carries a defect
+recorded above. None of it is lost: the branch still has it, and the reasons it
+stayed there are written down.

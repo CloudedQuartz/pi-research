@@ -64,7 +64,7 @@ prints only scores, so its usage was not captured; it is one request against
 - **Nothing surfaces fetch failure to the reader.** The report does not say "21
   candidate sources were blocked"; only the journal does. A reader cannot tell that
   half the evidence base was refused.
-- **`research-acquisition.ts` is mostly unwired** (see RIYA-SALVAGE.md): the module
+- **`research-acquisition.ts` is mostly unwired** (see DECISIONS.md): the module
   that looks like it hardens acquisition is not in the fetch path, and robots is not
   enforced anywhere.
 
