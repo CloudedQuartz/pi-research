@@ -138,3 +138,26 @@ gets one attempt, and the recorded reason is the real one.
 Not every failure is recoverable, and that is worth stating plainly: SAGE,
 ScienceDirect and DOI publisher links answer 403 to a browser-like request as well,
 so only a hosted reader route can reach them, and that changes who sees the URL.
+
+## The clean re-runs (frozen build, no mid-run edits)
+
+Three of the failed tasks were re-run against a frozen copy of the installed package,
+with no edits to it while they ran, so the earlier confound is gone:
+
+| task | sources collected | journal | report |
+|---|---:|---|---|
+| 51 | 17 | `status=stopped`, `stopReason=None`, 0 errors | none |
+| 62 | 18 | `status=stopped`, `stopReason=None`, 0 errors | none |
+| 57 | 29 (443 KB of evidence) | `status=running`, never finalised | written by the parent model, uncited |
+
+None of the three produced a pipeline report, and none recorded why it stopped. The
+400 call rate limiting that killed task 62 on the first attempt does not appear in
+these sessions at all, so throttling was a consequence of running eight at once, not
+the cause of the silent stops.
+
+That is the headline limitation of the current build: **the research usually works and
+the finishing does not always happen**, and when it does not, the journal cannot say
+what went wrong. Until that is fixed, any score in this document is drawn from the
+runs that happened to finish, which is a biased sample - the three that produced
+reports are exactly the three that collected 3-12 sources, while the runs that died
+had collected 17-29.
