@@ -824,7 +824,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (event.toolName === SUBAGENT_RESULT_TOOL) {
 			const input = event.input as { wait?: boolean; timeout?: number };
 			input.wait = true;
-			delete input.timeout;
+			// Default is to wait for the outcome with no bound. PI_RESEARCH_SUBAGENT_WAIT_MS bounds it,
+			// which is how the completion-notification path can be exercised: the retrieval returns
+			// early, the model moves on, and the agent's pages arrive later through its notification.
+			const bound = Number(process.env.PI_RESEARCH_SUBAGENT_WAIT_MS ?? 0);
+			if (Number.isFinite(bound) && bound > 0) input.timeout = Math.max(1, Math.round(bound / 1000));
+			else delete input.timeout;
 		}
 	});
 
