@@ -12,6 +12,7 @@
  * Nothing here removes evidence. The factor reorders passages and the detail is shown to
  * the writer and recorded in the journal.
  */
+import { readFileSync } from "node:fs";
 import { checkDomain } from "@aloth/cred1";
 
 export type SourceTier = "institution" | "journal" | "neutral" | "aggregator" | "low";
@@ -46,6 +47,44 @@ const JOURNAL_HOST =
 	/(^|\.)(doi\.org|arxiv\.org|ncbi\.nlm\.nih\.gov|nature\.com|science\.org|sciencedirect\.com|springer\.com|link\.springer\.com|wiley\.com|onlinelibrary\.wiley\.com|mdpi\.com|ieee\.org|jstor\.org|tandfonline\.com|sagepub\.com|scielo\.br|journals\.plos\.org|cambridge\.org|oxfordacademic\.com|iwaonline\.com|wrc\.org\.za)$/;
 
 const cache = new Map<string, SourceCredibility>();
+
+/** Lazily loaded local Tranco list: undefined = not read yet, null = none configured. */
+let tranco: Map<string, number> | null | undefined;
+/** Rank of the host or its parent domain in the local list, or null when unknown. */
+function trancoRank(host: string): number | null {
+	if (tranco === undefined) {
+		tranco = null;
+		const path = process.env.PI_RESEARCH_TRANCO?.trim();
+		if (path) {
+			try {
+				const map = new Map<string, number>();
+				for (const line of readFileSync(path, "utf8").split("\n")) {
+					const parts = line.trim().split(",");
+					if (parts.length === 0 || !parts[0]) continue;
+					const rank = Number.parseInt(parts[0], 10);
+					const domain = (parts.length > 1 ? parts[1]! : parts[0]).trim().toLowerCase();
+					if (!domain || !Number.isFinite(rank) || map.has(domain)) continue;
+					map.set(domain, rank);
+				}
+				tranco = map;
+			} catch {
+				tranco = null;
+			}
+		}
+	}
+	if (!tranco) return null;
+	for (let candidate = host; candidate.includes("."); candidate = candidate.slice(candidate.indexOf(".") + 1)) {
+		const rank = tranco.get(candidate);
+		if (rank !== undefined) return rank;
+	}
+	return null;
+}
+
+/** Drop the cached list (tests, or after replacing the file). */
+export function resetTrancoCache(): void {
+	tranco = undefined;
+	cache.clear();
+}
 
 /** Hostname without `www.`, lowercased. Empty string when the URL has no host. */
 export function hostOf(url: string): string {
@@ -87,7 +126,16 @@ export function credibilityOf(url: string): SourceCredibility {
 	} else if (rating) {
 		result = { tier: "neutral", factor: 1, detail: `CRED-1 rates this outlet ${rating.level} (score ${rating.score.toFixed(2)})` };
 	} else {
-		result = { tier: "neutral", factor: 1, detail: "no independent rating; treated as neutral" };
+		const rank = trancoRank(host);
+		if (rank !== null) {
+			result = { tier: "neutral", factor: 1, detail: `no independent rating; Tranco ranks this domain ${rank}` };
+		} else if (tranco) {
+			// Only when a local list is configured: absence from a popularity list is a weak signal,
+			// so it lowers the prior slightly rather than excluding the page.
+			result = { tier: "neutral", factor: 0.9, detail: "no independent rating and not in the local Tranco list; ranked lower" };
+		} else {
+			result = { tier: "neutral", factor: 1, detail: "no independent rating; treated as neutral" };
+		}
 	}
 
 	cache.set(host, result);

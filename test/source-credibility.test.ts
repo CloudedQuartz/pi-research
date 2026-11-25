@@ -4,7 +4,10 @@
  */
 import assert from "node:assert/strict";
 import { EvidenceLibrary } from "../src/research-library.js";
-import { credibilityOf, hostOf } from "../src/source-credibility.js";
+import { credibilityOf, hostOf, resetTrancoCache } from "../src/source-credibility.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { renderReport } from "../src/research-evidence.js";
 
 const failures: string[] = [];
@@ -61,6 +64,29 @@ check("the report states the reason next to the citation", () => {
 	const report = renderReport("Claim [P1].", [numbered], []);
 	assert.match(report, /CRED-1 rates this outlet low/, "the entry carries the CRED-1 reason");
 	assert.match(report, /infowars\.com/, "and the URL");
+});
+
+
+check("a local Tranco list ranks a known domain and lowers an unknown one", () => {
+	const dir = mkdtempSync(join(tmpdir(), "tranco-"));
+	const file = join(dir, "tranco.txt");
+	writeFileSync(file, "1,google.com\n250,epa.gov\n9000,example.org\n");
+	process.env.PI_RESEARCH_TRANCO = file;
+	resetTrancoCache();
+
+	const known = credibilityOf("https://example.org/page");
+	assert.equal(known.tier, "neutral");
+	assert.match(known.detail, /Tranco ranks this domain 9000/);
+	assert.equal(known.factor, 1);
+
+	const unknown = credibilityOf("https://periodlywise.com/blog/post");
+	assert.equal(unknown.factor, 0.9, "an unlisted host ranks lower when a list is configured");
+	assert.match(unknown.detail, /not in the local Tranco list/);
+
+	delete process.env.PI_RESEARCH_TRANCO;
+	resetTrancoCache();
+	const unconfigured = credibilityOf("https://periodlywise.com/blog/post");
+	assert.equal(unconfigured.factor, 1, "with no list configured nothing is penalised");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
