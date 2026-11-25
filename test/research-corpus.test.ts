@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { EvidenceLibrary } from "../src/research-library.js";
 import { ResearchLoop } from "../src/research-loop.js";
-import { harvestUrls } from "../src/research-host.js";
+import { formatJournal, harvestUrls } from "../src/research-host.js";
 import { renderReport } from "../src/research-evidence.js";
 
 const failures: string[] = [];
@@ -151,6 +151,25 @@ check("a delegated page becomes a numbered citation in the report", () => {
 	assert.ok(report.includes("[1](#evidence-1)"), "the citation resolves to a numbered link");
 	assert.ok(report.includes("https://example.org/delegated-trial"), "the entry names the delegated URL");
 	assert.ok(!report.includes("unresolved"), "nothing is left unresolved");
+});
+
+
+check("/research-view lists a delegated source under its round", () => {
+	const lines = formatJournal({
+		question: "Compare three approaches",
+		status: "complete",
+		startedAt: Date.now() - 60_000,
+		finishedAt: Date.now(),
+		rounds: [{ round: 2, queries: ["q"], sources: [], failures: [], passages: 3, totalSources: 11 }],
+		assessments: [],
+		inspections: [],
+		delegations: [{ round: 2, added: [{ url: "https://example.org/delegated", title: "Delegated page", passages: 3 }], failed: [], skipped: [{ url: "https://example.org/dup", reason: "alias: already in the corpus" }] }],
+		stopReason: "done",
+	});
+	const text = lines.join("\n");
+	assert.ok(text.includes("Delegated sources"), "a section is rendered");
+	assert.ok(text.includes("added 3 passages: Delegated page \u2014 https://example.org/delegated"), "the added page and its passage count are shown");
+	assert.ok(text.includes("skipped: https://example.org/dup"), "a skipped page is shown with its reason");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
