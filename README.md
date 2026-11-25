@@ -6,14 +6,25 @@ This is a Pi-native adaptation of [LangChain Open Deep Research](https://github.
 
 ## Requirements
 
-Run `npm ci` and enable `web_search` and `fetch_content` from `pi-web-access`. Search supplies URLs and metadata. The extension reads pages with `fetch_content` in readable mode and records failed reads without switching readers. Pi makes all model requests through the active session.
+`web_search` and `fetch_content` come from [`pi-web-access`](https://github.com/nicobailon/pi-web-access), declared in this package's `dependencies`, so installing the package through `pi install` installs it too. When `/research` starts it checks those tools; if nothing has registered them it loads the dependency itself, and if that fails it names the missing tool and the fix instead of starting a run that cannot work. Because it only loads `pi-web-access` when a tool is absent, a separately installed copy is not registered twice.
 
-## Use
+Host packages (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`) are peer dependencies supplied by Pi and are not bundled.
 
-Run Pi from this directory:
+For a source checkout, run `npm ci` and start Pi from the repository:
 
 ```bash
 pi -e src/research.ts
+```
+
+`npm test` runs the offline RPC regression, and `npm run typecheck` checks the sources against the host Pi types. Both need the dev dependencies, which `npm ci` installs.
+
+Search supplies URLs and metadata. The extension reads pages with `fetch_content` in readable mode and records failed reads without switching readers. Pi makes all model requests through the active session.
+## Use
+
+Run Pi from this directory, or load the extension isolated from your other extensions and give it the search tools explicitly:
+
+```bash
+pi -ne -e src/research.ts -e npm:pi-web-access
 ```
 
 Then start a research run:
@@ -25,6 +36,21 @@ Then start a research run:
 The brief appears as an ordinary assistant reply, and the run continues without a plan-approval gate. During evidence collection, enter `/research-finish` to finish the current turn and write from the evidence gathered so far. Escape cancels the run without starting synthesis.
 
 `/research` without a question opens the input dialog. In non-interactive modes, provide the question as part of the command.
+
+## Progress, and where the run lives
+
+`/research` does not run in your session. It starts a child Pi session that owns every model turn, prompt and evidence packet, and this session only sees progress:
+
+- the widget mirrors the child as a todo list, not a spinner: one row per finished round with its query, source, passage and failure counts, plus the step in progress and the elapsed time;
+- one notice when the run starts and one when the report is saved, with the round, source and passage counts and the file path.
+
+Because the run's turns belong to the child session, no part of the research transcript is in your context: a follow-up question after a run sends what it did before, not the run. The child session is an ordinary Pi session, so you can read the internals with `/resume` and pick it out by its start time; its fixes stay independent of your conversation history.
+
+`/research-stop` ends a hosted run; the child saves the evidence it already collected. Research turns run with thinking off, and the writing turn restores your thinking level.
+
+Collection stops when every essential need is answered, when no new queries are proposed, when two consecutive rounds add no new source or passage, when you run `/research-finish`, or when you cancel. Every stop states which condition ended it.
+
+## What a run does
 
 ## What a run does
 

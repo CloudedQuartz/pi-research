@@ -47,6 +47,8 @@ export class ResearchLoop {
 	needs: Need[] = [];
 	stopReason = "";
 	private checkingStop = false;
+	/** Consecutive rounds that produced no new source or passage. */
+	private stalledRounds = 0;
 
 	plan(reply: string): void {
 		const { needs } = modelObject(reply);
@@ -168,7 +170,10 @@ export class ResearchLoop {
 			need.gap = typeof row?.gap === "string" ? row.gap.trim() : undefined;
 			if (!need.answered && need.essential) need.queries.push(...strings(row?.queries));
 		}
+		if (gainedEvidence) this.stalledRounds = 0;
+		else this.stalledRounds += 1;
 		if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
+		else if (this.stalledRounds >= 2) this.stopReason = "Two rounds added no new sources or passages; further searches were not producing evidence.";
 		else if (!this.pendingQueries().length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
 		else if (!continueSearching && (!gainedEvidence || this.checkingStop)) {
 			this.stopReason = typeof reason === "string" && reason.trim() ? reason.trim() : "Another search was unlikely to change the conclusions.";

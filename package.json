@@ -7,17 +7,43 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/research-rpc.mjs",
+    "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "deep-research",
+    "web-research"
+  ],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./src/research.ts"
+    ]
+  },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
     "ipaddr.js": "2.5.0",
     "linkedom": "0.16.11",
-    "typebox": "1.3.27",
+    "pi-web-access": "^0.10.7",
     "unpdf": "1.6.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.6.0",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-tui": "1.6.0",
+    "@types/node": "24.19.1",
+    "tsx": "^4.23.15",
+    "typebox": "1.3.36",
+    "typescript": "7.0.2"
   }
 }
