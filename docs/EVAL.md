@@ -171,3 +171,26 @@ npm run eval:retrieval -- research/<run>.evidence.json ...
 
 Labels are cached as `<run>.evidence.qrels.json` next to the evidence file, so a rerun
 costs nothing and does not depend on the judge being reachable.
+
+## Why runs stop without a report: the stage watchdog
+
+Every clean re-run that collected sources and produced no report ended 1200s after its last
+stage prompt, which is `STAGE_WATCHDOG_MS` exactly.
+
+| run | last stage prompt | journal `finishedAt` | gap |
+|---|---|---|---|
+| t62 | `20:36:15.276Z` | `20:56:17.537Z` | 1202s |
+| t57 | started `20:33:52Z` | `20:54:16.436Z` | 1224s total |
+
+t62's session shows the model was still working when the extension gave up: its `bash` and
+`write` calls land at `20:57:47` and `20:59:08`, 90 and 171 seconds after `finishedAt`. Once
+the run is cleared those calls are not evidence collection — one wrote
+`/tmp/sandbox/work/t62/ion-trap-scaling-report.md` (14,240 bytes, no citations, outside the
+pipeline that resolves `[P123]` to a linked footnote).
+
+The watchdog ends the run rather than writing from the evidence already collected, and its
+path sets no `stopReason`, so journals read `status=stopped` with `None`.
+
+An earlier note on `cba8398` attributed these stops to a settle/message_end race. That
+ordering is real and now hardened against, but it is not the cause: the timing above rules it
+out, and the runs that failed stayed alive for 20 minutes.
