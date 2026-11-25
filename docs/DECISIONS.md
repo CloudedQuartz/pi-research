@@ -17,16 +17,19 @@ decision on the record rather than an accident of history.
 
 ## Already present
 
-The acquisition hardening in `origin/riya:src/acquisition.ts` was adapted earlier
-(this tree's `src/research-acquisition.ts` credits `3cdb94b`), and it is present -
-but mostly **not wired**. Only `normalizeUrl` and `shouldSkipCandidateUrl` are
+The acquisition hardening in `origin/riya:src/acquisition.ts` was written by riyaa42
+and adapted into `src/research-acquisition.ts`: 637 of that file's 932 lines are
+byte-identical to her 1125-line original. She is the git author of the stemmer commit
+and `Co-authored-by` on the commits that carry this module. It is present, but mostly
+**not wired**. Only `normalizeUrl` and `shouldSkipCandidateUrl` are
 imported (by `research-loop.ts`). `isBotChallenge`, `parseHtmlMetadata` (JSON-LD
 dates, canonical URLs), `isThinContent` and the whole `AcquisitionService` are dead
 code: page reads go through `pi-web-access`'s `fetch_content`, not this module
 (`src/research.ts` calls `ctx.executeTool(FETCH_TOOL, ...)`). The module also
 contains no robots logic, so robots enforcement is not happening anywhere in this
-pipeline. Recorded rather than deleted: it is 39 KB of prior work that a future
-change could wire up deliberately.
+pipeline. Recorded rather than deleted: a future change could wire it up
+deliberately, and the record of who wrote it is the point of this note, not a
+judgement on the code.
 
 ## Not adopted, and why
 
