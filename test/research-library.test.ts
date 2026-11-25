@@ -6,7 +6,7 @@
  * Run: ./node_modules/.bin/tsx test/research-library.test.ts   (exit 1 on any failed check)
  */
 import { EvidenceLibrary } from '../src/research-library.js';
-import { ResearchLoop } from '../src/research-loop.js';
+import { ResearchLoop, modelObject } from '../src/research-loop.js';
 
 const failures: string[] = [];
 const check = (label: string, condition: boolean): void => {
@@ -49,6 +49,10 @@ const selected = loop.selectUrls(groups());
 check('Naive Bayes keeps the on-topic candidate', selected.includes('https://water.example/news/acoustic-leak-savings'));
 check('Naive Bayes drops the off-topic candidate before fetch', !selected.includes('https://food.example/recipes/pasta-tomato')
   && loop.filtered.some(entry => entry.url === 'https://food.example/recipes/pasta-tomato'));
+
+// Model replies: bare JSON, fenced JSON, and fenced JSON followed by prose (seen live on gemini-3-flash-preview).
+check('modelObject parses bare and fenced JSON', modelObject('{"a":1}').a === 1 && modelObject('```json\n{"a":2}\n```').a === 2);
+check('modelObject ignores prose after a fenced JSON block', modelObject('```json\n{"a":3}\n```\n\n**PMCR** stands for {not json}').a === 3);
 
 if (failures.length) {
   console.error(`\n${failures.length} check(s) failed: ${failures.join('; ')}`);

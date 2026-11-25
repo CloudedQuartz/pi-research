@@ -37,7 +37,9 @@ const strings = (value: unknown): string[] => Array.isArray(value)
 	: [];
 
 export function modelObject(text: string): Record<string, unknown> {
-	const value: unknown = JSON.parse(text.trim().replace(/^```(?:json)?\s*\n|\n```$/gi, ""));
+	// Models sometimes keep writing after a fenced JSON block; the fenced object is the reply.
+	const fenced = text.match(/```(?:json)?[ \t]*\n([\s\S]*?)\n[ \t]*```/i);
+	const value: unknown = JSON.parse((fenced ? fenced[1]! : text).trim());
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object.");
 	return value as Record<string, unknown>;
 }
