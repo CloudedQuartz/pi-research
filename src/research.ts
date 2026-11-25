@@ -20,7 +20,7 @@ import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionToolContex
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
-import { ResearchLoop, type EvidencePacket, type SearchGroup } from "./research-loop.js";
+import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay } from "./research-loop.js";
 import { checkPublicTarget, classifyFetchFailure } from "./research-acquisition.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
@@ -151,6 +151,8 @@ interface ResearchRun {
 	ignoredSettles?: number;
 	/** Consecutive stage turns that returned no text at all. */
 	emptyTurns?: number;
+	/** Provider error text for the turn that just ended, if it ended on an error. */
+	lastError?: string;
 	finishRequested?: boolean;
 }
 
@@ -841,6 +843,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			.join("\n")
 			.trim();
 		current.finalResponse = text ? { text, stopReason: event.message.stopReason } : undefined;
+		const failure = (event.message as { errorMessage?: string }).errorMessage;
+		current.lastError = event.message.stopReason === "error" ? failure ?? "provider error" : undefined;
 		if (current.stage === "report" && event.message.stopReason === "stop" && text) current.reportAt = event.message.timestamp;
 	});
 
@@ -882,12 +886,20 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		current.awaitingSettle = false;
 		clearTimeout(stageWatchdog);
 		const response = current.finalResponse;
-		// A provider can return an empty completion. That is not the end of the run: ask again, a
-		// bounded number of times, instead of writing no report at all.
-		if (!response && (current.emptyTurns ?? 0) < 2) {
+		// A provider can return an empty completion, or stop on a transient error (a rate limit is
+		// the common one when several runs share a key). Neither is the end of the run: ask again,
+		// backing off on a retryable error, instead of writing no report at all.
+		const backoff = providerRetryDelay(current.lastError, (current.emptyTurns ?? 0) + 1);
+		if (!response && (current.emptyTurns ?? 0) < (backoff ? 4 : 2)) {
 			current.emptyTurns = (current.emptyTurns ?? 0) + 1;
 			const again = current.stage === "brief" ? briefPrompt(current.question) : current.stage === "research" ? researchPrompt(current) : reportPrompt(current);
-			showProgress(ctx, "The model returned nothing; asking again…");
+			if (backoff) {
+				showProgress(ctx, `Provider error; retrying in ${Math.round(backoff / 1000)}s…`);
+				await new Promise((resolve) => setTimeout(resolve, backoff));
+			} else {
+				showProgress(ctx, "The model returned nothing; asking again…");
+			}
+			current.lastError = undefined;
 			sendStage(again, current.stage);
 			return;
 		}

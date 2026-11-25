@@ -182,3 +182,14 @@ export class ResearchLoop {
 		return !this.stopReason;
 	}
 }
+
+/**
+ * How long to wait before re-asking after a provider error, or undefined if the error
+ * is not worth retrying. A throttled run should back off instead of ending without a
+ * report: eight concurrent runs were enough to exhaust a provider's rate limit.
+ */
+export function providerRetryDelay(reason: string | undefined, attempt: number): number | undefined {
+	if (!reason) return undefined;
+	if (!/429|rate[_ ]?limit|overloaded|too many requests|timed? ?out|\b50[0234]\b/i.test(reason)) return undefined;
+	return Math.min(120_000, 20_000 * 2 ** Math.max(0, attempt - 1));
+}
