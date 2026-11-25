@@ -461,18 +461,22 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const current = run;
-		const started = Date.now();
+		const clock = (seconds: number) => (seconds >= 60 ? `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`);
 		const render = () => {
-			const elapsed = Math.floor((Date.now() - started) / 1000);
-			// A todo list, not a spinner: finished rounds stay visible with their counts.
-			const lines = [`Research \u00b7 ${current.loop.library.sources.size} sources \u00b7 ${elapsed}s`];
+			// Total run time, not time in this stage: a stage timer hid an eight-minute delegation
+			// behind a line that said "2s".
+			const elapsed = Math.floor((Date.now() - current.startedAt) / 1000);
+			const lines = [`Research \u00b7 ${current.loop.library.sources.size} sources \u00b7 ${clock(elapsed)}`];
 			for (const entry of roundLog) {
 				const blocked = entry.failures.filter((failure) => failure.endsWith("[blocked]")).length;
 				const failed = entry.failures.length ? ` \u00b7 ${entry.failures.length} failed` : "";
 				const walled = blocked ? ` (${blocked} blocked)` : "";
 				lines.push(`  \u2713 Round ${entry.round} \u00b7 ${entry.queries.length} queries \u00b7 ${entry.sources.length} new \u00b7 ${entry.passages} passages${failed}${walled}`);
 			}
-			lines.push(`  \u25b8 ${activity}`);
+			// Say how long the turn itself has been out, so a long delegation is visibly long rather
+			// than looking like a hang.
+			const waiting = current.awaitingSettle && current.stageSentAt ? Math.floor((Date.now() - current.stageSentAt) / 1000) : 0;
+			lines.push(`  \u25b8 ${activity}${waiting >= 20 ? ` \u00b7 ${clock(waiting)}` : ""}`);
 			if (detail) lines.push(`    ${detail}`);
 			ctx.ui.setWidget("research", lines);
 		};

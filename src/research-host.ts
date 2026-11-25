@@ -41,7 +41,14 @@ export function queueUrls(text: string, pending: readonly string[], limit = 12):
 export function formatJournal(journal: ResearchJournal): string[] {
 	const lines: string[] = [];
 	const elapsed = Math.max(0, Math.round(((journal.finishedAt ?? Date.now()) - journal.startedAt) / 1000));
-	lines.push(`Question: ${journal.question}`);
+	// Clip on a word boundary with a visible ellipsis: the pager cuts long lines, and a cut that
+	// looks like the question itself ended ("...versus a ho") misleads the reader.
+	const clip = (text: string, limit = 220): string => {
+		if (text.length <= limit) return text;
+		const cut = text.slice(0, limit).replace(/\s+\S*$/, "");
+		return `${cut}…`;
+	};
+	lines.push(`Question: ${clip(journal.question)}`);
 	lines.push(`Status: ${journal.status} \u00b7 ${journal.rounds.length} round${journal.rounds.length === 1 ? "" : "s"} \u00b7 ${journal.rounds.at(-1)?.totalSources ?? 0} sources \u00b7 ${elapsed}s`);
 	if (journal.reportPath) lines.push(`Report: ${journal.reportPath}`);
 	if (journal.sessionFile) lines.push(`Child session: ${journal.sessionFile}`);
