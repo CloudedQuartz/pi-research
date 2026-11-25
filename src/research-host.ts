@@ -19,6 +19,8 @@ export interface ResearchJournal {
 	rounds: { round: number; queries: string[]; sources: { title: string; url: string }[]; failures: string[]; passages: number; totalSources: number }[];
 	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string; reply?: string }[];
 	inspections: { id: string; sourceId: string; start: number; end: number; terms?: string[] }[];
+	/** Pages a delegated agent found, fetched into the library so they could be cited. */
+	delegations?: { round: number; added: { url: string; title: string; passages: number }[]; failed: { url: string; reason: string }[] }[];
 	stopReason?: string;
 	reportPath?: string;
 }
@@ -52,6 +54,13 @@ export function formatJournal(journal: ResearchJournal): string[] {
 			lines.push(`  ${entry.id} \u00b7 ${entry.sourceId} \u00b7 offsets ${entry.start}\u2013${entry.end}${entry.terms?.length ? ` \u00b7 terms ${entry.terms.join(", ")}` : ""}`);
 		}
 	}
+	if (journal.delegations?.length) {
+		lines.push("", "Delegated sources");
+		for (const entry of journal.delegations) {
+			for (const source of entry.added) lines.push(`  Round ${entry.round} \u00b7 added ${source.passages} passage${source.passages === 1 ? "" : "s"}: ${source.title || "(untitled)"} \u2014 ${source.url}`);
+			for (const failure of entry.failed) lines.push(`  Round ${entry.round} \u00b7 failed: ${failure.url} \u2014 ${failure.reason}`);
+		}
+	}
 	if (journal.stopReason) lines.push("", `Stop: ${journal.stopReason}`);
 	return lines;
 }
@@ -82,6 +91,9 @@ export function hostResearch(options: HostOptions): HostedRun {
 		"-e", process.env.PI_RESEARCH_TOOLS_EXT ?? "npm:pi-web-access",
 		"--thinking", "off",
 	];
+	// The run may delegate a need to a subagent; without this extension it simply cannot.
+	const subagents = process.env.PI_RESEARCH_SUBAGENTS_EXT ?? "npm:@gotgenes/pi-subagents";
+	if (subagents) args.push("-e", subagents);
 	// Optional pin for the research session's model, as "provider/id".
 	const pinned = process.env.PI_RESEARCH_MODEL?.trim();
 	if (pinned) {
