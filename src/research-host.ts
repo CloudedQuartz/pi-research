@@ -25,6 +25,12 @@ export interface ResearchJournal {
 	reportPath?: string;
 }
 
+/** Pull candidate page URLs out of a delegated agent's prose reply. */
+export function harvestUrls(text: string, limit = 12): string[] {
+	const found = (text.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? []).map((raw) => raw.replace(/[.,;:)\]}]+$/, ""));
+	return [...new Set(found)].slice(0, limit);
+}
+
 /** Render a journal as plain lines for the pager. */
 export function formatJournal(journal: ResearchJournal): string[] {
 	const lines: string[] = [];

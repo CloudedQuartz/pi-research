@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { EvidenceLibrary } from "../src/research-library.js";
 import { ResearchLoop } from "../src/research-loop.js";
+import { harvestUrls } from "../src/research-host.js";
 
 const failures: string[] = [];
 const check = (label: string, run: () => void) => {
@@ -78,6 +79,25 @@ check("a delegated page that only duplicates an existing source adds no passages
 	const again = library.addSource({ url: "https://example.org/water-copy", title: "Field trial (mirror)", text: WATER, retrievedAt: "2026-11-25T00:00:00.000Z" });
 	assert.ok(["alias", "near-duplicate"].includes(again.status), `a copy is recognised (${again.status})`);
 	assert.equal(library.passages.length, count, "a copy does not inflate the corpus");
+});
+
+
+check("a delegated reply yields clean, unique, capped page URLs", () => {
+	const reply = `I found three useful pages.
+- https://example.org/acoustic-trial (field data)
+- https://example.org/satellite-pilot.
+- <https://example.org/pressure-management>
+- https://example.org/acoustic-trial
+Trailing punctuation, https://example.org/report; and duplicates must not survive.`;
+	const urls = harvestUrls(reply, 12);
+	assert.deepEqual(urls, [
+		"https://example.org/acoustic-trial",
+		"https://example.org/satellite-pilot",
+		"https://example.org/pressure-management",
+		"https://example.org/report",
+	], "normalized, deduplicated, punctuation stripped");
+	assert.equal(harvestUrls(reply, 2).length, 2, "the cap is honoured");
+	assert.deepEqual(harvestUrls("No links here."), [], "a reply without URLs contributes nothing");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
