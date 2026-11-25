@@ -4,7 +4,8 @@ import { pickAssistantReply } from "../src/research-loop.js";
 
 const assistant = (text: string, timestamp?: string, stopReason = "stop") => ({
 	type: "message",
-	message: { role: "assistant", stopReason, timestamp, content: [{ type: "text", text }] },
+	timestamp,
+	message: { role: "assistant", stopReason, content: [{ type: "text", text }] },
 });
 
 test("the newest assistant text is the reply", () => {
@@ -34,4 +35,12 @@ test("tool-call-only turns are skipped so an empty completion is still empty", (
 test("a branch with no assistant text yields nothing", () => {
 	assert.equal(pickAssistantReply([]), undefined);
 	assert.equal(pickAssistantReply([{ type: "custom", customType: "subagent-notification" }]), undefined);
+});
+
+test("the entry timestamp is what sessions record, and it is honoured", () => {
+	const branch = [
+		{ type: "message", timestamp: "2026-11-25T19:00:00.000Z", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "old" }] } },
+	];
+	assert.equal(pickAssistantReply(branch, Date.parse("2026-11-25T19:30:00.000Z")), undefined);
+	assert.deepEqual(pickAssistantReply(branch), { text: "old", stopReason: "stop" });
 });

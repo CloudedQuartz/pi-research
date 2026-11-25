@@ -205,9 +205,15 @@ export function pickAssistantReply(
 	since?: number,
 ): { text: string; stopReason?: string } | undefined {
 	for (let index = branch.length - 1; index >= 0; index--) {
-		const entry = branch[index] as { type?: string; message?: { role?: string; stopReason?: string; timestamp?: string; content?: unknown } };
+		const entry = branch[index] as {
+			type?: string;
+			timestamp?: string;
+			message?: { role?: string; stopReason?: string; timestamp?: string; content?: unknown };
+		};
 		if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
-		if (since && entry.message.timestamp && Date.parse(entry.message.timestamp) < since) return undefined;
+		// Sessions stamp the entry, not the message; reading only the message made this guard dead code.
+		const stamp = entry.timestamp ?? entry.message.timestamp;
+		if (since && stamp && Date.parse(stamp) < since) return undefined;
 		const parts = Array.isArray(entry.message.content) ? entry.message.content : [];
 		const text = parts
 			.filter((part): part is { type: "text"; text: string } => Boolean(part) && (part as { type?: string }).type === "text")
