@@ -20,7 +20,7 @@ export interface ResearchJournal {
 	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string; reply?: string }[];
 	inspections: { id: string; sourceId: string; start: number; end: number; terms?: string[] }[];
 	/** Pages a delegated agent found, fetched into the library so they could be cited. */
-	delegations?: { round: number; added: { url: string; title: string; passages: number }[]; failed: { url: string; reason: string }[] }[];
+	delegations?: { round: number; added: { url: string; title: string; passages: number }[]; failed: { url: string; reason: string }[]; skipped?: { url: string; reason: string }[] }[];
 	stopReason?: string;
 	reportPath?: string;
 }
@@ -65,6 +65,7 @@ export function formatJournal(journal: ResearchJournal): string[] {
 		for (const entry of journal.delegations) {
 			for (const source of entry.added) lines.push(`  Round ${entry.round} \u00b7 added ${source.passages} passage${source.passages === 1 ? "" : "s"}: ${source.title || "(untitled)"} \u2014 ${source.url}`);
 			for (const failure of entry.failed) lines.push(`  Round ${entry.round} \u00b7 failed: ${failure.url} \u2014 ${failure.reason}`);
+			for (const skip of entry.skipped ?? []) lines.push(`  Round ${entry.round} \u00b7 skipped: ${skip.url} \u2014 ${skip.reason}`);
 		}
 	}
 	if (journal.stopReason) lines.push("", `Stop: ${journal.stopReason}`);

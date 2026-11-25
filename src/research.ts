@@ -402,7 +402,10 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const current = run;
 			if (!current || current.stage !== "research") throw new Error("Start evidence collection before adding sources.");
 			showProgress(ctx, `Adding ${args.urls.length} delegated source${args.urls.length === 1 ? "" : "s"}…`);
+			// Only a page that produced passages is "added": a fetch that lands on boilerplate,
+			// a duplicate or empty extraction contributes nothing citable, and saying so is the point.
 			const added: { url: string; title: string; passages: number }[] = [];
+			const skipped: { url: string; reason: string }[] = [];
 			const failed: { url: string; reason: string }[] = [];
 			for (let index = 0; index < args.urls.length; index += 6) {
 				const batch = args.urls.slice(index, index + 6);
@@ -420,15 +423,18 @@ export default function researchExtension(pi: ExtensionAPI): void {
 						continue;
 					}
 					const before = current.loop.library.passages.length;
-					current.loop.library.addSource({ url: page.url, title: page.title, text: page.content, retrievedAt: new Date().toISOString() });
-					added.push({ url: page.url, title: page.title, passages: current.loop.library.passages.length - before });
+					const stored = current.loop.library.addSource({ url: page.url, title: page.title, text: page.content, retrievedAt: new Date().toISOString() });
+					const passages = current.loop.library.passages.length - before;
+					if (stored.status === "added" && passages > 0) added.push({ url: page.url, title: page.title, passages });
+					else if (stored.status !== "added") skipped.push({ url: page.url, reason: `${stored.status}: already in the corpus as ${stored.sourceId ?? "an existing source"}` });
+					else skipped.push({ url: page.url, reason: "no usable passages (boilerplate or extraction noise)" });
 				}
 			}
 			current.packet = current.loop.evidence();
-			if (added.length || failed.length) journalDelegations.push({ round: current.round, added, failed });
+			if (added.length || failed.length || skipped.length) journalDelegations.push({ round: current.round, added, failed, skipped });
 			await writeJournal(current, "running");
 			return {
-				content: [{ type: "text", text: JSON.stringify({ added, failed, sources: current.loop.library.sources.size, passages: current.packet.passages.length }) }],
+				content: [{ type: "text", text: JSON.stringify({ added, skipped, failed, sources: current.loop.library.sources.size, passages: current.packet.passages.length }) }],
 				details: {},
 			};
 		},
