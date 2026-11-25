@@ -17,7 +17,7 @@ export interface ResearchJournal {
 	startedAt: number;
 	finishedAt?: number;
 	rounds: { round: number; queries: string[]; sources: { title: string; url: string }[]; failures: string[]; passages: number; totalSources: number }[];
-	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string }[];
+	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string; reply?: string }[];
 	inspections: { id: string; sourceId: string; start: number; end: number; terms?: string[] }[];
 	stopReason?: string;
 	reportPath?: string;
@@ -43,6 +43,7 @@ export function formatJournal(journal: ResearchJournal): string[] {
 		lines.push("", "Assessments");
 		for (const entry of journal.assessments) {
 			lines.push(`  Round ${entry.round}: ${entry.answered}/${entry.total} needs answered \u00b7 continue=${entry.continueSearching}${entry.reason ? ` \u00b7 ${entry.reason}` : ""}`);
+			for (const line of (entry.reply ?? "").split("\n")) lines.push(`    | ${line}`);
 		}
 	}
 	if (journal.inspections.length) {

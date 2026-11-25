@@ -66,7 +66,7 @@ async function loadWebAccess(pi: ExtensionAPI): Promise<boolean> {
 		const loaded: unknown = await import(specifier);
 		const factory = (loaded as { default?: unknown }).default;
 		if (typeof factory !== "function") return false;
-		await (factory as (api: ExtensionAPI) => void)(pi);
+		(factory as (api: ExtensionAPI) => void)(pi);
 		return true;
 	} catch {
 		return false;
@@ -573,6 +573,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 					total: current.loop.needs.length,
 					continueSearching: !stopping,
 					...(current.loop.stopReason ? { reason: current.loop.stopReason } : {}),
+					reply: response.text.slice(0, 1200),
 				});
 				await writeJournal(current, "running");
 				if (stopping) {
