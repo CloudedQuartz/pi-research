@@ -1,5 +1,10 @@
 import logging
 
+# Dimensions already warned about, so a systematic mismatch is logged once per dimension
+# rather than on every item. Module-level state: a function attribute is not a place to
+# keep it, and pyright rightly rejects assigning attributes to a function object.
+_WARNED_DIMS = set()
+
 def calculate_weighted_scores(llm_output_json, criteria_data, language="en"):
     """
     Calculates weighted scores based on LLM output and criteria weights.
@@ -61,6 +66,9 @@ def calculate_weighted_scores(llm_output_json, criteria_data, language="en"):
             logging.warning(f"ID: {task_id} - No criteria mapping found for dimension '{dim}'. Skipping dimension.")
             continue
 
+        # Initialised before the item loop: after the loop only the last parsed value is used,
+        # and a dimension whose items all fail to parse must not leave this unbound.
+        article_2_score = None
         for score_item in scores_list:
             if not isinstance(score_item, dict):
                 logging.warning(f"ID: {task_id} - Item in scores_list for dimension '{dim}' is not a dictionary. Skipping item: {score_item}")
@@ -124,10 +132,9 @@ def calculate_weighted_scores(llm_output_json, criteria_data, language="en"):
                     dim_reference_weighted_sum += article_2_score * weight
             else:
                 if criterion_text:
-                    if dim not in getattr(calculate_weighted_scores, '_warned_dims', set()):
+                    if dim not in _WARNED_DIMS:
                         logging.warning(f"ID: {task_id} - Criterion text mismatch for dimension '{dim}': '{criterion_text}'. Available criteria keys start with: {list(dim_criteria_map.keys())[:1] if dim_criteria_map else []}... Check prompt/output/criteria file consistency. Further mismatches in this dim won't be logged fully.")
-                        if not hasattr(calculate_weighted_scores, '_warned_dims'): calculate_weighted_scores._warned_dims = set()
-                        calculate_weighted_scores._warned_dims.add(dim)
+                        _WARNED_DIMS.add(dim)
                     else:
                         logging.debug(f"ID: {task_id} - Another criterion mismatch for dimension '{dim}': '{criterion_text}'")
                 elif not criterion_text:
