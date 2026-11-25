@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts && tsx test/porter.test.ts && tsx test/research-acquisition.test.ts && tsx test/research-retry.test.ts && tsx test/research-reply.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:retrieval": "tsx scripts/retrieval-eval.ts"
   },
   "keywords": [
     "pi-package",

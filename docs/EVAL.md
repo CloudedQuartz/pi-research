@@ -161,3 +161,13 @@ what went wrong. Until that is fixed, any score in this document is drawn from t
 runs that happened to finish, which is a biased sample - the three that produced
 reports are exactly the three that collected 3-12 sources, while the runs that died
 had collected 17-29.
+
+To reproduce the retrieval numbers, with the judge proxy running
+(`node evaluation/opencode_proxy.mjs 8787`) and `JUDGE_KEY` exported:
+
+```bash
+npm run eval:retrieval -- research/<run>.evidence.json ...
+```
+
+Labels are cached as `<run>.evidence.qrels.json` next to the evidence file, so a rerun
+costs nothing and does not depend on the judge being reachable.
