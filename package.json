@@ -7,9 +7,10 @@
     "test": "test"
   },
   "scripts": {
-    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts && tsx test/porter.test.ts && tsx test/research-acquisition.test.ts && tsx test/research-retry.test.ts && tsx test/research-reply.test.ts && tsx test/research-timeout.test.ts && tsx test/research-browser.test.ts && tsx test/research-prompt.test.ts",
+    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts && tsx test/porter.test.ts && tsx test/research-acquisition.test.ts && tsx test/research-retry.test.ts && tsx test/research-reply.test.ts && tsx test/research-timeout.test.ts && tsx test/research-browser.test.ts && tsx test/research-prompt.test.ts && tsx test/citation-audit.test.ts",
     "typecheck": "tsc --noEmit",
-    "eval:retrieval": "tsx scripts/retrieval-eval.ts"
+    "eval:retrieval": "tsx scripts/retrieval-eval.ts",
+    "eval:citations": "tsx scripts/citation-audit.ts"
   },
   "keywords": [
     "pi-package",
