@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts",
+    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
