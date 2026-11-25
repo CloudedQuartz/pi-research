@@ -753,6 +753,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		const current = run;
 		run = undefined;
 		if (!current) return;
+		retired = { sessionId: current.sessionId, pending: true };
 		if (current.previousThinking) pi.setThinkingLevel(current.previousThinking);
 		completedRuns.push({ from: current.startedAt, to: Date.now(), keep: current.reportAt });
 		showProgress(ctx);
@@ -862,6 +863,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		roundLog = [];
 		journalAssessments = [];
 		journalDelegations = [];
+		// A new run releases any hold left over from the previous one.
+		retired = undefined;
 		run = {
 			question, stage: "brief", startedAt: Date.now(), round: 0, loop: new ResearchLoop(), gainedEvidence: false,
 			previousThinking: pi.getThinkingLevel(),
@@ -876,6 +879,23 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	};
 
 	/** Session that owns this run: handlers ignore subagent sessions, which share this process. */
+	/**
+	 * A run ends while the model may still be mid-turn. `run` is gone by then, so ownership checks
+	 * no longer hold and any further tool call in that turn would go through - which is how a
+	 * hand-written, uncited report file appeared after task 62 had already stopped. The session that
+	 * just ran stays held until its turn settles, and no longer.
+	 */
+	let retired: { sessionId?: string; pending: boolean } | undefined;
+	const isRetired = (ctx: ExtensionContext) => {
+		if (!retired?.pending) return false;
+		if (!retired.sessionId) return true;
+		try {
+			return ctx.sessionManager.getSessionId() === retired.sessionId;
+		} catch {
+			return true;
+		}
+	};
+
 	const ownsSession = (ctx: ExtensionContext) => {
 		if (!run) return false;
 		if (!run.sessionId) return true;
@@ -939,11 +959,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", (event, ctx) => {
-		if (!ownsSession(ctx) || event.parentToolCallId || nestedCalls > 0) return;
-		// The run can be gone while the model is still mid-turn: without this the dereference throws,
-		// the hook error is swallowed, and the call goes through - which is how a hand-written report
-		// appeared 90s after a run had ended.
-		if (!run) return { block: true, reason: "No research run is collecting evidence." };
+		// Checked before ownership: once a run is gone, ownership is false by construction, so the
+		// hold has to be consulted first or it is unreachable.
+		if (event.parentToolCallId || nestedCalls > 0) return;
+		if (!run) {
+			// Hold the turn that just ended, not the session: once it settles the user is free again.
+			if (isRetired(ctx)) return { block: true, reason: "Research has finished; this turn cannot collect or write evidence." };
+			return;
+		}
+		if (!ownsSession(ctx)) return;
 		// A delegated agent runs its own tools; only this run's own calls are restricted.
 		if (run.stage !== "research") return { block: true, reason: "Only the evidence collection tool is used during /research." };
 		if (![ROUND_TOOL, INSPECT_TOOL, ADD_URLS_TOOL, ...DELEGATE_TOOLS].includes(event.toolName)) {
@@ -964,6 +988,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_settled", async (event, ctx) => {
+		if (retired?.pending && isRetired(ctx)) retired.pending = false;
 		if (!ownsSession(ctx)) return;
 		const current = run!;
 		if (!current.awaitingSettle) return; // a delegated agent's notification, not our turn
