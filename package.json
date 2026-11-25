@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node test/research-rpc.mjs",
+    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
