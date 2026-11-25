@@ -38,7 +38,8 @@ export function renderReport(draft: string, passages: Passage[], inspections: (S
 		const record = "matches" in entry && entry.matches
 			? `Literal matches in the stored extraction: ${entry.matches.map(({ term, count }) => `${JSON.stringify(term)} (${count})`).join(", ")}.`
 			: quoteBlock(text ?? "");
-		return `<a id="evidence-${number}"></a>\n\n### ${number}. ${source.title || source.url}\n\n${source.url} · retrieved ${source.retrievedAt.slice(0, 10)} · text offsets ${start}–${end}\n\n${record}`;
+		const credibility = source.credibility ? ` · ${source.credibility.detail}` : "";
+		return `<a id="evidence-${number}"></a>\n\n### ${number}. ${source.title || source.url}\n\n${source.url} · retrieved ${source.retrievedAt.slice(0, 10)} · text offsets ${start}–${end}${credibility}\n\n${record}`;
 	});
 	return `${body}\n\n## Evidence\n\n${evidence.join("\n\n")}`;
 }

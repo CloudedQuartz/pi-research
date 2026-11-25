@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts",
+    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -25,6 +25,7 @@
     ]
   },
   "dependencies": {
+    "@aloth/cred1": "^2026.11.24",
     "@mozilla/readability": "0.6.0",
     "ipaddr.js": "2.5.0",
     "linkedom": "0.16.11",

@@ -17,11 +17,15 @@ export interface SourceInput {
 	text: string;
 }
 
+import { credibilityOf, type SourceCredibility } from "./source-credibility.js";
+
 export interface Source extends SourceInput {
 	id: string;
 	kind: "summary" | "unclassified";
 	/** Other URLs that resolved to this source (copies, mirrors, alternate renderings). */
 	aliases: string[];
+	/** Explainable source prior: kind of host plus any independent credibility rating. */
+	credibility?: SourceCredibility;
 }
 
 export interface Passage {
@@ -150,7 +154,7 @@ export class EvidenceLibrary {
 			const isFullerCopy = kind === existing.kind && input.text.length > existing.text.length * 1.2;
 			if (sameDocument && (replacesSummary || isFullerCopy)) {
 				const aliases = [...new Set([existing.url, ...existing.aliases])].filter((url) => url !== input.url);
-				this.sources.set(key, { ...input, id: key, kind, aliases });
+				this.sources.set(key, { ...input, id: key, kind, aliases, credibility: credibilityOf(input.url) });
 				this.shingleCache.set(key, shingles(input.text));
 				const previous = this.passages.filter((passage) => passage.sourceId === key);
 				for (let i = this.passages.length - 1; i >= 0; i--) if (this.passages[i]!.sourceId === key) this.passages.splice(i, 1);
@@ -172,7 +176,7 @@ export class EvidenceLibrary {
 				return { status: "near-duplicate", sourceId: id };
 			}
 		}
-		this.sources.set(key, { ...input, id: key, kind, aliases: [] });
+		this.sources.set(key, { ...input, id: key, kind, aliases: [], credibility: credibilityOf(input.url) });
 		this.shingleCache.set(key, fingerprint);
 		if (!this.addPassages(key, input.text)) {
 			// Nothing citable came out of the text: keep the corpus honest rather than counting a
@@ -214,7 +218,8 @@ export class EvidenceLibrary {
 				const idf = Math.log(1 + (docs.length - (df.get(term) ?? 0) + 0.5) / ((df.get(term) ?? 0) + 0.5));
 				score += idf * ((f * 2.2) / (f + 1.2 * (0.25 + 0.75 * (doc.terms.length / avgLength))));
 			}
-			return { passage: doc.passage, terms: doc.terms, score };
+			const factor = this.sources.get(doc.passage.sourceId)?.credibility?.factor ?? 1;
+			return { passage: doc.passage, terms: doc.terms, score: score * factor };
 		}).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score).slice(0, 200);
 		if (!scored.length) return [];
 

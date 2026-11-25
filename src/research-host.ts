@@ -16,7 +16,7 @@ export interface ResearchJournal {
 	status: "running" | "complete" | "stopped";
 	startedAt: number;
 	finishedAt?: number;
-	rounds: { round: number; queries: string[]; sources: { title: string; url: string }[]; failures: string[]; passages: number; totalSources: number }[];
+	rounds: { round: number; queries: string[]; sources: { title: string; url: string; credibility?: string }[]; failures: string[]; passages: number; totalSources: number }[];
 	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string; reply?: string }[];
 	inspections: { id: string; sourceId: string; start: number; end: number; terms?: string[] }[];
 	/** Pages a delegated agent found, fetched into the library so they could be cited. */
@@ -29,6 +29,12 @@ export interface ResearchJournal {
 export function harvestUrls(text: string, limit = 12): string[] {
 	const found = (text.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? []).map((raw) => raw.replace(/[.,;:)\]}]+$/, ""));
 	return [...new Set(found)].slice(0, limit);
+}
+
+/** URLs from a delegated reply that are not already queued, capped. */
+export function queueUrls(text: string, pending: readonly string[], limit = 12): string[] {
+	const seen = new Set(pending);
+	return harvestUrls(text, limit).filter((url) => !seen.has(url));
 }
 
 /** Render a journal as plain lines for the pager. */
@@ -44,7 +50,7 @@ export function formatJournal(journal: ResearchJournal): string[] {
 	for (const round of journal.rounds) {
 		lines.push(`  Round ${round.round} \u00b7 ${round.queries.length} queries \u00b7 ${round.sources.length} new \u00b7 ${round.passages} passages${round.failures.length ? ` \u00b7 ${round.failures.length} failed` : ""}`);
 		for (const query of round.queries) lines.push(`    query: ${query}`);
-		for (const source of round.sources) lines.push(`    source: ${source.title || "(untitled)"} \u2014 ${source.url}`);
+		for (const source of round.sources) lines.push(`    source: ${source.title || "(untitled)"} \u2014 ${source.url}${source.credibility ? ` [${source.credibility}]` : ""}`);
 		for (const failure of round.failures) lines.push(`    failed: ${failure}`);
 	}
 	if (journal.assessments.length) {

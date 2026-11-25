@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { EvidenceLibrary } from "../src/research-library.js";
 import { ResearchLoop } from "../src/research-loop.js";
-import { formatJournal, harvestUrls } from "../src/research-host.js";
+import { formatJournal, harvestUrls, queueUrls } from "../src/research-host.js";
 import { renderReport } from "../src/research-evidence.js";
 
 const failures: string[] = [];
@@ -170,6 +170,20 @@ check("/research-view lists a delegated source under its round", () => {
 	assert.ok(text.includes("Delegated sources"), "a section is rendered");
 	assert.ok(text.includes("added 3 passages: Delegated page \u2014 https://example.org/delegated"), "the added page and its passage count are shown");
 	assert.ok(text.includes("skipped: https://example.org/dup"), "a skipped page is shown with its reason");
+});
+
+
+check("a completion notification queues only new pages", () => {
+	// What a subagent's completion report looks like: prose plus the pages it read.
+	const notification = [
+		"Subagent completed: acoustic evidence",
+		"Found utility trials at https://example.org/trial-a and https://example.org/trial-b.",
+		"Also saw https://example.org/trial-a again, and https://example.org/reused.",
+	].join("\n");
+	const queued = queueUrls(notification, ["https://example.org/reused"], 12);
+	assert.deepEqual(queued, ["https://example.org/trial-a", "https://example.org/trial-b"], "new pages only, deduplicated");
+	assert.equal(queueUrls(notification, [], 1).length, 1, "the cap is honoured");
+	assert.deepEqual(queueUrls("No links", []), [], "a reply without pages queues nothing");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
