@@ -367,7 +367,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			if (current.stage !== "report" && current.loop.library.sources.size) await saveEvidence(current);
 			if (aborted || current.stage !== "report" || candidate?.stopReason !== "stop") {
 				const saved = current.loop.library.sources.size || current.stage === "report";
-				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? "No completed report; evidence saved." : "No completed report or source text." })}\n`, "utf8");
+				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text." })}\n`, "utf8");
 				notify(ctx, saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", "warning");
 				if (IS_CHILD) ctx.shutdown();
 				return;

@@ -126,9 +126,10 @@ export function hostResearch(options: HostOptions): HostedRun {
 			} catch {
 				/* already gone */
 			}
+			// Give the child time to write its evidence and the report signal before any signal.
 			setTimeout(() => {
 				if (!settled) child.kill("SIGTERM");
-			}, 1500).unref();
+			}, 5000).unref();
 		},
 	};
 }
