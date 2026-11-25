@@ -40,13 +40,7 @@ Below are passages from a document collection. For each, decide how much it help
 ${list}
 
 Reply with JSON only: {"<passage id>": <0|1|2>, ...} for every passage listed.`;
-	const response = await fetch(ENDPOINT, {
-		method: "POST",
-		headers: { "content-type": "application/json", authorization: `Bearer ${process.env.JUDGE_KEY ?? ""}` },
-		body: JSON.stringify({ model: MODEL, temperature: 0, messages: [{ role: "user", content: prompt }] }),
-		signal: AbortSignal.timeout(240_000),
-	});
-	if (!response.ok) throw new Error(`judge ${response.status}`);
+	const response = await request(prompt);
 	const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
 	const text = body.choices?.[0]?.message?.content ?? "";
 	const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
@@ -57,6 +51,28 @@ Reply with JSON only: {"<passage id>": <0|1|2>, ...} for every passage listed.`;
 		if (Number.isFinite(value)) out[id] = Math.max(0, Math.min(2, value));
 	}
 	return out;
+}
+
+/** Judge calls share a rate limit with the research runs, so a 429 backs off rather than aborting. */
+async function request(prompt: string): Promise<Response> {
+	let lastError = "";
+	for (let attempt = 1; attempt <= 5; attempt++) {
+		try {
+			const response = await fetch(ENDPOINT, {
+				method: "POST",
+				headers: { "content-type": "application/json", authorization: `Bearer ${process.env.JUDGE_KEY ?? ""}` },
+				body: JSON.stringify({ model: MODEL, temperature: 0, messages: [{ role: "user", content: prompt }] }),
+				signal: AbortSignal.timeout(240_000),
+			});
+			if (response.ok) return response;
+			lastError = `judge ${response.status}`;
+			if (response.status !== 429 && response.status < 500) throw new Error(lastError);
+		} catch (error) {
+			lastError = error instanceof Error ? error.message : String(error);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20_000 * attempt));
+	}
+	throw new Error(lastError || "judge call failed");
 }
 
 /** MAP, R-Precision, BPref and nDCG@10 for one ranking, ported from her evaluate.ts. */
