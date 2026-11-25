@@ -21,6 +21,7 @@ import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
 import { ResearchLoop, type EvidencePacket, type SearchGroup } from "./research-loop.js";
+import { checkPublicTarget, classifyFetchFailure } from "./research-acquisition.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
 /** Set by the host: this process is the child session doing the actual run. */
@@ -305,6 +306,26 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		}
 	};
 
+	/** Record a fetch failure, marking a bot wall apart from a dead link or a timeout. */
+	const noteFailure = (target: Set<string> | { url: string; reason: string }[], url: string, reason: string) => {
+		const blocked = classifyFetchFailure(reason) === "blocked";
+		if (target instanceof Set) target.add(blocked ? `${url}: ${reason} [blocked]` : `${url}: ${reason}`);
+		else target.push({ url, reason: blocked ? `${reason} [blocked]` : reason });
+	};
+
+	/** A URL from a delegated reply or a tool argument is untrusted and must resolve to a public address. */
+	const rejectUnsafe = async (urls: string[]): Promise<{ url: string; reason: string }[]> => {
+		const rejected: { url: string; reason: string }[] = [];
+		for (let index = 0; index < urls.length; index += 8) {
+			const wave = urls.slice(index, index + 8);
+			const checks = await Promise.all(wave.map((url) => checkPublicTarget(url).catch(() => ({ ok: false, reason: "address check failed" }))));
+			for (const [offset, check] of checks.entries()) {
+				if (!check.ok) rejected.push({ url: wave[offset]!, reason: check.reason ?? "not a public address" });
+			}
+		}
+		return rejected;
+	};
+
 	/** A document has to go through the parser: readable extraction returns nothing for a scan. */
 	const DOCUMENT_URL = /\.(pdf|docx?|pptx?|xlsx?|csv|tiff?|png|jpe?g|webp)(\?|$)/i;
 
@@ -358,8 +379,10 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			// A todo list, not a spinner: finished rounds stay visible with their counts.
 			const lines = [`Research \u00b7 ${current.loop.library.sources.size} sources \u00b7 ${elapsed}s`];
 			for (const entry of roundLog) {
+				const blocked = entry.failures.filter((failure) => failure.endsWith("[blocked]")).length;
 				const failed = entry.failures.length ? ` \u00b7 ${entry.failures.length} failed` : "";
-				lines.push(`  \u2713 Round ${entry.round} \u00b7 ${entry.queries.length} queries \u00b7 ${entry.sources.length} new \u00b7 ${entry.passages} passages${failed}`);
+				const walled = blocked ? ` (${blocked} blocked)` : "";
+				lines.push(`  \u2713 Round ${entry.round} \u00b7 ${entry.queries.length} queries \u00b7 ${entry.sources.length} new \u00b7 ${entry.passages} passages${failed}${walled}`);
 			}
 			lines.push(`  \u25b8 ${activity}`);
 			if (detail) lines.push(`    ${detail}`);
@@ -413,7 +436,10 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			// so they become passages instead of only appearing in that agent's transcript.
 			const delegated = current.pendingUrls ?? [];
 			current.pendingUrls = [];
-			const urls = [...new Set([...delegated, ...selected])];
+			const unsafe = await rejectUnsafe(delegated);
+			for (const bad of unsafe) loop.failures.add(`${bad.url}: not fetched, ${bad.reason}`);
+			const allowed = delegated.filter((url) => !unsafe.some((bad) => bad.url === url));
+			const urls = [...new Set([...allowed, ...selected])];
 			// Documents are fetched and parsed (with OCR), never read as HTML: a scanned paper would
 			// otherwise arrive with no text at all.
 			const documents = urls.filter((url) => DOCUMENT_URL.test(url));
@@ -431,7 +457,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				showProgress(ctx, `Reading sources ${index + 1}–${index + batch.length} of ${readable.length}`);
 				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
 					const reason = error instanceof Error ? error.message : String(error);
-					for (const url of batch) loop.failures.add(`${url}: ${reason}`);
+					for (const url of batch) noteFailure(loop.failures, url, reason);
 					return undefined;
 				});
 				signal?.throwIfAborted();
@@ -443,7 +469,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 					if (!page || page.error || !page.content?.trim() || !/^https?:\/\//i.test(page.url)) {
 						const detail = outcome.result.details?.error;
 						const reason = page?.error || (typeof detail === "string" ? detail : "No readable page text returned");
-						loop.failures.add(`${url}: ${reason}`);
+						noteFailure(loop.failures, url, reason);
 						continue;
 					}
 					loop.library.addSource({ url: page.url, title: page.title, text: page.content, retrievedAt: new Date().toISOString() });
@@ -511,8 +537,11 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const added: { url: string; title: string; passages: number }[] = [];
 			const skipped: { url: string; reason: string }[] = [];
 			const failed: { url: string; reason: string }[] = [];
-			const documents = args.urls.filter((url) => DOCUMENT_URL.test(url));
-			const readable = args.urls.filter((url) => !DOCUMENT_URL.test(url));
+			const unsafe = await rejectUnsafe(args.urls);
+			for (const bad of unsafe) skipped.push({ url: bad.url, reason: `not fetched, ${bad.reason}` });
+			const safeUrls = args.urls.filter((url) => !unsafe.some((bad) => bad.url === url));
+			const documents = safeUrls.filter((url) => DOCUMENT_URL.test(url));
+			const readable = safeUrls.filter((url) => !DOCUMENT_URL.test(url));
 			for (const url of documents) {
 				const passages = await addParsedDocument(current, url, ctx, signal);
 				if (passages > 0) added.push({ url, title: url, passages });
@@ -522,7 +551,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				const batch = readable.slice(index, index + 6);
 				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
 					const reason = error instanceof Error ? error.message : String(error);
-					for (const url of batch) failed.push({ url, reason });
+					for (const url of batch) noteFailure(failed, url, reason);
 					return undefined;
 				});
 				signal?.throwIfAborted();
@@ -534,8 +563,8 @@ export default function researchExtension(pi: ExtensionAPI): void {
 					if (!page || page.error || !page.content?.trim() || !/^https?:\/\//i.test(page.url)) {
 						const detail = outcome.result.details?.error;
 						const reason = page?.error || (typeof detail === "string" ? detail : "No readable page text returned");
-						failed.push({ url, reason });
-						current.loop.failures.add(`${url}: ${reason}`);
+						noteFailure(failed, url, reason);
+						noteFailure(current.loop.failures, url, reason);
 						continue;
 					}
 					const before = current.loop.library.passages.length;

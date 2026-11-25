@@ -14,22 +14,24 @@ decision on the record rather than an accident of history.
 | Item | From | Why | Test |
 |---|---|---|---|
 | Porter stemmer | `src/core-ir.ts` (`stem`) | This tree matched only literal inflections. Both sides of a BM25 match are stemmed now, so `leak` finds `leaks`/`leaking`. 151 lines, no dependencies. | `test/porter.test.ts` — variants collapse, numbers/IDs survive, inflected and uninflected queries rank identically |
+| Public-address guard (`assertPublicUnicast`, `resolveAddress`, `pinnedLookup`) | `src/acquisition.ts` | URLs arrive from delegated replies and tool arguments, and the document path fetches them with a raw `fetch`. `checkPublicTarget` now refuses anything that does not resolve to a public unicast address, and DNS-rebinding pinning is already in her resolver. | `test/research-acquisition.test.ts` — loopback, RFC1918, link-local and `file:` refused; a public address allowed; a private record behind a hostname fails closed |
+| Bot-wall detection (`CAPTCHA_SIGNATURES`, `isBotChallenge`) | `src/acquisition.ts` | Failures were recorded as one undifferentiated "failed". The fetch tool reports an error string rather than a body, so `classifyFetchFailure` applies her challenge signatures plus the 403/429/451/503 statuses to the text, and a walled page is marked `[blocked]` in the journal, the round line and the gap list the report is written from. | same file — 403/429/Cloudflare/"Just a moment" classify as blocked; DNS failure and timeout do not |
 
 ## Already present
 
 The acquisition hardening in `origin/riya:src/acquisition.ts` was written by riyaa42
 and adapted into `src/research-acquisition.ts`: 637 of that file's 932 lines are
 byte-identical to her 1125-line original. She is the git author of the stemmer commit
-and `Co-authored-by` on the commits that carry this module. It is present, but mostly
-**not wired**. Only `normalizeUrl` and `shouldSkipCandidateUrl` are
-imported (by `research-loop.ts`). `isBotChallenge`, `parseHtmlMetadata` (JSON-LD
-dates, canonical URLs), `isThinContent` and the whole `AcquisitionService` are dead
-code: page reads go through `pi-web-access`'s `fetch_content`, not this module
-(`src/research.ts` calls `ctx.executeTool(FETCH_TOOL, ...)`). The module also
-contains no robots logic, so robots enforcement is not happening anywhere in this
-pipeline. Recorded rather than deleted: a future change could wire it up
-deliberately, and the record of who wrote it is the point of this note, not a
-judgement on the code.
+and `Co-authored-by` on the commits that carry this module. Parts of it are wired:
+`normalizeUrl` and `shouldSkipCandidateUrl` (by `research-loop.ts`), and now the
+address guard and failure classifier above. Still unwired: `isThinContent`,
+`parseHtmlMetadata` (JSON-LD dates, canonical URLs) and the whole `AcquisitionService`,
+because page reads go through `pi-web-access`'s `fetch_content`
+(`src/research.ts` calls `ctx.executeTool(FETCH_TOOL, ...)`), not this module's own
+transport. The module also contains no robots logic, so robots enforcement is not
+happening anywhere in this pipeline. Recorded rather than deleted: a future change
+could wire the fetcher up deliberately, and the record of who wrote it is the point of
+this note, not a judgement on the code.
 
 ## Not adopted, and why
 

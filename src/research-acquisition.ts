@@ -930,3 +930,63 @@ export function AcquisitionService(options: AcquisitionOptions = {}): Acquisitio
     acquire: (url, signal) => acquire(url, signal, services),
   };
 }
+
+/**
+ * A read that fails is either a wall or a dead end, and the difference matters to the reader:
+ * a 403 bot challenge on a primary source is a gap in coverage, an unresolvable host is not.
+ * Classified from the error text because the fetch tool reports failures, not response bodies.
+ */
+export type FetchFailureKind = 'blocked' | 'failed';
+
+const BLOCKED_PATTERNS: readonly RegExp[] = [
+  /\b(?:HTTP\s*)?(?:403|429|451|503)\b/i,
+  /\bforbidden\b/i,
+  /\baccess denied\b/i,
+  /\btoo many requests\b/i,
+  /\bunusual traffic\b/i,
+  /\bare you a robot\b/i,
+  /\bcaptcha\b/i,
+  /\bjust a moment\b/i,
+  /\battention required\b/i,
+  /\bcloudflare\b/i,
+  /\bcf-challenge\b/i,
+  /\bchallenge-platform\b/i,
+];
+
+export function classifyFetchFailure(reason: string): FetchFailureKind {
+  if (!reason || typeof reason !== 'string') return 'failed';
+  return BLOCKED_PATTERNS.some(pattern => pattern.test(reason)) ? 'blocked' : 'failed';
+}
+
+export interface TargetCheck {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * Every URL that comes from a delegated reply or a model argument is untrusted, and the
+ * document path fetches it directly, so it has to resolve to a public unicast address first.
+ * Any non-public record fails the host closed, matching the acquisition module's own policy.
+ */
+export async function checkPublicTarget(
+  url: string,
+  options: { resolver?: AcquisitionResolver; timeoutMs?: number } = {},
+): Promise<TargetCheck> {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return { ok: false, reason: `not a valid URL: ${url}` };
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return { ok: false, reason: `unsupported scheme ${target.protocol}` };
+  }
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    await resolveAddress(target, options.resolver ?? defaultResolver, signal, timeoutMs);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
