@@ -11,10 +11,12 @@
  * See NOTICE for the upstream license.
  */
 
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { EntryRenderer, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
@@ -105,6 +107,9 @@ interface RoundEntry {
 	totalSources: number;
 }
 
+/** Documents parsed per round: a scanned PDF costs seconds, so they are budgeted. */
+const DOCUMENTS_PER_ROUND = 4;
+
 const journalPathFor = (reportPath: string) => reportPath.replace(/\.md$/, ".journal.json");
 
 interface ResearchRun {
@@ -129,6 +134,8 @@ interface ResearchRun {
 	pendingUrls?: string[];
 	/** Inspections left in this round; a run may not inspect without bound. */
 	inspectionBudget?: number;
+	/** Document parses left in this round; a scan costs seconds, so they are budgeted. */
+	documentBudget?: number;
 	finishRequested?: boolean;
 }
 
@@ -256,6 +263,42 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			nestedCalls--;
 		}
 	};
+	/** A document has to go through the parser: readable extraction returns nothing for a scan. */
+	const DOCUMENT_URL = /\.(pdf|docx?|pptx?|xlsx?|csv|tiff?|png|jpe?g|webp)(\?|$)/i;
+
+	/** Fetch the bytes and parse them, with OCR, so text-based and image-only documents both land. */
+	const parseDocument = async (url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<{ title?: string; text: string } | undefined> => {
+		if (!pi.getAllTools().some((tool) => tool.name === "document_parse")) return undefined;
+		try {
+			const response = await fetch(url, { signal });
+			if (!response.ok) return undefined;
+			const bytes = Buffer.from(await response.arrayBuffer());
+			if (!bytes.byteLength || bytes.byteLength > 40 * 1024 * 1024) return undefined;
+			const file = join(tmpdir(), `pi-research-${createHash("sha1").update(url).digest("hex").slice(0, 12)}${(DOCUMENT_URL.exec(url) ?? ["", "bin"])[1]!.toLowerCase()}`);
+			writeFileSync(file, bytes);
+			const outcome = await nested(() => ctx.executeTool("document_parse", { path: file, format: "text", ocr: "auto" }, { signal }));
+			const text = outcome.result.content
+				.filter((part): part is { type: "text"; text: string } => part.type === "text")
+				.map((part) => part.text)
+				.join("\n")
+				.trim();
+			return text ? { text } : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+
+	/** Add a parsed document to the corpus. Returns the passages it produced, or 0. */
+	const addParsedDocument = async (current: ResearchRun, url: string, ctx: ExtensionToolContext, signal?: AbortSignal): Promise<number> => {
+		if ((current.documentBudget ?? 0) <= 0) return 0;
+		current.documentBudget = (current.documentBudget ?? 0) - 1;
+		const parsed = await parseDocument(url, ctx, signal);
+		if (!parsed) return 0;
+		const before = current.loop.library.passages.length;
+		const stored = current.loop.library.addSource({ url, title: parsed.title ?? url, text: parsed.text, retrievedAt: new Date().toISOString() });
+		return stored.status === "added" ? current.loop.library.passages.length - before : 0;
+	};
+
 	const showProgress = (ctx: ExtensionContext, activity?: string, detail?: string) => {
 		clearInterval(progressTimer);
 		if (!ctx.hasUI) return;
@@ -326,11 +369,21 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const delegated = current.pendingUrls ?? [];
 			current.pendingUrls = [];
 			const urls = [...new Set([...delegated, ...selected])];
+			// Documents are fetched and parsed (with OCR), never read as HTML: a scanned paper would
+			// otherwise arrive with no text at all.
+			const documents = urls.filter((url) => DOCUMENT_URL.test(url));
+			const readable = urls.filter((url) => !DOCUMENT_URL.test(url));
 			const knownSources = new Set(loop.library.sources.keys());
 			const added: RoundEntry["sources"] = [];
-			for (let index = 0; index < urls.length; index += 6) {
-				const batch = urls.slice(index, index + 6);
-				showProgress(ctx, `Reading sources ${index + 1}–${index + batch.length} of ${urls.length}`);
+			for (const [index, url] of documents.entries()) {
+				showProgress(ctx, `Parsing document ${index + 1} of ${documents.length}`, url);
+				const passages = await addParsedDocument(current, url, ctx, signal);
+				if (passages > 0) added.push({ title: url, url, retrievedAt: new Date().toISOString() });
+				else loop.failures.add(`${url}: document parse produced no text`);
+			}
+			for (let index = 0; index < readable.length; index += 6) {
+				const batch = readable.slice(index, index + 6);
+				showProgress(ctx, `Reading sources ${index + 1}–${index + batch.length} of ${readable.length}`);
 				const outcome = await nested(() => ctx.executeTool(FETCH_TOOL, { urls: batch, mode: "readable" }, { signal }));
 				signal?.throwIfAborted();
 				const structured = outcome.result.structuredContent as { urls?: { url: string; title: string; content: string; error?: string }[] } | undefined;
@@ -349,6 +402,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			}
 			current.packet = loop.evidence();
 			current.inspectionBudget = INSPECTIONS_PER_ROUND;
+			current.documentBudget = DOCUMENTS_PER_ROUND;
 			const openHits = new Set(current.packet.needs.filter((need) => !need.answered).flatMap((need) => need.passages));
 			current.gainedEvidence = current.packet.passages.some((passage) => openHits.has(passage.id) && !knownSources.has(passage.sourceId));
 			showProgress(ctx, `Assessing ${current.packet.passages.length} passages from ${loop.library.sources.size} collected sources…`);
@@ -407,8 +461,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			const added: { url: string; title: string; passages: number }[] = [];
 			const skipped: { url: string; reason: string }[] = [];
 			const failed: { url: string; reason: string }[] = [];
-			for (let index = 0; index < args.urls.length; index += 6) {
-				const batch = args.urls.slice(index, index + 6);
+			const documents = args.urls.filter((url) => DOCUMENT_URL.test(url));
+			const readable = args.urls.filter((url) => !DOCUMENT_URL.test(url));
+			for (const url of documents) {
+				const passages = await addParsedDocument(current, url, ctx, signal);
+				if (passages > 0) added.push({ url, title: url, passages });
+				else skipped.push({ url, reason: "document parse produced no text" });
+			}
+			for (let index = 0; index < readable.length; index += 6) {
+				const batch = readable.slice(index, index + 6);
 				const outcome = await nested(() => ctx.executeTool(FETCH_TOOL, { urls: batch, mode: "readable" }, { signal }));
 				signal?.throwIfAborted();
 				const structured = outcome.result.structuredContent as { urls?: { url: string; title: string; content: string; error?: string }[] } | undefined;

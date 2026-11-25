@@ -101,6 +101,9 @@ export function hostResearch(options: HostOptions): HostedRun {
 	// The run may delegate a need to a subagent; without this extension it simply cannot.
 	const subagents = process.env.PI_RESEARCH_SUBAGENTS_EXT ?? "npm:@gotgenes/pi-subagents";
 	if (subagents) args.push("-e", subagents);
+	// Scanned papers carry no extractable text: the parser is what makes them readable at all.
+	const parser = process.env.PI_RESEARCH_OCR_EXT ?? "npm:pi-docparser";
+	if (parser) args.push("-e", parser);
 	// Optional pin for the research session's model, as "provider/id".
 	const pinned = process.env.PI_RESEARCH_MODEL?.trim();
 	if (pinned) {
