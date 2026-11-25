@@ -112,3 +112,29 @@ Caveats: labels come from the same model that wrote the reports and judges them
 (`deepseek-v4.1-flash`), three runs only, and the per-source cap of 2 was lifted for
 this measurement while production keeps it, so these numbers describe the ranker
 rather than the exact packet the writer sees.
+
+## Failure modes found while evaluating
+
+Three are worth recording because each one costs a whole run's work.
+
+**A run can end without finalising.** t57's clean re-run collected 29 sources and
+443 KB of evidence, then stopped: its journal still says `status: running` with no
+`reportAt`, so no report was written and nothing recorded why.
+
+**After that, the parent model writes its own report.** In the same session the
+assistant called `bash` twelve times and produced `ai-consulting-firms-report.md` -
+19 KB, hand-named, zero resolved citations, outside the pipeline that turns passage
+IDs into linked footnotes. The tool guard only binds while `stage === "research"`, so
+once the run ends the parent is free to improvise a report that is not evidence-linked
+and would be scored as if it were.
+
+**A refused download is recorded as an empty parse.** A GAO PDF was routed to
+`document_parse`, whose own `GET` was refused with 403, and the source was logged as
+"document parse produced no text". The fetch tool reads that same report (108 618
+characters), so the run lost a document it could already reach. Fixed in `854a370`:
+the parser stays first (it is the only path that OCRs a scan), then the fetch tool
+gets one attempt, and the recorded reason is the real one.
+
+Not every failure is recoverable, and that is worth stating plainly: SAGE,
+ScienceDirect and DOI publisher links answer 403 to a browser-like request as well,
+so only a hosted reader route can reach them, and that changes who sees the URL.
