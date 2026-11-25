@@ -85,6 +85,7 @@ async function saveEvidence(run: ResearchRun): Promise<void> {
 		inspections: run.loop.inspections,
 		inspectedSources: Object.fromEntries(run.loop.inspectedSources),
 		failures: [...run.loop.failures],
+		filteredCandidates: run.loop.filtered,
 		stopReason: run.loop.stopReason,
 	};
 	await writeFile(run.path.replace(/\.md$/, ".evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, "utf8");

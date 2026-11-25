@@ -1,5 +1,11 @@
-import { normalizeUrl, shouldSkipCandidateUrl } from "./research-acquisition.js";
+import { normalizeUrl, shouldSkipCandidateUrl } from "./acquisition.js";
+import { NaiveBayesCandidateClassifier } from "./core-ir.js";
 import { EvidenceLibrary, type Passage, type Source } from "./research-library.js";
+
+/** Same threshold as the IR engine's controller: drop only confident off-topic predictions. */
+const OFF_TOPIC_CONFIDENCE = 0.6;
+/** Bounded text per off-topic source so one long page cannot dominate the term counts. */
+const TRAINING_CHARS = 2000;
 
 interface Need {
 	id: number;
@@ -44,6 +50,14 @@ export class ResearchLoop {
 	readonly inspections: SourceInspection[] = [];
 	readonly inspectedSources = new Map<string, Source>();
 	readonly searches: { query: string; hits: number; error?: string }[] = [];
+	/**
+	 * Pre-fetch candidate filter. On-topic: the planned needs and passages cited for answered
+	 * needs. Off-topic: read sources that contributed no ranked passage to any need. It predicts
+	 * on-topic until both classes have examples, so the first round is never filtered.
+	 */
+	readonly candidateFilter = new NaiveBayesCandidateClassifier();
+	readonly filtered: { query: string; url: string; onTopic: number }[] = [];
+	private trained = new Set<string>();
 	needs: Need[] = [];
 	stopReason = "";
 	private checkingStop = false;
@@ -60,6 +74,7 @@ export class ResearchLoop {
 			this.needs.push({ id: this.needs.length + 1, question: row.question.trim(), queries, essential: row.essential, answered: false });
 		}
 		if (!this.needs.some((need) => need.essential)) throw new Error("The plan must contain an essential research need.");
+		this.candidateFilter.train(this.needs.map((need) => ({ text: `${need.question} ${need.queries.join(" ")}`, label: "on-topic" as const })));
 	}
 
 	pendingQueries(): string[] {
@@ -86,11 +101,19 @@ export class ResearchLoop {
 			if (group.error) this.failures.add(`Search “${group.query}”: ${group.error}`);
 			const query = words(group.query);
 			const ranked = (group.results ?? []).filter((hit) => typeof hit.url === "string" && /^https?:\/\//i.test(hit.url))
-				.map((hit) => ({ url: hit.url, score: [...words(`${hit.title ?? ""} ${hit.snippet ?? ""}`)].filter((term) => query.has(term)).length }))
+				.map((hit) => {
+					const metadata = `${hit.title ?? ""} ${hit.snippet ?? ""}`;
+					return { url: hit.url, metadata, score: [...words(metadata)].filter((term) => query.has(term)).length };
+				})
 				.sort((left, right) => right.score - left.score);
 			for (const hit of ranked) {
 				const key = normalizeUrl(hit.url);
 				if (!key || this.attempted.has(key) || shouldSkipCandidateUrl(hit.url).skip) continue;
+				const prediction = this.candidateFilter.predict(hit.metadata);
+				if (prediction.label === "off-topic" && prediction.confidence > OFF_TOPIC_CONFIDENCE) {
+					this.filtered.push({ query: group.query, url: hit.url, onTopic: prediction.score });
+					continue;
+				}
 				this.attempted.add(key);
 				urls.push(hit.url);
 				break;
@@ -160,14 +183,17 @@ export class ResearchLoop {
 		if (this.needs.some((need) => typeof judgments.get(need.id)?.answered !== "boolean")) {
 			throw new Error("The assessment did not judge each research need.");
 		}
+		const supporting = new Set<string>();
 		for (const need of this.needs) {
 			const row = judgments.get(need.id);
 			const available = packet.needs.find((entry) => entry.id === need.id)?.passages ?? [];
 			const cited = strings(row?.passages).filter((id) => available.includes(id) || this.inspections.some((inspection) => inspection.id === id));
 			need.answered = row?.answered === true && cited.length > 0;
 			need.gap = typeof row?.gap === "string" ? row.gap.trim() : undefined;
+			if (need.answered) for (const id of cited) supporting.add(id);
 			if (!need.answered && need.essential) need.queries.push(...strings(row?.queries));
 		}
+		this.trainCandidateFilter(packet, supporting);
 		if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
 		else if (!this.pendingQueries().length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
 		else if (!continueSearching && (!gainedEvidence || this.checkingStop)) {
@@ -175,5 +201,25 @@ export class ResearchLoop {
 		}
 		this.checkingStop = !continueSearching;
 		return !this.stopReason;
+	}
+
+	// ponytail: "no ranked passage this round" is a heuristic off-topic label; a source can still
+	// turn relevant for a later need. Upgrade path: label from the assessor's per-source judgments.
+	private trainCandidateFilter(packet: EvidencePacket, supporting: Set<string>): void {
+		const docs: { text: string; label: "on-topic" | "off-topic" }[] = [];
+		for (const passage of packet.passages) {
+			const key = `${passage.sourceId}#${passage.start}`; // P-ids are renumbered per packet.
+			if (supporting.has(passage.id) && !this.trained.has(key)) {
+				this.trained.add(key);
+				docs.push({ text: passage.text, label: "on-topic" });
+			}
+		}
+		const contributing = new Set(packet.passages.map((passage) => passage.sourceId));
+		for (const source of this.library.sources.values()) {
+			if (contributing.has(source.id) || this.trained.has(source.id)) continue;
+			this.trained.add(source.id);
+			docs.push({ text: `${source.title ?? ""} ${source.text.slice(0, TRAINING_CHARS)}`, label: "off-topic" });
+		}
+		if (docs.length) this.candidateFilter.train(docs);
 	}
 }

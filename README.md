@@ -2,18 +2,28 @@
 
 `/research` runs a tool-using deep-research workflow on the active Pi session model. Start it and walk away: the target is a substantial, cited Markdown report in about ten minutes. It writes a brief, searches and reads sources, follows gaps, ranks passages, and writes the report without asking for approval. The assistant draft is visible in Pi; the saved Markdown resolves its passage IDs into linked citations.
 
-This is a Pi-native adaptation of [LangChain Open Deep Research](https://github.com/langchain-ai/open_deep_research). Pi runs the model turns; the extension owns the evidence-building loop and reuses Riya’s URL filtering.
+This is a Pi-native adaptation of [LangChain Open Deep Research](https://github.com/langchain-ai/open_deep_research). Pi runs the model turns; the extension owns the evidence-building loop. Its retrieval runs on the project’s IR core ([`src/core-ir.ts`](src/core-ir.ts)): paragraph-aware passage segmentation, Porter-stemmed positional BM25, MMR, and a Naive Bayes candidate filter, plus the URL normalization and route filtering in [`src/acquisition.ts`](src/acquisition.ts).
+
+The package contains two Pi extensions that load together:
+
+| Command | Extension | What it is |
+|---|---|---|
+| `/research`, `/research-finish` | [`src/research.ts`](src/research.ts) | One-command deep research: brief → evidence rounds → standalone cited report (this README). |
+| `/research-engine`, `/research-continue`, `/research-map`, `/research-sources`, `/research-report`, `/research-feedback`, `/research-budget`, `/research-stop` | [`src/extension.ts`](src/extension.ts) | The budgeted, multi-turn IR engine with Rocchio feedback, clustering and follow-up revision. See [docs/ir-engine.md](docs/ir-engine.md). |
 
 ## Requirements
 
-Run `npm ci` and enable `web_search` and `fetch_content` from `pi-web-access`. Search supplies URLs and metadata. The extension reads pages with `fetch_content` in readable mode and records failed reads without switching readers. Pi makes all model requests through the active session.
+Node 24.13.1 or newer. Run `npm ci` and enable `web_search` and `fetch_content` from `pi-web-access`. Search supplies URLs and metadata. The extension reads pages with `fetch_content` in readable mode and records failed reads without switching readers. Pi makes all model requests through the active session.
+
+`npm run typecheck` and `npm test` run the offline checks (no model or network calls), including a load test that both extensions register without name collisions.
 
 ## Use
 
 Run Pi from this directory:
 
 ```bash
-pi -e src/research.ts
+pi -e src/research.ts      # /research only
+pi -e .                    # both extensions, as registered in package.json
 ```
 
 Then start a research run:
@@ -29,8 +39,8 @@ The brief appears as an ordinary assistant reply, and the run continues without 
 ## What a run does
 
 1. **Build the evidence library.** The model breaks the question into evidence needs and writes initial search queries. Then the extension repeats this loop:
-   - **Search → select → read:** Code runs queued queries, takes URLs directly from structured search results, and ranks and deduplicates unread candidates. Pi’s `fetch_content` reads the selected pages. Only extracted source text enters the library; never snippets or model summaries.
-   - **Retrieve → inspect → assess → expand:** Code ranks passages with BM25 and MMR. The model can inspect the stored extraction by offset or scan it for exact terms without any web calls. Inspection records keep the exact source version, range, and result; a zero match is not proof of semantic absence or complete extraction. Only essential gaps drive new web searches, and independent search batches overlap. Collection stops when essential needs are answered, useful queries run out, or you ask it to finish the current turn.
+   - **Search → select → read:** Code runs queued queries, takes URLs directly from structured search results, and ranks and deduplicates unread candidates. From the second round, a Naive Bayes classifier trained on the needs, cited passages and unproductive sources drops confidently off-topic candidates before they are fetched; dropped candidates are listed in the evidence file. Pi’s `fetch_content` reads the selected pages. Only extracted source text enters the library; never snippets or model summaries.
+   - **Retrieve → inspect → assess → expand:** Code splits sources into 180–300-token passages with exact offsets and ranks them with Porter-stemmed BM25 and MMR, at most two passages per source. The model can inspect the stored extraction by offset or scan it for exact terms without any web calls. Inspection records keep the exact source version, range, and result; a zero match is not proof of semantic absence or complete extraction. Only essential gaps drive new web searches, and independent search batches overlap. Collection stops when essential needs are answered, useful queries run out, or you ask it to finish the current turn.
 2. **Synthesize from the library.** The extension saves the evidence first. A separate writing turn sees the ranked passages and open needs, not the search transcript. It cites passage IDs, which code resolves to the source URL, retrieval date, and text offsets.
 
 ## Output and save condition
@@ -41,7 +51,7 @@ The report with resolved citations is saved as:
 research/<timestamp>-<slug>.md
 ```
 
-A matching `.evidence.json` file holds sources, ranked passages, scoped inspections, needs, search outcomes, and acquisition failures. The library is saved before synthesis; if the run is interrupted during collection, acquired text is saved on cancellation.
+A matching `.evidence.json` file holds sources, ranked passages, scoped inspections, needs, search outcomes, filtered candidates, and acquisition failures. The library is saved before synthesis; if the run is interrupted during collection, acquired text is saved on cancellation.
 
 ## Limitations
 

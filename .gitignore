@@ -1,2 +1,15 @@
 node_modules/
+dist/
+coverage/
+.research/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*
+*-dataset.json
+cisi-dataset.json
+evaluation/*-latest.json
+benchmark-data/
+
 /research/

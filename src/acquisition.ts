@@ -1,5 +1,6 @@
 import type { LookupOptions, LookupAddress } from 'node:dns';
 import { lookup as dnsLookup } from 'node:dns/promises';
+import { createHash } from 'node:crypto';
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, RequestOptions } from 'node:http';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -7,20 +8,7 @@ import type { LookupFunction } from 'node:net';
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import ipaddr from 'ipaddr.js';
-import { setTimeout as wait } from 'node:timers/promises';
-
-// Adapted from the old project's origin/riya (3cdb94b), src/acquisition.ts.
-interface PageSpan { page: number; start: number; end: number; }
-interface Snapshot {
-  finalUrl: string;
-  canonicalUrl: string;
-  fetchedAt: string;
-  title: string;
-  text: string;
-  pages?: PageSpan[];
-  publishedAt?: string;
-  modifiedAt?: string;
-}
+import type { Snapshot } from './types.js';
 
 const moduleRequire = createRequire(import.meta.url);
 
@@ -29,16 +17,25 @@ const moduleRequire = createRequire(import.meta.url);
  *
  * Owns the network boundary: public-unicast-only DNS validation whose result is
  * pinned on the actual socket (hostname preserved for TLS SNI and the Host
- * header), one shared per-hostname delay scheduler across protocols and ports,
- * manual bounded
+ * header), robots.txt policy per origin via a real robots parser, one shared
+ * per-hostname delay scheduler across protocols and ports, manual bounded
  * redirects with per-hop revalidation, byte/time bounds, MIME routing to
  * Readability/LinkeDOM, unpdf or plain text, and terminable extraction workers.
+ *
+ * The parent reserves HTTP accounting through `beforeHttp`, which runs after
+ * scheduling and address validation immediately before every attempt: page,
+ * robots.txt, and each redirect hop. DNS resolution before each attempt is
+ * bounded by the acquire signal and a timeout, so a late lookup can never
+ * reach the accounting hook or the transport. `store` saves blobs and the
+ * immutable snapshot before acquire resolves; nothing else commits corpus state.
  */
 
 export type AcquisitionErrorCode =
   | 'invalid-url'
   | 'policy'
   | 'dns'
+  | 'robots-denied'
+  | 'robots-unavailable'
   | 'redirect'
   | 'timeout'
   | 'network'
@@ -54,6 +51,14 @@ export class AcquisitionError extends Error {
     super(message);
     this.name = 'AcquisitionError';
   }
+}
+
+/** Fixed dependent API of `./object-store.js`; satisfied structurally by the real store. */
+export interface AcquisitionStore {
+  put(data: string | Uint8Array): string | Promise<string>;
+  read(hash: string): Uint8Array | Promise<Uint8Array>;
+  saveSnapshot(snapshot: Snapshot): void | Promise<void>;
+  loadSnapshot(id: string): Snapshot | Promise<Snapshot>;
 }
 
 export interface ResolvedAddress { address: string; family: 4 | 6; }
@@ -77,6 +82,9 @@ export interface TransportResponse {
 export type AcquisitionTransport = (request: TransportRequest) => Promise<TransportResponse>;
 
 export interface AcquisitionOptions {
+  store: AcquisitionStore;
+  beforeHttp: (url: string) => Promise<void>;
+  scheduleHost: (hostname: string, delayMs: number, signal: AbortSignal) => Promise<void>;
   delayMs?: number;
   timeoutMs?: number;
   dnsTimeoutMs?: number;
@@ -97,9 +105,16 @@ const DEFAULT_DNS_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_EXTRACTION_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 5;
+/**
+ * Supported upper bound on a robots crawl-delay. A larger request fails closed:
+ * clamping would crawl faster than the server asked for.
+ */
+const MAX_CRAWL_DELAY_MS = 30_000;
+const EXTRACTION_VERSION = '2';
 const DEFAULT_USER_AGENT = 'PiResearchBot/0.1 (academic course research assistant)';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+const sha256 = (data: Buffer | string): string => createHash('sha256').update(data).digest('hex');
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const normalizeText = (value: string): string => value.replace(/\r\n?/g, '\n').trim();
 
@@ -113,12 +128,31 @@ function abortReason(signal: AbortSignal): Error {
   return reason instanceof Error ? reason : new Error(String(reason ?? 'Aborted'));
 }
 
+/** Infrastructure failures (accounting hooks) must never be relabelled as robots policy. */
+class HookFailure extends Error {
+  constructor(readonly original: unknown) { super(message(original)); }
+}
+
+async function callHook(hook: () => Promise<unknown>): Promise<void> {
+  try { await hook(); } catch (error) { throw new HookFailure(error); }
+}
+
+interface RobotsRules {
+  isAllowed(url: string, ua?: string): boolean | undefined;
+  getCrawlDelay(ua?: string): number | undefined;
+}
+interface RobotsEntry { allowAll: boolean; rules?: RobotsRules; }
+/** robots-parser ships CJS; require() binds the factory without default-interop ambiguity. */
+const createRobots = moduleRequire('robots-parser') as (url: string, body: string) => RobotsRules;
 interface ExtractionPackages { linkedom: string; readability: string; unpdf: string; }
 interface Services {
-  lastRequest: Map<string, number>;
+  store: AcquisitionStore;
+  beforeHttp: (url: string) => Promise<void>;
+  scheduleHost: (hostname: string, delayMs: number, signal: AbortSignal) => Promise<void>;
   resolver: AcquisitionResolver;
   transport: AcquisitionTransport;
   packages: ExtractionPackages;
+  robotsCache: Map<string, RobotsEntry>;
   userAgent: string;
   minDelayMs: number;
   timeoutMs: number;
@@ -329,6 +363,33 @@ export function parseHtmlMetadata(html: string): HtmlMetadata {
   return result;
 }
 
+/**
+ * Extracts in-article links from HTML content resolved against a base URL.
+ * Skips in-page anchors, javascript, mailto, and non-http(s) targets.
+ */
+export function parseArticleLinks(html: string, baseUrl: string): { url: string; text: string }[] {
+  const links: { url: string; text: string }[] = [];
+  const seen = new Set<string>();
+  const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const rawHref = (match[1] || '').trim();
+    const rawText = (match[2] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:') || rawHref.startsWith('mailto:')) continue;
+    try {
+      const resolved = new URL(rawHref, baseUrl);
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+      resolved.hash = '';
+      if (!seen.has(resolved.href)) {
+        seen.add(resolved.href);
+        links.push({ url: resolved.href, text: rawText });
+        if (links.length >= 50) break;
+      }
+    } catch { /* ignore invalid url */ }
+  }
+  return links;
+}
+
 // ---------------------------------------------------------------------------
 // URL and address policy
 // ---------------------------------------------------------------------------
@@ -511,24 +572,22 @@ const defaultTransport: AcquisitionTransport = ({ url, address, headers, timeout
   });
 
 // ---------------------------------------------------------------------------
-// Page requests and redirects
+// Robots policy
 // ---------------------------------------------------------------------------
 
-async function exchange(target: URL, signal: AbortSignal, services: Services): Promise<{ response: TransportResponse; finalUrl: URL }> {
+async function exchange(target: URL, signal: AbortSignal, gateRobots: boolean, services: Services): Promise<{ response: TransportResponse; finalUrl: URL }> {
   let current = target;
   let redirects = 0;
   const visited = new Set<string>([current.href]);
   for (;;) {
+    let crawlDelayMs = 0;
+    if (gateRobots) crawlDelayMs = await robotsAllows(current, signal, services);
+    await callHook(() => services.scheduleHost(current.hostname, Math.max(services.minDelayMs, crawlDelayMs), signal));
     const address = await resolveAddress(current, services.resolver, signal, services.dnsTimeoutMs);
-    const host = current.hostname;
-    const spacing = services.minDelayMs;
-    let remaining = (services.lastRequest.get(host) ?? 0) + spacing - Date.now();
-    while (remaining > 0) {
-      await wait(remaining, undefined, { signal });
-      remaining = (services.lastRequest.get(host) ?? 0) + spacing - Date.now();
-    }
+    // A late or concurrent abort must never reach the accounting hook or the transport.
     signal.throwIfAborted();
-    services.lastRequest.set(host, Date.now());
+    await callHook(() => services.beforeHttp(current.href));
+    signal.throwIfAborted();
     const response = await services.transport({
       url: current,
       address,
@@ -554,6 +613,64 @@ async function exchange(target: URL, signal: AbortSignal, services: Services): P
     }
     return { response, finalUrl: current };
   }
+}
+
+async function ensureRobots(pageUrl: URL, signal: AbortSignal, services: Services): Promise<RobotsEntry> {
+  const key = pageUrl.origin;
+  const cached = services.robotsCache.get(key);
+  if (cached) return cached;
+  const robotsUrl = new URL('/robots.txt', key);
+  let result: { response: TransportResponse; finalUrl: URL };
+  try {
+    // Robots retrieval uses the same guarded transport, scheduling and accounting, without a robots gate.
+    result = await exchange(robotsUrl, signal, false, services);
+  } catch (error) {
+    if (error instanceof HookFailure) throw error.original;
+    if (signal.aborted || (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'))) throw error;
+    // Definitive target/address-validation failures stay labelled as such; only fetch-level failures become unavailable.
+    if (error instanceof AcquisitionError && (error.code === 'policy' || error.code === 'invalid-url' || error.code === 'dns')) throw error;
+    throw new AcquisitionError('robots-unavailable', `Robots policy unavailable for ${key}: ${message(error)}`, robotsUrl.href);
+  }
+  const { response, finalUrl } = result;
+  let entry: RobotsEntry;
+  if (response.status === 404 || response.status === 410) {
+    entry = { allowAll: true };
+  } else if (response.status !== 200) {
+    throw new AcquisitionError('robots-unavailable', `Robots.txt HTTP ${response.status} for ${key}`, finalUrl.href, response.status);
+  } else if (finalUrl.origin !== key) {
+    // robots-parser binds rules to one origin; a cross-origin file cannot establish policy here.
+    throw new AcquisitionError('robots-unavailable', `Robots.txt redirected off-origin for ${key}`, finalUrl.href);
+  } else {
+    // An undecodable body would parse as "no rules" and fail open; policy must be establishable or the origin is closed.
+    const encoding = firstHeader(response.headers['content-encoding']);
+    if (encoding && encoding.trim().toLowerCase() !== 'identity') {
+      throw new AcquisitionError('robots-unavailable', `Robots.txt came back compressed for ${key}`, finalUrl.href, response.status);
+    }
+    if (response.body.length > services.maxBytes) {
+      throw new AcquisitionError('robots-unavailable', `Robots.txt exceeded ${services.maxBytes} bytes for ${key}`, finalUrl.href, response.status);
+    }
+    const charset = parseMediaType(firstHeader(response.headers['content-type'])).charset;
+    const rules = createRobots(finalUrl.href, decodeText(response.body, charset ?? 'utf-8'));
+    entry = { allowAll: false, rules };
+  }
+  services.robotsCache.set(key, entry);
+  return entry;
+}
+
+async function robotsAllows(url: URL, signal: AbortSignal, services: Services): Promise<number> {
+  const entry = await ensureRobots(url, signal, services);
+  if (entry.allowAll) return 0;
+  const allowed = entry.rules?.isAllowed(url.href, services.userAgent);
+  if (allowed !== true) throw new AcquisitionError('robots-denied', `Robots.txt denies ${url.href}`, url.href);
+  const crawlDelay = entry.rules?.getCrawlDelay(services.userAgent);
+  if (typeof crawlDelay === 'number' && Number.isFinite(crawlDelay) && crawlDelay > 0) {
+    const delayMs = crawlDelay * 1000;
+    if (delayMs > MAX_CRAWL_DELAY_MS) {
+      throw new AcquisitionError('policy', `Robots.txt requests a crawl-delay of ${crawlDelay}s, above the supported maximum of ${MAX_CRAWL_DELAY_MS}ms; refusing to crawl faster than requested`, url.href);
+    }
+    return delayMs;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,7 +726,7 @@ function decodeText(body: Buffer, charset: string | undefined): string {
 // Extraction (terminable worker: Readability and unpdf are synchronous parsers)
 // ---------------------------------------------------------------------------
 
-type WorkerJob = { kind: 'html'; html: string } | { kind: 'pdf'; bytes: Buffer };
+type WorkerJob = { kind: 'html'; html: string; url?: string } | { kind: 'pdf'; bytes: Buffer };
 interface WorkerResult {
   text?: string;
   title?: string;
@@ -617,6 +734,7 @@ interface WorkerResult {
   canonicalUrl?: string;
   publishedAt?: string;
   modifiedAt?: string;
+  links?: { url: string; text: string }[];
 }
 
 /**
@@ -715,6 +833,29 @@ const run = async () => {
       return fail('Readability found no extractable article content');
     }
 
+    // 5. In-article links
+    const extractedLinks = [];
+    const seenLinks = new Set();
+    const anchorEls = document.querySelectorAll('a[href]');
+    for (const a of anchorEls) {
+      try {
+        const rawHref = String(a.getAttribute('href') || '').trim();
+        const linkText = String(a.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+        if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('javascript:') || rawHref.startsWith('mailto:')) continue;
+        let resolvedUrl;
+        try {
+          resolvedUrl = new URL(rawHref, String(job.url || 'https://example.org'));
+        } catch (e) { continue; }
+        if (resolvedUrl.protocol !== 'http:' && resolvedUrl.protocol !== 'https:') continue;
+        resolvedUrl.hash = '';
+        const href = resolvedUrl.href;
+        if (seenLinks.has(href)) continue;
+        seenLinks.add(href);
+        extractedLinks.push({ url: href, text: linkText });
+        if (extractedLinks.length >= 50) break;
+      } catch (e) { /* ignore single link error */ }
+    }
+
     parentPort.postMessage({
       ok: true,
       text,
@@ -722,6 +863,7 @@ const run = async () => {
       canonicalUrl: canonicalUrl || undefined,
       publishedAt: publishedAt || undefined,
       modifiedAt: modifiedAt || undefined,
+      links: extractedLinks.length ? extractedLinks : undefined,
     });
     return;
   }
@@ -772,6 +914,7 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
           canonicalUrl?: string;
           publishedAt?: string;
           modifiedAt?: string;
+          links?: { url: string; text: string }[];
         };
         if (result && result.ok) {
           resolve({
@@ -781,6 +924,7 @@ async function runWorker(services: Services, job: WorkerJob, signal: AbortSignal
             canonicalUrl: result.canonicalUrl,
             publishedAt: result.publishedAt,
             modifiedAt: result.modifiedAt,
+            links: Array.isArray(result.links) ? result.links : undefined,
           });
         } else {
           reject(new AcquisitionError('extraction', (result && result.error) || 'Extraction failed'));
@@ -801,14 +945,15 @@ export function isThinContent(text: string): boolean {
   return !text || text.trim().length < MIN_ARTICLE_TEXT_LENGTH;
 }
 
-async function extractHtml(html: string, services: Services, signal: AbortSignal): Promise<{
+async function extractHtml(html: string, services: Services, signal: AbortSignal, url?: string): Promise<{
   title: string;
   text: string;
   canonicalUrl?: string;
   publishedAt?: string;
   modifiedAt?: string;
+  links?: { url: string; text: string }[];
 }> {
-  const result = await runWorker(services, { kind: 'html', html }, signal);
+  const result = await runWorker(services, { kind: 'html', html, ...(url ? { url } : {}) }, signal);
   const text = normalizeText(result.text ?? '');
   if (!text) throw new AcquisitionError('extraction', 'Readability produced empty text');
   if (isThinContent(text)) throw new AcquisitionError('extraction', `Readability produced thin text (${text.length} chars)`);
@@ -818,6 +963,7 @@ async function extractHtml(html: string, services: Services, signal: AbortSignal
     canonicalUrl: result.canonicalUrl,
     publishedAt: result.publishedAt,
     modifiedAt: result.modifiedAt,
+    links: result.links,
   };
 }
 
@@ -848,7 +994,14 @@ async function extractPdf(body: Buffer, services: Services, signal: AbortSignal)
 async function acquire(rawUrl: string, signal: AbortSignal, services: Services): Promise<Snapshot> {
   signal.throwIfAborted();
   const requested = parseTarget(rawUrl);
-  const { response, finalUrl } = await exchange(requested, signal, services);
+  let result: { response: TransportResponse; finalUrl: URL };
+  try {
+    result = await exchange(requested, signal, true, services);
+  } catch (error) {
+    if (error instanceof HookFailure) throw error.original;
+    throw error;
+  }
+  const { response, finalUrl } = result;
   if (response.status !== 200) {
     throw new AcquisitionError('http-status', `HTTP ${response.status} for ${finalUrl.href}`, finalUrl.href, response.status);
   }
@@ -868,12 +1021,13 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   let canonicalUrl = finalUrl.href;
   let publishedAt: string | undefined;
   let modifiedAt: string | undefined;
+  let links: Snapshot['links'] | undefined;
   if (media.kind === 'html') {
     const rawHtml = decodeText(response.body, media.charset);
     if (isBotChallenge(rawHtml)) {
       throw new AcquisitionError('policy', 'bot-challenge detected (Cloudflare/CAPTCHA challenge screen)', finalUrl.href, response.status);
     }
-    const extracted = await extractHtml(rawHtml, services, signal);
+    const extracted = await extractHtml(rawHtml, services, signal, finalUrl.href);
     title = extracted.title;
     text = extracted.text;
     if (extracted.canonicalUrl) {
@@ -887,6 +1041,7 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
     }
     publishedAt = extracted.publishedAt;
     modifiedAt = extracted.modifiedAt;
+    links = extracted.links;
   } else if (media.kind === 'pdf') {
     const extracted = await extractPdf(response.body, services, signal);
     text = extracted.text;
@@ -896,7 +1051,39 @@ async function acquire(rawUrl: string, signal: AbortSignal, services: Services):
   }
   if (!text.trim()) throw new AcquisitionError('extraction', 'Extracted text is empty', finalUrl.href);
   signal.throwIfAborted();
-  return { finalUrl: finalUrl.href, canonicalUrl, fetchedAt, title, text, pages, publishedAt, modifiedAt };
+  const extraction = media.kind === 'html' ? 'readability' : media.kind === 'pdf' ? 'unpdf' : 'plain';
+  const rawHash = sha256(response.body);
+  const textHash = sha256(text);
+  // Blobs before manifest; once the first blob is written the save completes so no half-record remains.
+  const rawBlob = await services.store.put(response.body);
+  const textBlob = await services.store.put(text);
+  const finalUrlHref = finalUrl.href;
+  const identity = {
+    requestedUrl: requested.href,
+    finalUrl: finalUrlHref,
+    canonicalUrl,
+    fetchedAt,
+    mime: media.mime,
+    status: response.status,
+    contentHash: rawHash,
+    textHash,
+    extraction,
+    extractionVersion: EXTRACTION_VERSION,
+  };
+  const snapshot: Snapshot = {
+    id: sha256(JSON.stringify(identity)),
+    ...identity,
+    rawBlob,
+    textBlob,
+    title,
+    text,
+    ...(pages ? { pages } : {}),
+    ...(publishedAt ? { publishedAt } : {}),
+    ...(modifiedAt ? { modifiedAt } : {}),
+    ...(links ? { links } : {}),
+  };
+  await services.store.saveSnapshot(snapshot);
+  return snapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -907,7 +1094,10 @@ function positiveNumber(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-export function AcquisitionService(options: AcquisitionOptions = {}): Acquisition {
+export function AcquisitionService(options: AcquisitionOptions): Acquisition {
+  if (!options || !options.store || typeof options.beforeHttp !== 'function' || typeof options.scheduleHost !== 'function') {
+    throw new TypeError('AcquisitionService requires store, beforeHttp and scheduleHost');
+  }
   const packages: ExtractionPackages = {
     linkedom: moduleRequire.resolve('linkedom'),
     readability: moduleRequire.resolve('@mozilla/readability'),
@@ -915,10 +1105,13 @@ export function AcquisitionService(options: AcquisitionOptions = {}): Acquisitio
   };
   const requestedDelay = positiveNumber(options.delayMs, MIN_HOST_DELAY_MS);
   const services: Services = {
-    lastRequest: new Map(),
+    store: options.store,
+    beforeHttp: options.beforeHttp,
+    scheduleHost: options.scheduleHost,
     resolver: options.resolver ?? defaultResolver,
     transport: options.transport ?? defaultTransport,
     packages,
+    robotsCache: new Map(),
     userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
     minDelayMs: Math.max(MIN_HOST_DELAY_MS, requestedDelay),
     timeoutMs: positiveNumber(options.timeoutMs, DEFAULT_TIMEOUT_MS),

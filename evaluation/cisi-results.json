@@ -1,0 +1,5135 @@
+{
+  "provenance": {
+    "source": {
+      "name": "CISI (Centre for Inventions and Scientific Information)",
+      "page": "https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/",
+      "archive": "https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/cisi.tar.gz",
+      "archiveInput": "/tmp/cisi.tar.gz",
+      "archiveSha256": "bddb284e19369d153dad90770ae897e19221b0bc50e1329b5a702aa56f5e8483",
+      "expectedArchiveSha256": "bddb284e19369d153dad90770ae897e19221b0bc50e1329b5a702aa56f5e8483",
+      "files": {
+        "CISI.ALL": {
+          "sha256": "df5af339fa4623ef33e315f39f3e13c050d17535c18360c727bf3c96ce60ba40",
+          "bytes": 2228098
+        },
+        "CISI.QRY": {
+          "sha256": "a5ffad2b39445ca5f4091351466b3d70dad9b4eb9a713b8334d46abb291ffd3c",
+          "bytes": 68157
+        },
+        "CISI.REL": {
+          "sha256": "deb203a0dc07628d14dbcbc9a9803bf3c1f86e855570edb29d907663de8d6ea9",
+          "bytes": 80964
+        },
+        "archive": {
+          "sha256": "bddb284e19369d153dad90770ae897e19221b0bc50e1329b5a702aa56f5e8483",
+          "bytes": 775144
+        }
+      },
+      "downloadMethod": {
+        "method": "bounded HTTPS GET via node:https; transparent fetch decoding is avoided so the archive bytes and SHA-256 are exact",
+        "maxBytes": 8388608,
+        "timeoutMs": 45000,
+        "redirects": 3,
+        "userAgent": "pi-research-cisi-eval/0.1 (coursework evaluation; local use)"
+      },
+      "irDatasets": "CISI is absent from ir_datasets 0.4.0, 0.5.5, 0.5.11 and 0.6.3 (PyPI wheels checked) and from the master tree; https://ir-datasets.com/cisi.html returns HTTP 404. The Glasgow IDOM archive is the public upstream source named by CISI dataset descriptions.",
+      "license": "No license is asserted here. The Glasgow page does not state one; do not redistribute the corpus without checking.",
+      "retrievedAt": "2026-11-18T04:43:05.026Z"
+    },
+    "dataset": {
+      "path": "/tmp/cisi-dataset.json",
+      "sha256": "dfa920d6d05bef4789d9108385a115865203e1b2641bb025f7c328f12634644c"
+    },
+    "counts": {
+      "nativeDocuments": 1460,
+      "retainedDocuments": 1459,
+      "exactAliasDocumentsExcluded": 1,
+      "nativeQueries": 112,
+      "judgedQueriesUsed": 76,
+      "unjudgedQueriesExcluded": 36,
+      "nativeQrelLines": 3114,
+      "nativeQrelPairs": 3114,
+      "retainedQrelPairs": 3113,
+      "aliasQrelsRemapped": 0,
+      "aliasQrelsDeduplicated": 1,
+      "positiveJudgments": 3113
+    },
+    "labelMapping": {
+      "qrelsFormat": "glasgow-presence-4col",
+      "mapping": "The Glasgow CISI.REL four-column layout lists relevant query/document pairs; the third and fourth columns are all zero placeholders. Presence is mapped to grade 1. No graded or negative human labels are invented.",
+      "unlisted": "Documents not listed for a query are treated by the evaluator as grade 0. That is a benchmark convention, not a human judgment that they are irrelevant."
+    },
+    "proxy": "One CISI document is one evaluator passage. The human judgments are document-level; these are document retrieval metrics used as a document-level proxy, not passage-label judgments or conversational evaluation.",
+    "exclusions": {
+      "unjudgedQueryIds": [
+        "36",
+        "38",
+        "40",
+        "47",
+        "48",
+        "51",
+        "53",
+        "59",
+        "60",
+        "63",
+        "64",
+        "68",
+        "70",
+        "72",
+        "73",
+        "74",
+        "75",
+        "77",
+        "78",
+        "80",
+        "83",
+        "85",
+        "86",
+        "87",
+        "88",
+        "89",
+        "91",
+        "93",
+        "94",
+        "103",
+        "105",
+        "106",
+        "107",
+        "108",
+        "110",
+        "112"
+      ],
+      "aliasDocuments": [
+        {
+          "id": "1440",
+          "canonical": "234",
+          "reason": "exact body text"
+        }
+      ],
+      "aliasQrels": [
+        {
+          "query": "44",
+          "alias": "1440",
+          "canonical": "234",
+          "disposition": "deduplicated",
+          "grade": 1
+        }
+      ]
+    },
+    "warnings": [
+      "The CISI source text is not redistributed by this manifest; the dataset output contains it.",
+      "Do not publish the dataset unless the source licensing is clear.",
+      "This is a classic test collection, not a frozen corpus produced by the live Pi system."
+    ]
+  },
+  "reproduction": {
+    "download": "curl -fsSL --max-time 45 -o /tmp/cisi.tar.gz https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/cisi.tar.gz",
+    "prepare": "node scripts/prepare-cisi.mjs --archive /tmp/cisi.tar.gz --out /tmp/cisi-dataset.json --manifest /tmp/cisi-manifest.json",
+    "evaluate": "npm run --silent evaluate -- /tmp/cisi-dataset.json > /tmp/cisi-eval.json",
+    "note": "The prepare script also downloads and verifies the archive itself when --archive is omitted. The prepared dataset contains CISI source text and is intentionally not committed. This artifact contains derived metrics, rankings, IDs and provenance only; query text is omitted."
+  },
+  "evaluation": {
+    "scope": {
+      "corpus": "one frozen index shared by all three methods; every query is judged over the same pool",
+      "unjudged": "passages without a human grade count as zero relevance",
+      "recall": "pooledRecall10 is relative to the human-judged pool, not recall over the web",
+      "lexicalPRF": "anchored corpus-derived lexical feedback, not the live contextual model assessment",
+      "excluded": "this ablation does not evaluate research policy, allocation, conversation or report quality",
+      "judgments": "all judgments are human-supplied input; this tool fabricates no results"
+    },
+    "methods": [
+      "bm25",
+      "lexicalPRF",
+      "prfMMR"
+    ],
+    "corpus": {
+      "passages": 1459,
+      "queries": 76,
+      "zeroPositiveQrelQueries": 0,
+      "index": {
+        "n": 1459,
+        "passages": 1459,
+        "aliases": 0,
+        "terms": 10013,
+        "tokens": 187549,
+        "avg": 72.45236463331048,
+        "groups": 1455,
+        "revision": 1
+      }
+    },
+    "perQuery": [
+      {
+        "queryId": "1",
+        "judgedPositive": 46,
+        "rankings": {
+          "bm25": [
+            "722",
+            "1299",
+            "429",
+            "759",
+            "1281",
+            "447",
+            "76",
+            "1055",
+            "1195",
+            "813"
+          ],
+          "lexicalPRF": [
+            "447",
+            "1195",
+            "759",
+            "1281",
+            "722",
+            "449",
+            "1299",
+            "65",
+            "510",
+            "429"
+          ],
+          "prfMMR": [
+            "447",
+            "1195",
+            "759",
+            "722",
+            "1281",
+            "65",
+            "1299",
+            "449",
+            "510",
+            "1055"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.6185197008414421,
+            "pooledRecall10": 0.13043478260869565,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.5181001594748443,
+            "pooledRecall10": 0.13043478260869565,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.4634464183177906,
+            "pooledRecall10": 0.10869565217391304,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "2",
+        "judgedPositive": 26,
+        "rankings": {
+          "bm25": [
+            "790",
+            "810",
+            "166",
+            "381",
+            "1399",
+            "1096",
+            "778",
+            "1055",
+            "1071",
+            "603"
+          ],
+          "lexicalPRF": [
+            "790",
+            "810",
+            "603",
+            "77",
+            "1091",
+            "820",
+            "1299",
+            "688",
+            "1055",
+            "65"
+          ],
+          "prfMMR": [
+            "790",
+            "810",
+            "603",
+            "1091",
+            "77",
+            "1299",
+            "688",
+            "1055",
+            "65",
+            "34"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "3",
+        "judgedPositive": 44,
+        "rankings": {
+          "bm25": [
+            "469",
+            "1181",
+            "160",
+            "1077",
+            "1235",
+            "803",
+            "599",
+            "1169",
+            "119",
+            "158"
+          ],
+          "lexicalPRF": [
+            "469",
+            "1181",
+            "1235",
+            "803",
+            "160",
+            "1077",
+            "496",
+            "599",
+            "845",
+            "837"
+          ],
+          "prfMMR": [
+            "469",
+            "1181",
+            "1235",
+            "160",
+            "803",
+            "1077",
+            "496",
+            "845",
+            "31",
+            "449"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.5,
+            "ndcg10": 0.5801476231864474,
+            "pooledRecall10": 0.11363636363636363,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.5231737964779628,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.4440973278132557,
+            "pooledRecall10": 0.06818181818181818,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "4",
+        "judgedPositive": 8,
+        "rankings": {
+          "bm25": [
+            "790",
+            "746",
+            "601",
+            "179",
+            "565",
+            "739",
+            "175",
+            "252",
+            "332",
+            "927"
+          ],
+          "lexicalPRF": [
+            "790",
+            "746",
+            "77",
+            "80",
+            "738",
+            "34",
+            "1299",
+            "489",
+            "499",
+            "673"
+          ],
+          "prfMMR": [
+            "790",
+            "746",
+            "77",
+            "80",
+            "738",
+            "34",
+            "1299",
+            "739",
+            "499",
+            "489"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.20261469210121208,
+            "pooledRecall10": 0.25,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "5",
+        "judgedPositive": 24,
+        "rankings": {
+          "bm25": [
+            "648",
+            "1105",
+            "122",
+            "483",
+            "839",
+            "388",
+            "535",
+            "895",
+            "501",
+            "451"
+          ],
+          "lexicalPRF": [
+            "648",
+            "459",
+            "611",
+            "526",
+            "594",
+            "332",
+            "1375",
+            "497",
+            "323",
+            "593"
+          ],
+          "prfMMR": [
+            "648",
+            "459",
+            "611",
+            "594",
+            "526",
+            "332",
+            "323",
+            "1375",
+            "497",
+            "528"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.28371255449703187,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.041666666666666664,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.28371255449703187,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "6",
+        "judgedPositive": 1,
+        "rankings": {
+          "bm25": [
+            "1263",
+            "386",
+            "967",
+            "1045",
+            "545",
+            "398",
+            "1077",
+            "312",
+            "1341",
+            "400"
+          ],
+          "lexicalPRF": [
+            "1263",
+            "1357",
+            "60",
+            "386",
+            "967",
+            "1045",
+            "545",
+            "1373",
+            "398",
+            "1077"
+          ],
+          "prfMMR": [
+            "1263",
+            "386",
+            "1357",
+            "967",
+            "545",
+            "1045",
+            "60",
+            "1373",
+            "1077",
+            "43"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.2890648263178879,
+            "pooledRecall10": 1,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "7",
+        "judgedPositive": 8,
+        "rankings": {
+          "bm25": [
+            "873",
+            "507",
+            "59",
+            "484",
+            "461",
+            "1328",
+            "150",
+            "420",
+            "374",
+            "1060"
+          ],
+          "lexicalPRF": [
+            "873",
+            "884",
+            "1328",
+            "507",
+            "546",
+            "1060",
+            "120",
+            "59",
+            "484",
+            "406"
+          ],
+          "prfMMR": [
+            "873",
+            "884",
+            "1328",
+            "507",
+            "546",
+            "1060",
+            "406",
+            "461",
+            "59",
+            "150"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "8",
+        "judgedPositive": 18,
+        "rankings": {
+          "bm25": [
+            "434",
+            "1010",
+            "817",
+            "595",
+            "641",
+            "52",
+            "159",
+            "796",
+            "456",
+            "539"
+          ],
+          "lexicalPRF": [
+            "434",
+            "817",
+            "595",
+            "796",
+            "1448",
+            "641",
+            "539",
+            "504",
+            "1323",
+            "1024"
+          ],
+          "prfMMR": [
+            "434",
+            "817",
+            "641",
+            "595",
+            "796",
+            "1448",
+            "1323",
+            "1024",
+            "1010",
+            "539"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06362078819895171,
+            "pooledRecall10": 0.05555555555555555,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06943122193677727,
+            "pooledRecall10": 0.05555555555555555,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "9",
+        "judgedPositive": 34,
+        "rankings": {
+          "bm25": [
+            "1120",
+            "571",
+            "565",
+            "175",
+            "1136",
+            "179",
+            "1327",
+            "483",
+            "986",
+            "309"
+          ],
+          "lexicalPRF": [
+            "1120",
+            "396",
+            "399",
+            "168",
+            "571",
+            "212",
+            "565",
+            "175",
+            "1136",
+            "179"
+          ],
+          "prfMMR": [
+            "1120",
+            "396",
+            "399",
+            "571",
+            "168",
+            "212",
+            "986",
+            "1136",
+            "175",
+            "517"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.46664232174566633,
+            "pooledRecall10": 0.11764705882352941,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.4315420454124844,
+            "pooledRecall10": 0.11764705882352941,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3647442587311445,
+            "pooledRecall10": 0.08823529411764706,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "10",
+        "judgedPositive": 26,
+        "rankings": {
+          "bm25": [
+            "1385",
+            "826",
+            "1054",
+            "1411",
+            "536",
+            "462",
+            "552",
+            "25",
+            "590",
+            "1448"
+          ],
+          "lexicalPRF": [
+            "1385",
+            "826",
+            "1054",
+            "1411",
+            "536",
+            "462",
+            "552",
+            "25",
+            "590",
+            "1448"
+          ],
+          "prfMMR": [
+            "1385",
+            "826",
+            "1054",
+            "552",
+            "536",
+            "797",
+            "462",
+            "1448",
+            "572",
+            "728"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.4530643748551537,
+            "pooledRecall10": 0.15384615384615385,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.4530643748551537,
+            "pooledRecall10": 0.15384615384615385,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.3785988060390612,
+            "pooledRecall10": 0.11538461538461539,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "11",
+        "judgedPositive": 127,
+        "rankings": {
+          "bm25": [
+            "474",
+            "1089",
+            "899",
+            "128",
+            "1098",
+            "513",
+            "575",
+            "381",
+            "383",
+            "1174"
+          ],
+          "lexicalPRF": [
+            "474",
+            "1089",
+            "895",
+            "899",
+            "565",
+            "1098",
+            "241",
+            "513",
+            "575",
+            "128"
+          ],
+          "prfMMR": [
+            "474",
+            "1089",
+            "895",
+            "899",
+            "241",
+            "1098",
+            "565",
+            "513",
+            "29",
+            "575"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.4818809355796682,
+            "pooledRecall10": 0.03937007874015748,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.38148029915855786,
+            "pooledRecall10": 0.031496062992125984,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.38148029915855786,
+            "pooledRecall10": 0.031496062992125984,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "12",
+        "judgedPositive": 13,
+        "rankings": {
+          "bm25": [
+            "1167",
+            "1209",
+            "552",
+            "748",
+            "1108",
+            "686",
+            "1157",
+            "193",
+            "89",
+            "258"
+          ],
+          "lexicalPRF": [
+            "1167",
+            "1108",
+            "1209",
+            "1097",
+            "657",
+            "194",
+            "613",
+            "1109",
+            "571",
+            "1114"
+          ],
+          "prfMMR": [
+            "1167",
+            "1108",
+            "1209",
+            "1097",
+            "613",
+            "194",
+            "657",
+            "1109",
+            "748",
+            "552"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.13886244387355454,
+            "pooledRecall10": 0.07692307692307693,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.11004588314904008,
+            "pooledRecall10": 0.07692307692307693,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.11004588314904008,
+            "pooledRecall10": 0.07692307692307693,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "13",
+        "judgedPositive": 91,
+        "rankings": {
+          "bm25": [
+            "565",
+            "611",
+            "1098",
+            "194",
+            "59",
+            "889",
+            "866",
+            "646",
+            "591",
+            "827"
+          ],
+          "lexicalPRF": [
+            "565",
+            "889",
+            "611",
+            "175",
+            "179",
+            "1098",
+            "591",
+            "1130",
+            "194",
+            "827"
+          ],
+          "prfMMR": [
+            "565",
+            "889",
+            "611",
+            "1098",
+            "591",
+            "1130",
+            "194",
+            "175",
+            "827",
+            "629"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5330752584449808,
+            "pooledRecall10": 0.054945054945054944,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.4447551423209717,
+            "pooledRecall10": 0.04395604395604396,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.42914113378860647,
+            "pooledRecall10": 0.04395604395604396,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "14",
+        "judgedPositive": 3,
+        "rankings": {
+          "bm25": [
+            "1294",
+            "72",
+            "1144",
+            "790",
+            "661",
+            "659",
+            "891",
+            "181",
+            "220",
+            "193"
+          ],
+          "lexicalPRF": [
+            "1294",
+            "72",
+            "790",
+            "661",
+            "1144",
+            "179",
+            "565",
+            "175",
+            "1129",
+            "1224"
+          ],
+          "prfMMR": [
+            "1294",
+            "72",
+            "790",
+            "661",
+            "1144",
+            "1129",
+            "179",
+            "633",
+            "1224",
+            "565"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "15",
+        "judgedPositive": 82,
+        "rankings": {
+          "bm25": [
+            "591",
+            "1298",
+            "1264",
+            "177",
+            "180",
+            "515",
+            "615",
+            "979",
+            "314",
+            "1027"
+          ],
+          "lexicalPRF": [
+            "591",
+            "623",
+            "500",
+            "639",
+            "615",
+            "865",
+            "792",
+            "523",
+            "629",
+            "73"
+          ],
+          "prfMMR": [
+            "591",
+            "623",
+            "792",
+            "500",
+            "865",
+            "629",
+            "639",
+            "523",
+            "73",
+            "615"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.012195121951219513,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5983950669742499,
+            "pooledRecall10": 0.06097560975609756,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5958595188912912,
+            "pooledRecall10": 0.06097560975609756,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "16",
+        "judgedPositive": 26,
+        "rankings": {
+          "bm25": [
+            "1307",
+            "534",
+            "1258",
+            "595",
+            "459",
+            "615",
+            "621",
+            "379",
+            "202",
+            "492"
+          ],
+          "lexicalPRF": [
+            "1307",
+            "595",
+            "379",
+            "534",
+            "460",
+            "492",
+            "1258",
+            "202",
+            "1175",
+            "795"
+          ],
+          "prfMMR": [
+            "1307",
+            "595",
+            "379",
+            "1258",
+            "534",
+            "460",
+            "202",
+            "492",
+            "401",
+            "23"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.13886244387355454,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.08514311764162098,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "17",
+        "judgedPositive": 26,
+        "rankings": {
+          "bm25": [
+            "252",
+            "773",
+            "594",
+            "967",
+            "520",
+            "1158",
+            "625",
+            "503",
+            "815",
+            "512"
+          ],
+          "lexicalPRF": [
+            "252",
+            "703",
+            "704",
+            "675",
+            "495",
+            "709",
+            "687",
+            "690",
+            "716",
+            "701"
+          ],
+          "prfMMR": [
+            "252",
+            "703",
+            "704",
+            "675",
+            "495",
+            "687",
+            "716",
+            "709",
+            "1089",
+            "689"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.038461538461538464,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "18",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "668",
+            "1452",
+            "698",
+            "677",
+            "663",
+            "421",
+            "690",
+            "1261",
+            "701",
+            "694"
+          ],
+          "lexicalPRF": [
+            "668",
+            "678",
+            "1180",
+            "694",
+            "1452",
+            "708",
+            "677",
+            "688",
+            "254",
+            "698"
+          ],
+          "prfMMR": [
+            "668",
+            "678",
+            "694",
+            "1180",
+            "688",
+            "1452",
+            "677",
+            "708",
+            "690",
+            "689"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.13886244387355454,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.19518900079066107,
+            "pooledRecall10": 0.18181818181818182,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.1731866333482261,
+            "pooledRecall10": 0.18181818181818182,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "19",
+        "judgedPositive": 81,
+        "rankings": {
+          "bm25": [
+            "175",
+            "483",
+            "179",
+            "1298",
+            "1180",
+            "820",
+            "862",
+            "706",
+            "689",
+            "562"
+          ],
+          "lexicalPRF": [
+            "175",
+            "179",
+            "483",
+            "419",
+            "814",
+            "1298",
+            "661",
+            "1180",
+            "571",
+            "830"
+          ],
+          "prfMMR": [
+            "175",
+            "483",
+            "179",
+            "419",
+            "1298",
+            "1180",
+            "814",
+            "830",
+            "661",
+            "420"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.8,
+            "ndcg10": 0.8200685179888283,
+            "pooledRecall10": 0.09876543209876543,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.8,
+            "p10": 0.4,
+            "ndcg10": 0.5637884576902256,
+            "pooledRecall10": 0.04938271604938271,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.8,
+            "p10": 0.4,
+            "ndcg10": 0.5637884576902256,
+            "pooledRecall10": 0.04938271604938271,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "20",
+        "judgedPositive": 144,
+        "rankings": {
+          "bm25": [
+            "827",
+            "595",
+            "134",
+            "177",
+            "180",
+            "860",
+            "979",
+            "128",
+            "1298",
+            "433"
+          ],
+          "lexicalPRF": [
+            "827",
+            "595",
+            "134",
+            "180",
+            "177",
+            "860",
+            "128",
+            "979",
+            "1298",
+            "433"
+          ],
+          "prfMMR": [
+            "827",
+            "180",
+            "595",
+            "177",
+            "134",
+            "860",
+            "1298",
+            "979",
+            "433",
+            "128"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.5384313152574521,
+            "pooledRecall10": 0.027777777777777776,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.5423640154200349,
+            "pooledRecall10": 0.027777777777777776,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.4789015552876929,
+            "pooledRecall10": 0.027777777777777776,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "21",
+        "judgedPositive": 25,
+        "rankings": {
+          "bm25": [
+            "131",
+            "896",
+            "125",
+            "412",
+            "339",
+            "475",
+            "553",
+            "585",
+            "1205",
+            "1153"
+          ],
+          "lexicalPRF": [
+            "131",
+            "553",
+            "896",
+            "339",
+            "585",
+            "475",
+            "125",
+            "412",
+            "1153",
+            "216"
+          ],
+          "prfMMR": [
+            "131",
+            "896",
+            "553",
+            "339",
+            "585",
+            "125",
+            "475",
+            "412",
+            "1153",
+            "471"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.22400556151517553,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.20483424751859086,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.23365080824310533,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "22",
+        "judgedPositive": 53,
+        "rankings": {
+          "bm25": [
+            "1027",
+            "1114",
+            "986",
+            "174",
+            "410",
+            "336",
+            "148",
+            "177",
+            "572",
+            "136"
+          ],
+          "lexicalPRF": [
+            "1027",
+            "572",
+            "1114",
+            "986",
+            "174",
+            "175",
+            "336",
+            "410",
+            "148",
+            "177"
+          ],
+          "prfMMR": [
+            "1027",
+            "572",
+            "1114",
+            "986",
+            "410",
+            "148",
+            "336",
+            "175",
+            "174",
+            "136"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.2685529228900211,
+            "pooledRecall10": 0.05660377358490566,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.23047380976071707,
+            "pooledRecall10": 0.05660377358490566,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.2583297509898471,
+            "pooledRecall10": 0.05660377358490566,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "23",
+        "judgedPositive": 48,
+        "rankings": {
+          "bm25": [
+            "177",
+            "36",
+            "406",
+            "979",
+            "280",
+            "202",
+            "959",
+            "378",
+            "29",
+            "176"
+          ],
+          "lexicalPRF": [
+            "177",
+            "280",
+            "959",
+            "115",
+            "36",
+            "406",
+            "979",
+            "364",
+            "202",
+            "378"
+          ],
+          "prfMMR": [
+            "177",
+            "280",
+            "36",
+            "959",
+            "406",
+            "364",
+            "378",
+            "979",
+            "29",
+            "202"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.40067051810063,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.5040610795300535,
+            "pooledRecall10": 0.125,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.43199642233783886,
+            "pooledRecall10": 0.10416666666666667,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "24",
+        "judgedPositive": 52,
+        "rankings": {
+          "bm25": [
+            "924",
+            "896",
+            "1423",
+            "1166",
+            "648",
+            "1007",
+            "405",
+            "220",
+            "558",
+            "186"
+          ],
+          "lexicalPRF": [
+            "924",
+            "1423",
+            "896",
+            "1166",
+            "923",
+            "22",
+            "1275",
+            "648",
+            "1325",
+            "1007"
+          ],
+          "prfMMR": [
+            "924",
+            "1423",
+            "896",
+            "1166",
+            "22",
+            "1275",
+            "1325",
+            "923",
+            "648",
+            "1007"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.5,
+            "ndcg10": 0.6371523797895856,
+            "pooledRecall10": 0.09615384615384616,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 1,
+            "p10": 0.7,
+            "ndcg10": 0.793584067764911,
+            "pooledRecall10": 0.1346153846153846,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 1,
+            "p10": 0.7,
+            "ndcg10": 0.7917267193679839,
+            "pooledRecall10": 0.1346153846153846,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "25",
+        "judgedPositive": 33,
+        "rankings": {
+          "bm25": [
+            "1284",
+            "440",
+            "873",
+            "1298",
+            "1256",
+            "591",
+            "1289",
+            "999",
+            "49",
+            "360"
+          ],
+          "lexicalPRF": [
+            "1284",
+            "440",
+            "1256",
+            "1298",
+            "611",
+            "49",
+            "591",
+            "360",
+            "59",
+            "179"
+          ],
+          "prfMMR": [
+            "1284",
+            "440",
+            "1256",
+            "1298",
+            "611",
+            "591",
+            "360",
+            "49",
+            "873",
+            "179"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.19518900079066107,
+            "pooledRecall10": 0.06060606060606061,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.11004588314904008,
+            "pooledRecall10": 0.030303030303030304,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.17630010660342912,
+            "pooledRecall10": 0.06060606060606061,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "26",
+        "judgedPositive": 56,
+        "rankings": {
+          "bm25": [
+            "865",
+            "979",
+            "591",
+            "615",
+            "74",
+            "1417",
+            "822",
+            "433",
+            "490",
+            "299"
+          ],
+          "lexicalPRF": [
+            "865",
+            "591",
+            "615",
+            "822",
+            "979",
+            "74",
+            "490",
+            "1417",
+            "494",
+            "523"
+          ],
+          "prfMMR": [
+            "865",
+            "591",
+            "979",
+            "615",
+            "822",
+            "74",
+            "494",
+            "490",
+            "1417",
+            "299"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 1,
+            "p10": 0.7,
+            "ndcg10": 0.7885497208855957,
+            "pooledRecall10": 0.125,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 1,
+            "p10": 0.8,
+            "ndcg10": 0.8643145546088337,
+            "pooledRecall10": 0.14285714285714285,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 1,
+            "p10": 0.7,
+            "ndcg10": 0.7967610662472993,
+            "pooledRecall10": 0.125,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "27",
+        "judgedPositive": 115,
+        "rankings": {
+          "bm25": [
+            "375",
+            "727",
+            "798",
+            "257",
+            "461",
+            "680",
+            "30",
+            "376",
+            "565",
+            "595"
+          ],
+          "lexicalPRF": [
+            "375",
+            "376",
+            "696",
+            "1078",
+            "535",
+            "257",
+            "135",
+            "727",
+            "798",
+            "459"
+          ],
+          "prfMMR": [
+            "375",
+            "376",
+            "696",
+            "257",
+            "1078",
+            "798",
+            "727",
+            "135",
+            "535",
+            "595"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.23944085680261515,
+            "pooledRecall10": 0.02608695652173913,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.07839826897867533,
+            "pooledRecall10": 0.008695652173913044,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.008695652173913044,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "28",
+        "judgedPositive": 60,
+        "rankings": {
+          "bm25": [
+            "116",
+            "696",
+            "618",
+            "1114",
+            "1460",
+            "1092",
+            "676",
+            "156",
+            "722",
+            "798"
+          ],
+          "lexicalPRF": [
+            "116",
+            "696",
+            "460",
+            "1412",
+            "1460",
+            "1092",
+            "375",
+            "254",
+            "755",
+            "618"
+          ],
+          "prfMMR": [
+            "116",
+            "696",
+            "460",
+            "1092",
+            "375",
+            "1412",
+            "1460",
+            "254",
+            "618",
+            "722"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.7,
+            "ndcg10": 0.7315449642824575,
+            "pooledRecall10": 0.11666666666666667,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.8,
+            "p10": 0.6,
+            "ndcg10": 0.7059054020403313,
+            "pooledRecall10": 0.1,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 1,
+            "p10": 0.7,
+            "ndcg10": 0.7859162856301584,
+            "pooledRecall10": 0.11666666666666667,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "29",
+        "judgedPositive": 48,
+        "rankings": {
+          "bm25": [
+            "869",
+            "74",
+            "715",
+            "61",
+            "1419",
+            "321",
+            "810",
+            "1416",
+            "876",
+            "1197"
+          ],
+          "lexicalPRF": [
+            "869",
+            "61",
+            "512",
+            "876",
+            "583",
+            "810",
+            "1039",
+            "389",
+            "680",
+            "74"
+          ],
+          "prfMMR": [
+            "869",
+            "61",
+            "512",
+            "583",
+            "810",
+            "389",
+            "1039",
+            "876",
+            "321",
+            "117"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.19518900079066107,
+            "pooledRecall10": 0.041666666666666664,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06625422345438903,
+            "pooledRecall10": 0.020833333333333332,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06362078819895171,
+            "pooledRecall10": 0.020833333333333332,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "30",
+        "judgedPositive": 134,
+        "rankings": {
+          "bm25": [
+            "112",
+            "1114",
+            "1097",
+            "1109",
+            "1432",
+            "199",
+            "1352",
+            "905",
+            "977",
+            "210"
+          ],
+          "lexicalPRF": [
+            "112",
+            "1114",
+            "1097",
+            "1109",
+            "1432",
+            "821",
+            "199",
+            "1352",
+            "177",
+            "905"
+          ],
+          "prfMMR": [
+            "112",
+            "1114",
+            "1097",
+            "1432",
+            "1109",
+            "199",
+            "1352",
+            "821",
+            "177",
+            "360"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 1,
+            "p10": 0.5,
+            "ndcg10": 0.6489315753318465,
+            "pooledRecall10": 0.03731343283582089,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 1,
+            "p10": 0.6,
+            "ndcg10": 0.727329844310522,
+            "pooledRecall10": 0.04477611940298507,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 1,
+            "p10": 0.6,
+            "ndcg10": 0.7183627972686238,
+            "pooledRecall10": 0.04477611940298507,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "31",
+        "judgedPositive": 61,
+        "rankings": {
+          "bm25": [
+            "535",
+            "1297",
+            "1370",
+            "313",
+            "545",
+            "1348",
+            "111",
+            "804",
+            "180",
+            "497"
+          ],
+          "lexicalPRF": [
+            "535",
+            "1370",
+            "1297",
+            "313",
+            "545",
+            "375",
+            "1348",
+            "607",
+            "180",
+            "582"
+          ],
+          "prfMMR": [
+            "535",
+            "1370",
+            "1297",
+            "1348",
+            "545",
+            "607",
+            "313",
+            "180",
+            "375",
+            "582"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.33013764944712026,
+            "pooledRecall10": 0.03278688524590164,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.43735247915031,
+            "pooledRecall10": 0.04918032786885246,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.42520843362602373,
+            "pooledRecall10": 0.04918032786885246,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "32",
+        "judgedPositive": 117,
+        "rankings": {
+          "bm25": [
+            "1421",
+            "1298",
+            "553",
+            "52",
+            "830",
+            "1448",
+            "595",
+            "117",
+            "177",
+            "1416"
+          ],
+          "lexicalPRF": [
+            "1421",
+            "590",
+            "644",
+            "830",
+            "1010",
+            "1298",
+            "52",
+            "499",
+            "389",
+            "595"
+          ],
+          "prfMMR": [
+            "1421",
+            "590",
+            "644",
+            "830",
+            "1298",
+            "52",
+            "1010",
+            "499",
+            "1142",
+            "563"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "33",
+        "judgedPositive": 20,
+        "rankings": {
+          "bm25": [
+            "180",
+            "1081",
+            "492",
+            "336",
+            "378",
+            "433",
+            "519",
+            "615",
+            "67",
+            "459"
+          ],
+          "lexicalPRF": [
+            "180",
+            "459",
+            "615",
+            "1081",
+            "67",
+            "1282",
+            "1132",
+            "492",
+            "648",
+            "1448"
+          ],
+          "prfMMR": [
+            "180",
+            "615",
+            "459",
+            "1081",
+            "378",
+            "433",
+            "1282",
+            "67",
+            "1132",
+            "1448"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "34",
+        "judgedPositive": 38,
+        "rankings": {
+          "bm25": [
+            "1180",
+            "1391",
+            "34",
+            "668",
+            "737",
+            "146",
+            "869",
+            "670",
+            "798",
+            "117"
+          ],
+          "lexicalPRF": [
+            "1180",
+            "1391",
+            "1292",
+            "34",
+            "668",
+            "693",
+            "737",
+            "677",
+            "670",
+            "1199"
+          ],
+          "prfMMR": [
+            "1180",
+            "1391",
+            "1292",
+            "34",
+            "737",
+            "693",
+            "668",
+            "677",
+            "146",
+            "670"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.33788625765431984,
+            "pooledRecall10": 0.10526315789473684,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.31561692740233804,
+            "pooledRecall10": 0.10526315789473684,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.3012042966046398,
+            "pooledRecall10": 0.10526315789473684,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "35",
+        "judgedPositive": 43,
+        "rankings": {
+          "bm25": [
+            "375",
+            "18",
+            "385",
+            "1264",
+            "1298",
+            "286",
+            "942",
+            "1207",
+            "481",
+            "1245"
+          ],
+          "lexicalPRF": [
+            "375",
+            "18",
+            "942",
+            "1368",
+            "385",
+            "140",
+            "1298",
+            "135",
+            "1367",
+            "1145"
+          ],
+          "prfMMR": [
+            "375",
+            "18",
+            "942",
+            "385",
+            "140",
+            "1145",
+            "1368",
+            "216",
+            "135",
+            "1298"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.491526182307598,
+            "pooledRecall10": 0.11627906976744186,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.28762634971412726,
+            "pooledRecall10": 0.06976744186046512,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.31204907722178066,
+            "pooledRecall10": 0.06976744186046512,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "37",
+        "judgedPositive": 40,
+        "rankings": {
+          "bm25": [
+            "649",
+            "504",
+            "489",
+            "757",
+            "212",
+            "577",
+            "761",
+            "566",
+            "79",
+            "676"
+          ],
+          "lexicalPRF": [
+            "649",
+            "588",
+            "632",
+            "1312",
+            "1063",
+            "1274",
+            "1168",
+            "1102",
+            "1338",
+            "329"
+          ],
+          "prfMMR": [
+            "649",
+            "588",
+            "632",
+            "1063",
+            "1312",
+            "1102",
+            "1338",
+            "1168",
+            "1274",
+            "918"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06625422345438903,
+            "pooledRecall10": 0.025,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "39",
+        "judgedPositive": 18,
+        "rankings": {
+          "bm25": [
+            "896",
+            "1349",
+            "388",
+            "612",
+            "692",
+            "216",
+            "1053",
+            "323",
+            "548",
+            "924"
+          ],
+          "lexicalPRF": [
+            "896",
+            "323",
+            "1424",
+            "598",
+            "213",
+            "123",
+            "139",
+            "990",
+            "1091",
+            "28"
+          ],
+          "prfMMR": [
+            "896",
+            "323",
+            "213",
+            "1424",
+            "123",
+            "139",
+            "990",
+            "598",
+            "1091",
+            "28"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.28952298823485745,
+            "pooledRecall10": 0.1111111111111111,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.4537425745411855,
+            "pooledRecall10": 0.16666666666666666,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.42838543210841196,
+            "pooledRecall10": 0.16666666666666666,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "41",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "62",
+            "848",
+            "388",
+            "259",
+            "510",
+            "798",
+            "61",
+            "795",
+            "1189",
+            "797"
+          ],
+          "lexicalPRF": [
+            "62",
+            "875",
+            "695",
+            "510",
+            "61",
+            "259",
+            "810",
+            "871",
+            "525",
+            "1366"
+          ],
+          "prfMMR": [
+            "62",
+            "875",
+            "259",
+            "61",
+            "510",
+            "695",
+            "810",
+            "525",
+            "871",
+            "1366"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.17947710508581735,
+            "pooledRecall10": 0.18181818181818182,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "42",
+        "judgedPositive": 50,
+        "rankings": {
+          "bm25": [
+            "138",
+            "460",
+            "971",
+            "254",
+            "630",
+            "131",
+            "461",
+            "472",
+            "896",
+            "123"
+          ],
+          "lexicalPRF": [
+            "138",
+            "461",
+            "136",
+            "133",
+            "123",
+            "120",
+            "140",
+            "135",
+            "126",
+            "131"
+          ],
+          "prfMMR": [
+            "138",
+            "461",
+            "133",
+            "123",
+            "136",
+            "120",
+            "126",
+            "135",
+            "131",
+            "536"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.3542454231505416,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.3538805731685163,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.37326895379685443,
+            "pooledRecall10": 0.08,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "43",
+        "judgedPositive": 13,
+        "rankings": {
+          "bm25": [
+            "27",
+            "575",
+            "458",
+            "538",
+            "565",
+            "419",
+            "477",
+            "790",
+            "180",
+            "1136"
+          ],
+          "lexicalPRF": [
+            "575",
+            "644",
+            "1282",
+            "227",
+            "73",
+            "306",
+            "1015",
+            "518",
+            "296",
+            "651"
+          ],
+          "prfMMR": [
+            "575",
+            "1282",
+            "644",
+            "227",
+            "1015",
+            "306",
+            "73",
+            "561",
+            "518",
+            "368"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0.09999999999999998
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "44",
+        "judgedPositive": 154,
+        "rankings": {
+          "bm25": [
+            "770",
+            "977",
+            "203",
+            "253",
+            "691",
+            "986",
+            "1210",
+            "821",
+            "1083",
+            "588"
+          ],
+          "lexicalPRF": [
+            "770",
+            "1432",
+            "560",
+            "440",
+            "686",
+            "166",
+            "1035",
+            "1296",
+            "1450",
+            "977"
+          ],
+          "prfMMR": [
+            "770",
+            "1432",
+            "560",
+            "440",
+            "1035",
+            "686",
+            "166",
+            "1450",
+            "525",
+            "1386"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.6,
+            "ndcg10": 0.6968404678259545,
+            "pooledRecall10": 0.03896103896103896,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.7,
+            "ndcg10": 0.7467045958894682,
+            "pooledRecall10": 0.045454545454545456,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.6117952373568122,
+            "pooledRecall10": 0.032467532467532464,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "45",
+        "judgedPositive": 77,
+        "rankings": {
+          "bm25": [
+            "406",
+            "178",
+            "287",
+            "177",
+            "849",
+            "281",
+            "11",
+            "136",
+            "284",
+            "990"
+          ],
+          "lexicalPRF": [
+            "178",
+            "990",
+            "1042",
+            "970",
+            "406",
+            "978",
+            "287",
+            "177",
+            "849",
+            "141"
+          ],
+          "prfMMR": [
+            "178",
+            "990",
+            "406",
+            "978",
+            "970",
+            "287",
+            "1042",
+            "177",
+            "849",
+            "141"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.3764459522792426,
+            "pooledRecall10": 0.05194805194805195,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3531437764338092,
+            "pooledRecall10": 0.03896103896103896,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3531437764338092,
+            "pooledRecall10": 0.03896103896103896,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "46",
+        "judgedPositive": 116,
+        "rankings": {
+          "bm25": [
+            "374",
+            "177",
+            "178",
+            "352",
+            "922",
+            "930",
+            "340",
+            "842",
+            "1018",
+            "1418"
+          ],
+          "lexicalPRF": [
+            "178",
+            "952",
+            "1023",
+            "340",
+            "1203",
+            "922",
+            "839",
+            "177",
+            "141",
+            "985"
+          ],
+          "prfMMR": [
+            "178",
+            "952",
+            "340",
+            "1023",
+            "1203",
+            "839",
+            "177",
+            "922",
+            "985",
+            "141"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.5,
+            "ndcg10": 0.6177639991612475,
+            "pooledRecall10": 0.04310344827586207,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.4412851793128928,
+            "pooledRecall10": 0.034482758620689655,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.4,
+            "ndcg10": 0.4412851793128928,
+            "pooledRecall10": 0.034482758620689655,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "49",
+        "judgedPositive": 34,
+        "rankings": {
+          "bm25": [
+            "30",
+            "545",
+            "496",
+            "1348",
+            "1297",
+            "123",
+            "807",
+            "313",
+            "993",
+            "535"
+          ],
+          "lexicalPRF": [
+            "30",
+            "1448",
+            "501",
+            "619",
+            "606",
+            "69",
+            "746",
+            "627",
+            "562",
+            "838"
+          ],
+          "prfMMR": [
+            "30",
+            "1448",
+            "501",
+            "619",
+            "606",
+            "746",
+            "545",
+            "69",
+            "838",
+            "562"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.5,
+            "ndcg10": 0.5072380780124418,
+            "pooledRecall10": 0.14705882352941177,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.029411764705882353,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.1681522864689108,
+            "pooledRecall10": 0.058823529411764705,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "50",
+        "judgedPositive": 89,
+        "rankings": {
+          "bm25": [
+            "388",
+            "261",
+            "1430",
+            "838",
+            "966",
+            "1442",
+            "1259",
+            "377",
+            "257",
+            "1115"
+          ],
+          "lexicalPRF": [
+            "388",
+            "377",
+            "527",
+            "1430",
+            "838",
+            "517",
+            "261",
+            "510",
+            "825",
+            "434"
+          ],
+          "prfMMR": [
+            "388",
+            "377",
+            "527",
+            "1430",
+            "838",
+            "261",
+            "825",
+            "1448",
+            "510",
+            "434"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.7,
+            "ndcg10": 0.7280855459907165,
+            "pooledRecall10": 0.07865168539325842,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.8,
+            "p10": 0.5,
+            "ndcg10": 0.576323354912681,
+            "pooledRecall10": 0.056179775280898875,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.8,
+            "p10": 0.6,
+            "ndcg10": 0.6528642754944294,
+            "pooledRecall10": 0.06741573033707865,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "52",
+        "judgedPositive": 15,
+        "rankings": {
+          "bm25": [
+            "986",
+            "382",
+            "586",
+            "883",
+            "547",
+            "452",
+            "1055",
+            "790",
+            "210",
+            "468"
+          ],
+          "lexicalPRF": [
+            "986",
+            "452",
+            "547",
+            "220",
+            "382",
+            "586",
+            "133",
+            "883",
+            "1055",
+            "790"
+          ],
+          "prfMMR": [
+            "986",
+            "452",
+            "547",
+            "220",
+            "133",
+            "586",
+            "382",
+            "1055",
+            "468",
+            "790"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.5,
+            "ndcg10": 0.642186726668901,
+            "pooledRecall10": 0.3333333333333333,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5919268187287083,
+            "pooledRecall10": 0.3333333333333333,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.5107164012496701,
+            "pooledRecall10": 0.26666666666666666,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "54",
+        "judgedPositive": 51,
+        "rankings": {
+          "bm25": [
+            "283",
+            "406",
+            "392",
+            "281",
+            "1457",
+            "1042",
+            "410",
+            "136",
+            "11",
+            "916"
+          ],
+          "lexicalPRF": [
+            "283",
+            "392",
+            "975",
+            "1063",
+            "985",
+            "816",
+            "1373",
+            "1253",
+            "1242",
+            "1246"
+          ],
+          "prfMMR": [
+            "283",
+            "392",
+            "1063",
+            "975",
+            "816",
+            "985",
+            "1373",
+            "1253",
+            "1242",
+            "273"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.15139734109601002,
+            "pooledRecall10": 0.0392156862745098,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06625422345438903,
+            "pooledRecall10": 0.0196078431372549,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06625422345438903,
+            "pooledRecall10": 0.0196078431372549,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "55",
+        "judgedPositive": 18,
+        "rankings": {
+          "bm25": [
+            "986",
+            "382",
+            "883",
+            "608",
+            "452",
+            "806",
+            "526",
+            "603",
+            "1051",
+            "72"
+          ],
+          "lexicalPRF": [
+            "986",
+            "452",
+            "382",
+            "883",
+            "608",
+            "220",
+            "806",
+            "526",
+            "603",
+            "1051"
+          ],
+          "prfMMR": [
+            "986",
+            "452",
+            "382",
+            "883",
+            "220",
+            "526",
+            "806",
+            "608",
+            "603",
+            "67"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 1,
+            "p10": 0.9,
+            "ndcg10": 0.9266360779006401,
+            "pooledRecall10": 0.5,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 1,
+            "p10": 0.8,
+            "ndcg10": 0.8521705090845474,
+            "pooledRecall10": 0.4444444444444444,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.8,
+            "p10": 0.7,
+            "ndcg10": 0.772837825180752,
+            "pooledRecall10": 0.3888888888888889,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "56",
+        "judgedPositive": 45,
+        "rankings": {
+          "bm25": [
+            "275",
+            "299",
+            "998",
+            "941",
+            "886",
+            "502",
+            "209",
+            "874",
+            "1252",
+            "872"
+          ],
+          "lexicalPRF": [
+            "998",
+            "887",
+            "947",
+            "275",
+            "299",
+            "92",
+            "645",
+            "1252",
+            "941",
+            "470"
+          ],
+          "prfMMR": [
+            "998",
+            "887",
+            "275",
+            "947",
+            "299",
+            "941",
+            "470",
+            "645",
+            "92",
+            "798"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "57",
+        "judgedPositive": 18,
+        "rankings": {
+          "bm25": [
+            "990",
+            "1230",
+            "480",
+            "1366",
+            "1216",
+            "1024",
+            "746",
+            "1215",
+            "317",
+            "342"
+          ],
+          "lexicalPRF": [
+            "990",
+            "406",
+            "1042",
+            "174",
+            "561",
+            "970",
+            "556",
+            "1043",
+            "1039",
+            "1230"
+          ],
+          "prfMMR": [
+            "990",
+            "406",
+            "174",
+            "1042",
+            "556",
+            "1039",
+            "468",
+            "1230",
+            "276",
+            "480"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.3340514446642156,
+            "pooledRecall10": 0.16666666666666666,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06362078819895171,
+            "pooledRecall10": 0.05555555555555555,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.2,
+            "ndcg10": 0.13305201013572898,
+            "pooledRecall10": 0.1111111111111111,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "58",
+        "judgedPositive": 46,
+        "rankings": {
+          "bm25": [
+            "1011",
+            "126",
+            "123",
+            "376",
+            "96",
+            "884",
+            "216",
+            "223",
+            "1043",
+            "1390"
+          ],
+          "lexicalPRF": [
+            "126",
+            "984",
+            "394",
+            "273",
+            "891",
+            "1149",
+            "1062",
+            "1384",
+            "298",
+            "303"
+          ],
+          "prfMMR": [
+            "126",
+            "984",
+            "394",
+            "273",
+            "891",
+            "1149",
+            "1062",
+            "1384",
+            "298",
+            "303"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.4,
+            "ndcg10": 0.5388856921828065,
+            "pooledRecall10": 0.08695652173913043,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.2984900352767555,
+            "pooledRecall10": 0.043478260869565216,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.2984900352767555,
+            "pooledRecall10": 0.043478260869565216,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "61",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "1327",
+            "165",
+            "483",
+            "603",
+            "508",
+            "448",
+            "378",
+            "510",
+            "523",
+            "695"
+          ],
+          "lexicalPRF": [
+            "1327",
+            "165",
+            "483",
+            "603",
+            "508",
+            "448",
+            "378",
+            "510",
+            "523",
+            "695"
+          ],
+          "prfMMR": [
+            "1327",
+            "165",
+            "603",
+            "508",
+            "448",
+            "483",
+            "378",
+            "510",
+            "695",
+            "523"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "62",
+        "judgedPositive": 12,
+        "rankings": {
+          "bm25": [
+            "464",
+            "455",
+            "430",
+            "810",
+            "660",
+            "739",
+            "54",
+            "443",
+            "745",
+            "319"
+          ],
+          "lexicalPRF": [
+            "464",
+            "455",
+            "430",
+            "810",
+            "660",
+            "739",
+            "54",
+            "443",
+            "745",
+            "319"
+          ],
+          "prfMMR": [
+            "464",
+            "810",
+            "455",
+            "660",
+            "430",
+            "739",
+            "54",
+            "319",
+            "443",
+            "745"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.7,
+            "ndcg10": 0.741670249010153,
+            "pooledRecall10": 0.5833333333333334,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.7,
+            "ndcg10": 0.741670249010153,
+            "pooledRecall10": 0.5833333333333334,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.7,
+            "ndcg10": 0.6879509227782195,
+            "pooledRecall10": 0.5833333333333334,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "65",
+        "judgedPositive": 13,
+        "rankings": {
+          "bm25": [
+            "509",
+            "448",
+            "956",
+            "575",
+            "644",
+            "61",
+            "487",
+            "518",
+            "486",
+            "1124"
+          ],
+          "lexicalPRF": [
+            "509",
+            "829",
+            "595",
+            "502",
+            "458",
+            "1419",
+            "722",
+            "448",
+            "799",
+            "49"
+          ],
+          "prfMMR": [
+            "509",
+            "595",
+            "829",
+            "502",
+            "722",
+            "458",
+            "1419",
+            "49",
+            "739",
+            "655"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.3589542101716347,
+            "pooledRecall10": 0.15384615384615385,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.28952298823485745,
+            "pooledRecall10": 0.15384615384615385,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.07692307692307693,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "66",
+        "judgedPositive": 35,
+        "rankings": {
+          "bm25": [
+            "466",
+            "1367",
+            "1361",
+            "728",
+            "947",
+            "1415",
+            "594",
+            "885",
+            "826",
+            "243"
+          ],
+          "lexicalPRF": [
+            "1367",
+            "728",
+            "1361",
+            "224",
+            "789",
+            "743",
+            "145",
+            "466",
+            "921",
+            "885"
+          ],
+          "prfMMR": [
+            "1367",
+            "728",
+            "1361",
+            "789",
+            "224",
+            "921",
+            "145",
+            "885",
+            "466",
+            "884"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.2934367834519528,
+            "pooledRecall10": 0.08571428571428572,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3570764765963919,
+            "pooledRecall10": 0.08571428571428572,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.36288691033421744,
+            "pooledRecall10": 0.08571428571428572,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "67",
+        "judgedPositive": 32,
+        "rankings": {
+          "bm25": [
+            "564",
+            "677",
+            "830",
+            "702",
+            "1124",
+            "727",
+            "1222",
+            "589",
+            "643",
+            "421"
+          ],
+          "lexicalPRF": [
+            "564",
+            "677",
+            "830",
+            "702",
+            "1124",
+            "727",
+            "1222",
+            "589",
+            "643",
+            "421"
+          ],
+          "prfMMR": [
+            "564",
+            "677",
+            "830",
+            "702",
+            "1124",
+            "589",
+            "727",
+            "421",
+            "643",
+            "79"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.2082936658103318,
+            "pooledRecall10": 0.0625,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.2082936658103318,
+            "pooledRecall10": 0.0625,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.2,
+            "ndcg10": 0.21726071285222986,
+            "pooledRecall10": 0.0625,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "69",
+        "judgedPositive": 15,
+        "rankings": {
+          "bm25": [
+            "151",
+            "501",
+            "798",
+            "30",
+            "530",
+            "739",
+            "390",
+            "989",
+            "1073",
+            "1171"
+          ],
+          "lexicalPRF": [
+            "151",
+            "501",
+            "798",
+            "30",
+            "530",
+            "739",
+            "390",
+            "989",
+            "1073",
+            "1171"
+          ],
+          "prfMMR": [
+            "151",
+            "501",
+            "739",
+            "390",
+            "530",
+            "798",
+            "989",
+            "1073",
+            "30",
+            "1171"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.4537425745411855,
+            "pooledRecall10": 0.2,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.4537425745411855,
+            "pooledRecall10": 0.2,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.42520843362602373,
+            "pooledRecall10": 0.2,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "71",
+        "judgedPositive": 27,
+        "rankings": {
+          "bm25": [
+            "499",
+            "1124",
+            "363",
+            "1131",
+            "566",
+            "448",
+            "1054",
+            "746",
+            "820",
+            "68"
+          ],
+          "lexicalPRF": [
+            "1124",
+            "1131",
+            "1222",
+            "1118",
+            "1175",
+            "1171",
+            "1139",
+            "1120",
+            "176",
+            "668"
+          ],
+          "prfMMR": [
+            "1124",
+            "1131",
+            "1222",
+            "1118",
+            "1175",
+            "1171",
+            "176",
+            "1120",
+            "1139",
+            "668"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.8,
+            "p10": 0.4,
+            "ndcg10": 0.5388856921828065,
+            "pooledRecall10": 0.14814814814814814,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.3589542101716347,
+            "pooledRecall10": 0.07407407407407407,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.3589542101716347,
+            "pooledRecall10": 0.07407407407407407,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "76",
+        "judgedPositive": 60,
+        "rankings": {
+          "bm25": [
+            "211",
+            "1247",
+            "352",
+            "1354",
+            "947",
+            "992",
+            "654",
+            "1397",
+            "1014",
+            "1020"
+          ],
+          "lexicalPRF": [
+            "211",
+            "1247",
+            "352",
+            "1354",
+            "947",
+            "992",
+            "654",
+            "1397",
+            "1014",
+            "1020"
+          ],
+          "prfMMR": [
+            "211",
+            "1247",
+            "352",
+            "947",
+            "1014",
+            "1354",
+            "1397",
+            "1020",
+            "992",
+            "394"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5428183923453893,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.5,
+            "ndcg10": 0.5428183923453893,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.5,
+            "ndcg10": 0.530263109944618,
+            "pooledRecall10": 0.08333333333333333,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "79",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "450",
+            "708",
+            "1171",
+            "1124",
+            "700",
+            "890",
+            "523",
+            "487",
+            "706",
+            "615"
+          ],
+          "lexicalPRF": [
+            "1124",
+            "1222",
+            "1171",
+            "1131",
+            "1175",
+            "1139",
+            "1118",
+            "1120",
+            "1326",
+            "179"
+          ],
+          "prfMMR": [
+            "1124",
+            "1222",
+            "1171",
+            "1131",
+            "1175",
+            "1139",
+            "1118",
+            "1120",
+            "668",
+            "179"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.3,
+            "ndcg10": 0.4440973278132557,
+            "pooledRecall10": 0.2727272727272727,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "81",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "1323",
+            "35",
+            "1171",
+            "497",
+            "1416",
+            "1011",
+            "483",
+            "553",
+            "572",
+            "114"
+          ],
+          "lexicalPRF": [
+            "1323",
+            "35",
+            "1171",
+            "497",
+            "1416",
+            "1011",
+            "483",
+            "553",
+            "572",
+            "114"
+          ],
+          "prfMMR": [
+            "1323",
+            "35",
+            "1171",
+            "497",
+            "1416",
+            "483",
+            "114",
+            "1011",
+            "553",
+            "916"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.22009176629808017,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "82",
+        "judgedPositive": 10,
+        "rankings": {
+          "bm25": [
+            "817",
+            "310",
+            "635",
+            "1120",
+            "618",
+            "1073",
+            "1419",
+            "539",
+            "575",
+            "631"
+          ],
+          "lexicalPRF": [
+            "817",
+            "310",
+            "635",
+            "1120",
+            "618",
+            "1073",
+            "1419",
+            "539",
+            "575",
+            "631"
+          ],
+          "prfMMR": [
+            "817",
+            "310",
+            "635",
+            "1120",
+            "1073",
+            "1419",
+            "618",
+            "539",
+            "575",
+            "630"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.07839826897867533,
+            "pooledRecall10": 0.1,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.07839826897867533,
+            "pooledRecall10": 0.1,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.08514311764162098,
+            "pooledRecall10": 0.1,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "84",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "810",
+            "523",
+            "754",
+            "603",
+            "487",
+            "608",
+            "486",
+            "492",
+            "564",
+            "660"
+          ],
+          "lexicalPRF": [
+            "523",
+            "492",
+            "615",
+            "813",
+            "288",
+            "74",
+            "591",
+            "806",
+            "737",
+            "754"
+          ],
+          "prfMMR": [
+            "523",
+            "492",
+            "288",
+            "615",
+            "813",
+            "737",
+            "74",
+            "754",
+            "620",
+            "623"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "90",
+        "judgedPositive": 70,
+        "rankings": {
+          "bm25": [
+            "838",
+            "478",
+            "641",
+            "542",
+            "107",
+            "105",
+            "972",
+            "516",
+            "1392",
+            "632"
+          ],
+          "lexicalPRF": [
+            "838",
+            "478",
+            "641",
+            "542",
+            "107",
+            "105",
+            "972",
+            "516",
+            "1392",
+            "632"
+          ],
+          "prfMMR": [
+            "838",
+            "641",
+            "478",
+            "107",
+            "105",
+            "542",
+            "972",
+            "1392",
+            "632",
+            "610"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.22716217481924803,
+            "pooledRecall10": 0.04285714285714286,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.22716217481924803,
+            "pooledRecall10": 0.04285714285714286,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.24618570546556082,
+            "pooledRecall10": 0.04285714285714286,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "92",
+        "judgedPositive": 38,
+        "rankings": {
+          "bm25": [
+            "520",
+            "507",
+            "371",
+            "1415",
+            "601",
+            "380",
+            "41",
+            "129",
+            "145",
+            "728"
+          ],
+          "lexicalPRF": [
+            "1415",
+            "520",
+            "300",
+            "392",
+            "892",
+            "728",
+            "204",
+            "1424",
+            "268",
+            "857"
+          ],
+          "prfMMR": [
+            "1415",
+            "520",
+            "300",
+            "392",
+            "892",
+            "1424",
+            "728",
+            "204",
+            "1347",
+            "1215"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.494639655562801,
+            "pooledRecall10": 0.10526315789473684,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.13886244387355454,
+            "pooledRecall10": 0.02631578947368421,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.13886244387355454,
+            "pooledRecall10": 0.02631578947368421,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "95",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "531",
+            "810",
+            "739",
+            "895",
+            "319",
+            "54",
+            "523",
+            "577",
+            "708",
+            "838"
+          ],
+          "lexicalPRF": [
+            "838",
+            "542",
+            "42",
+            "574",
+            "641",
+            "478",
+            "1000",
+            "531",
+            "516",
+            "810"
+          ],
+          "prfMMR": [
+            "838",
+            "542",
+            "42",
+            "574",
+            "641",
+            "1000",
+            "478",
+            "531",
+            "810",
+            "516"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.3,
+            "ndcg10": 0.30240383049385083,
+            "pooledRecall10": 0.2727272727272727,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06362078819895171,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.06625422345438903,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "96",
+        "judgedPositive": 9,
+        "rankings": {
+          "bm25": [
+            "1327",
+            "659",
+            "523",
+            "575",
+            "660",
+            "519",
+            "42",
+            "254",
+            "446",
+            "644"
+          ],
+          "lexicalPRF": [
+            "575",
+            "644",
+            "518",
+            "1282",
+            "73",
+            "306",
+            "1015",
+            "368",
+            "651",
+            "296"
+          ],
+          "prfMMR": [
+            "575",
+            "644",
+            "518",
+            "73",
+            "1282",
+            "1015",
+            "368",
+            "1054",
+            "349",
+            "306"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "97",
+        "judgedPositive": 6,
+        "rankings": {
+          "bm25": [
+            "77",
+            "824",
+            "659",
+            "448",
+            "688",
+            "790",
+            "54",
+            "1415",
+            "67",
+            "486"
+          ],
+          "lexicalPRF": [
+            "77",
+            "824",
+            "659",
+            "448",
+            "688",
+            "790",
+            "54",
+            "1415",
+            "67",
+            "486"
+          ],
+          "prfMMR": [
+            "77",
+            "824",
+            "448",
+            "688",
+            "659",
+            "54",
+            "1415",
+            "790",
+            "67",
+            "1375"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3995774918697167,
+            "pooledRecall10": 0.5,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.3995774918697167,
+            "pooledRecall10": 0.5,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.39417045379291293,
+            "pooledRecall10": 0.5,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "98",
+        "judgedPositive": 29,
+        "rankings": {
+          "bm25": [
+            "626",
+            "648",
+            "728",
+            "124",
+            "546",
+            "1367",
+            "606",
+            "451",
+            "1013",
+            "1368"
+          ],
+          "lexicalPRF": [
+            "728",
+            "1367",
+            "1368",
+            "648",
+            "124",
+            "626",
+            "546",
+            "606",
+            "941",
+            "451"
+          ],
+          "prfMMR": [
+            "728",
+            "1367",
+            "124",
+            "648",
+            "1368",
+            "546",
+            "606",
+            "626",
+            "941",
+            "1013"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.606439180544341,
+            "pooledRecall10": 0.20689655172413793,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.4,
+            "p10": 0.6,
+            "ndcg10": 0.4800032020044255,
+            "pooledRecall10": 0.20689655172413793,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.5,
+            "ndcg10": 0.4163824138054737,
+            "pooledRecall10": 0.1724137931034483,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "99",
+        "judgedPositive": 34,
+        "rankings": {
+          "bm25": [
+            "579",
+            "523",
+            "728",
+            "594",
+            "626",
+            "1139",
+            "648",
+            "530",
+            "514",
+            "502"
+          ],
+          "lexicalPRF": [
+            "579",
+            "523",
+            "728",
+            "594",
+            "626",
+            "1139",
+            "648",
+            "530",
+            "514",
+            "502"
+          ],
+          "prfMMR": [
+            "579",
+            "523",
+            "728",
+            "594",
+            "1139",
+            "626",
+            "648",
+            "502",
+            "309",
+            "514"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.47338717040861195,
+            "pooledRecall10": 0.11764705882352941,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.4,
+            "ndcg10": 0.47338717040861195,
+            "pooledRecall10": 0.11764705882352941,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.4,
+            "p10": 0.4,
+            "ndcg10": 0.46664232174566633,
+            "pooledRecall10": 0.11764705882352941,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "100",
+        "judgedPositive": 18,
+        "rankings": {
+          "bm25": [
+            "180",
+            "376",
+            "591",
+            "883",
+            "375",
+            "459",
+            "140",
+            "644",
+            "1136",
+            "1405"
+          ],
+          "lexicalPRF": [
+            "883",
+            "382",
+            "986",
+            "608",
+            "452",
+            "1051",
+            "603",
+            "586",
+            "72",
+            "526"
+          ],
+          "prfMMR": [
+            "883",
+            "382",
+            "608",
+            "986",
+            "452",
+            "603",
+            "526",
+            "586",
+            "1051",
+            "806"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.4,
+            "p10": 0.2,
+            "ndcg10": 0.3589542101716347,
+            "pooledRecall10": 0.1111111111111111,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "101",
+        "judgedPositive": 1,
+        "rankings": {
+          "bm25": [
+            "375",
+            "1204",
+            "1089",
+            "180",
+            "461",
+            "309",
+            "655",
+            "1078",
+            "175",
+            "805"
+          ],
+          "lexicalPRF": [
+            "375",
+            "1204",
+            "1089",
+            "180",
+            "461",
+            "309",
+            "655",
+            "1078",
+            "175",
+            "805"
+          ],
+          "prfMMR": [
+            "375",
+            "1204",
+            "1089",
+            "180",
+            "655",
+            "461",
+            "309",
+            "805",
+            "514",
+            "1078"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.6309297535714575,
+            "pooledRecall10": 1,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.6309297535714575,
+            "pooledRecall10": 1,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.6309297535714575,
+            "pooledRecall10": 1,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "102",
+        "judgedPositive": 24,
+        "rankings": {
+          "bm25": [
+            "824",
+            "894",
+            "659",
+            "812",
+            "531",
+            "562",
+            "660",
+            "28",
+            "566",
+            "643"
+          ],
+          "lexicalPRF": [
+            "1124",
+            "1222",
+            "1131",
+            "659",
+            "1326",
+            "1175",
+            "1139",
+            "1118",
+            "1171",
+            "329"
+          ],
+          "prfMMR": [
+            "1124",
+            "1222",
+            "1131",
+            "659",
+            "1175",
+            "1326",
+            "1118",
+            "329",
+            "1171",
+            "1139"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 1,
+            "p10": 0.8,
+            "ndcg10": 0.8643145546088337,
+            "pooledRecall10": 0.3333333333333333,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.041666666666666664,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.041666666666666664,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "104",
+        "judgedPositive": 11,
+        "rankings": {
+          "bm25": [
+            "894",
+            "603",
+            "390",
+            "562",
+            "479",
+            "149",
+            "486",
+            "512",
+            "820",
+            "812"
+          ],
+          "lexicalPRF": [
+            "894",
+            "1418",
+            "217",
+            "1021",
+            "390",
+            "603",
+            "562",
+            "566",
+            "149",
+            "479"
+          ],
+          "prfMMR": [
+            "894",
+            "1418",
+            "217",
+            "1021",
+            "390",
+            "1124",
+            "603",
+            "660",
+            "479",
+            "512"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.1,
+            "ndcg10": 0.09478836436955078,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.07336392209936005,
+            "pooledRecall10": 0.09090909090909091,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0,
+            "ndcg10": 0,
+            "pooledRecall10": 0,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "109",
+        "judgedPositive": 71,
+        "rankings": {
+          "bm25": [
+            "1039",
+            "155",
+            "41",
+            "440",
+            "1345",
+            "139",
+            "88",
+            "26",
+            "1304",
+            "89"
+          ],
+          "lexicalPRF": [
+            "1039",
+            "155",
+            "41",
+            "440",
+            "1345",
+            "139",
+            "88",
+            "26",
+            "1304",
+            "89"
+          ],
+          "prfMMR": [
+            "1039",
+            "155",
+            "440",
+            "41",
+            "1345",
+            "139",
+            "88",
+            "26",
+            "1304",
+            "89"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.5469356251448461,
+            "pooledRecall10": 0.08450704225352113,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.5469356251448461,
+            "pooledRecall10": 0.08450704225352113,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0.6,
+            "p10": 0.6,
+            "ndcg10": 0.5469356251448461,
+            "pooledRecall10": 0.08450704225352113,
+            "redundancy10": 0
+          }
+        }
+      },
+      {
+        "queryId": "111",
+        "judgedPositive": 6,
+        "rankings": {
+          "bm25": [
+            "485",
+            "566",
+            "570",
+            "576",
+            "635",
+            "448",
+            "509",
+            "1124",
+            "564",
+            "488"
+          ],
+          "lexicalPRF": [
+            "566",
+            "1124",
+            "570",
+            "446",
+            "790",
+            "390",
+            "635",
+            "448",
+            "562",
+            "820"
+          ],
+          "prfMMR": [
+            "566",
+            "1124",
+            "570",
+            "790",
+            "446",
+            "390",
+            "635",
+            "820",
+            "448",
+            "812"
+          ]
+        },
+        "metrics": {
+          "bm25": {
+            "p5": 0.2,
+            "p10": 0.3,
+            "ndcg10": 0.5112590391895955,
+            "pooledRecall10": 0.5,
+            "redundancy10": 0
+          },
+          "lexicalPRF": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.09546043308946733,
+            "pooledRecall10": 0.16666666666666666,
+            "redundancy10": 0
+          },
+          "prfMMR": {
+            "p5": 0,
+            "p10": 0.1,
+            "ndcg10": 0.09109240322345806,
+            "pooledRecall10": 0.16666666666666666,
+            "redundancy10": 0
+          }
+        }
+      }
+    ],
+    "macro": {
+      "bm25": {
+        "p5": 0.38947368421052636,
+        "p10": 0.31052631578947376,
+        "ndcg10": 0.36069711345640276,
+        "pooledRecall10": 0.1359743971117035,
+        "redundancy10": 0.0013157894736842103
+      },
+      "lexicalPRF": {
+        "p5": 0.2973684210526315,
+        "p10": 0.25657894736842124,
+        "ndcg10": 0.29017472130367156,
+        "pooledRecall10": 0.09548511285557738,
+        "redundancy10": 0
+      },
+      "prfMMR": {
+        "p5": 0.28684210526315773,
+        "p10": 0.24736842105263174,
+        "ndcg10": 0.28213058110471906,
+        "pooledRecall10": 0.09148886673415549,
+        "redundancy10": 0
+      }
+    }
+  },
+  "notes": [
+    "This is a retrieval ablation on a classic human-judged test collection, not an end-to-end live Pi run.",
+    "One CISI document is one passage. Human judgments are document-level; metrics are a document-level proxy, not passage-label or conversational evaluation.",
+    "The 76 native queries with positive judgments are used; the 36 native queries without human judgments are excluded and listed in provenance.exclusions.unjudgedQueryIds.",
+    "Documents not listed in CISI.REL count as zero by benchmark convention; they are not human-labelled irrelevant.",
+    "Exact-body alias 1440 was excluded in favour of canonical 234; its one judgment (query 44) was already present for 234 and was deduplicated. No qrel was silently dropped.",
+    "CISI source: https://ir.dcs.gla.ac.uk/resources/test_collections/cisi/ (archive SHA-256 bddb284e19369d153dad90770ae897e19221b0bc50e1329b5a702aa56f5e8483).",
+    "ir_datasets 0.4.0-0.6.3 and master do not contain CISI; https://ir-datasets.com/cisi.html returns 404. The Glasgow archive is the public upstream source."
+  ]
+}

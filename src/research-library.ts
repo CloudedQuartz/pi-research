@@ -3,11 +3,16 @@
  *
  * - Sources are deduplicated by arXiv ID (arxiv.org, ar5iv, alphaxiv renderings), then by
  *   canonical URL, then by 5-word shingle containment >= 0.8 (near-duplicate test).
- * - Text is split into sentence-packed passages; boilerplate-looking passages are dropped.
- * - Retrieval is per subquestion: BM25 over passages, then MMR so a second passage must
- *   add content the first one lacks, with at most two passages per source.
+ * - Text is split by the IR core's paragraph-aware `segment()` (180-300 tokens, exact
+ *   offsets); boilerplate-looking passages are dropped.
+ * - Retrieval is per subquestion through the IR core: positional BM25 on the Porter-stemmed
+ *   stream (`PassageIndex.rankStemmed`), then MMR so a second passage must add content the
+ *   first one lacks, with at most two passages per source.
  * - The coverage table says which subquestions have enough independent evidence.
  */
+
+import { PassageIndex, mmr, segment } from "./core-ir.js";
+import type { Snapshot } from "./types.js";
 
 export interface SourceInput {
 	url: string;
@@ -40,7 +45,7 @@ export interface Coverage {
 }
 
 const MIN_PASSAGE_WORDS = 25;
-const PASSAGE_TARGET_CHARS = 900;
+const RANK_CANDIDATES = 200;
 const SHINGLE_SIZE = 5;
 const NEAR_DUPLICATE = 0.8;
 const PER_SOURCE_LIMIT = 2;
@@ -104,30 +109,12 @@ function looksLikeBoilerplate(text: string): boolean {
 	return alphabetic / tokens.length < 0.6;
 }
 
-function packSentences(text: string): { start: number; end: number }[] {
-	const spans: { start: number; end: number }[] = [];
-	const sentence = /[^.!?\n]+(?:[.!?]+|\n+|$)/g;
-	let start = -1;
-	let end = 0;
-	for (const match of text.matchAll(sentence)) {
-		const at = match.index ?? 0;
-		const stop = at + match[0].length;
-		if (!match[0].trim()) continue;
-		if (start < 0) start = at;
-		if (stop - start > PASSAGE_TARGET_CHARS && end > start) {
-			spans.push({ start, end });
-			start = at;
-		}
-		end = stop;
-	}
-	if (start >= 0 && end > start) spans.push({ start, end });
-	return spans;
-}
-
 export class EvidenceLibrary {
 	readonly sources = new Map<string, Source>();
 	readonly passages: Passage[] = [];
 	private shingleCache = new Map<string, Set<string>>();
+	/** Built lazily on the next retrieval after the passage set changes. */
+	private index?: PassageIndex;
 
 	/** Returns the stored source id; copies are recorded as aliases rather than stored twice. */
 	addSource(input: SourceInput): { status: "added" | "alias" | "near-duplicate" | "empty"; sourceId?: string } {
@@ -168,58 +155,34 @@ export class EvidenceLibrary {
 	}
 
 	private addPassages(sourceId: string, text: string): void {
-		for (const span of packSentences(text)) {
-			const passage = text.slice(span.start, span.end);
-			if (!passage.trim() || looksLikeBoilerplate(passage)) continue;
-			this.passages.push({ id: `${sourceId}#${span.start}`, sourceId, start: span.start, end: span.end, text: passage });
+		this.index = undefined;
+		// segment() reads only id, text and pages; the rest of Snapshot is acquisition metadata.
+		for (const span of segment({ id: sourceId, text } as Snapshot)) {
+			if (!span.text.trim() || looksLikeBoilerplate(span.text)) continue;
+			this.passages.push({ id: `${sourceId}#${span.start}`, sourceId, start: span.start, end: span.end, text: span.text });
 		}
 	}
 
-	/** Passages for one subquestion, diverse by MMR and capped per source. */
+	/** Passages for one subquestion: stemmed BM25, MMR-diversified, capped per source. */
 	retrieve(subquestion: string, limit = PASSAGES_PER_SUBQUESTION): { passage: Passage; score: number }[] {
-		const query = [...new Set(contentTerms(subquestion))];
-		if (!query.length || !this.passages.length) return [];
-		const docs = this.passages.map((passage) => ({ passage, terms: contentTerms(passage.text) }));
-		const avgLength = docs.reduce((total, doc) => total + doc.terms.length, 0) / docs.length || 1;
-		const df = new Map<string, number>();
-		for (const doc of docs) for (const term of new Set(doc.terms)) df.set(term, (df.get(term) ?? 0) + 1);
-		const scored = docs.map((doc) => {
-			const tf = new Map<string, number>();
-			for (const term of doc.terms) tf.set(term, (tf.get(term) ?? 0) + 1);
-			let score = 0;
-			for (const term of query) {
-				const f = tf.get(term) ?? 0;
-				if (!f) continue;
-				const idf = Math.log(1 + (docs.length - (df.get(term) ?? 0) + 0.5) / ((df.get(term) ?? 0) + 0.5));
-				score += idf * ((f * 2.2) / (f + 1.2 * (0.25 + 0.75 * (doc.terms.length / avgLength))));
-			}
-			return { passage: doc.passage, terms: doc.terms, score };
-		}).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score).slice(0, 200);
-		if (!scored.length) return [];
-
-		const maxScore = scored[0]!.score;
-		const vectors = scored.map((entry) => termVector(entry.terms));
-		const chosen: number[] = [];
-		const perSource = new Map<string, number>();
-		while (chosen.length < limit) {
-			let best = -1;
-			let bestValue = -Infinity;
-			for (let i = 0; i < scored.length; i++) {
-				if (chosen.includes(i)) continue;
-				const sourceId = scored[i]!.passage.sourceId;
-				if ((perSource.get(sourceId) ?? 0) >= PER_SOURCE_LIMIT) continue;
-				const relevance = scored[i]!.score / maxScore;
-				let similarity = 0;
-				for (const j of chosen) similarity = Math.max(similarity, cosine(vectors[i]!, vectors[j]!));
-				const value = MMR_LAMBDA * relevance - (1 - MMR_LAMBDA) * similarity;
-				if (value > bestValue) { bestValue = value; best = i; }
-			}
-			if (best < 0) break;
-			chosen.push(best);
-			const sourceId = scored[best]!.passage.sourceId;
-			perSource.set(sourceId, (perSource.get(sourceId) ?? 0) + 1);
+		if (!contentTerms(subquestion).length || !this.passages.length) return [];
+		const byId = new Map(this.passages.map((passage) => [passage.id, passage]));
+		if (!this.index) {
+			this.index = new PassageIndex();
+			this.index.add(this.passages.map((p) => ({ id: p.id, snapshotId: p.sourceId, start: p.start, end: p.end, text: p.text, duplicateGroup: p.id })));
 		}
-		return chosen.map((i) => ({ passage: scored[i]!.passage, score: scored[i]!.score }));
+		const ranked = this.index.rankStemmed(subquestion, RANK_CANDIDATES).filter((hit) => hit.score > 0);
+		// Full MMR ordering, then the per-source cap: the cap must not let one source fill the shortlist.
+		const chosen: { passage: Passage; score: number }[] = [];
+		const perSource = new Map<string, number>();
+		for (const hit of mmr(ranked, ranked.length, MMR_LAMBDA)) {
+			const passage = byId.get(hit.passage.id);
+			if (!passage || (perSource.get(passage.sourceId) ?? 0) >= PER_SOURCE_LIMIT) continue;
+			perSource.set(passage.sourceId, (perSource.get(passage.sourceId) ?? 0) + 1);
+			chosen.push({ passage, score: hit.score });
+			if (chosen.length >= limit) break;
+		}
+		return chosen;
 	}
 
 	/** Coverage table: which subquestions have enough independent evidence to write from. */
@@ -232,21 +195,4 @@ export class EvidenceLibrary {
 		});
 		return { table, gaps: table.filter((row) => !row.enough).map((row) => row.subquestion) };
 	}
-}
-
-function termVector(terms: string[]): Map<string, number> {
-	const vector = new Map<string, number>();
-	for (const term of terms) vector.set(term, (vector.get(term) ?? 0) + 1);
-	let square = 0;
-	for (const value of vector.values()) square += value * value;
-	const norm = Math.sqrt(square) || 1;
-	for (const [term, value] of vector) vector.set(term, value / norm);
-	return vector;
-}
-
-function cosine(left: Map<string, number>, right: Map<string, number>): number {
-	let sum = 0;
-	const [small, large] = left.size <= right.size ? [left, right] : [right, left];
-	for (const [term, value] of small) sum += value * (large.get(term) ?? 0);
-	return sum;
 }

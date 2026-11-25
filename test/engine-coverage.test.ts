@@ -1,0 +1,1151 @@
+/**
+ * Permanent offline coverage regression for changed-key evidence re-evaluation.
+ * Cache keys hash the actual weighted query, including unclassified concepts;
+ * PRF expansion therefore leaves one legitimate follow-up evaluation pending. Real core-ir/ObjectStore/Ledger; fake model hosts only.
+ * A same-key partial->adequate update yields 0 with one row; B a changed-key
+ * zero-deficit contradiction earns yield without downgrading; C an explicit
+ * downgrade reopens coverage with its witness; D one real PRF follow-up then a
+ * stable key with no repeats; E fetch-allowance exhaustion truncates an episode
+ * without skipping evaluation or certifying saturation; F start holds a work-lane
+ * follow-up reserve, refuses to spend it and continue uses it; G synthesis sends a
+ * compact packet that keeps priority witnesses and still rejects citations outside it.
+ * Run: npx tsx test/engine-coverage.test.ts
+ */
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ResearchEngine, newInvestigation } from '../src/engine.js';
+import type { EngineOptions } from '../src/engine.js';
+import { Ledger } from '../src/allowance.js';
+import { ObjectStore, validateInvestigation } from '../src/object-store.js';
+import { PassageIndex, segment } from '../src/core-ir.js';
+import { isBotChallenge, isThinContent, normalizeUrl, parseArticleLinks, parseHtmlMetadata, shouldSkipCandidateUrl } from '../src/acquisition.js';
+import { classifyFailure, formatAcquisitionSummary, needCorroboration, renderProgressBar, renderProgressStatus, renderProgressWidget, researchMap, sourceList, summarizeAcquisition } from '../src/views.js';
+import { buildReport, statementCorroboration } from '../src/report.js';
+import { candidateRelevance, chooseAction, retrievalKey, unmetMass } from '../src/controller.js';
+import type { DiscoveryResult, EngineHost, Investigation, Passage, Snapshot } from '../src/types.js';
+
+const failures: string[] = [];
+const check = (label: string, condition: boolean, detail = ''): void => {
+  if (condition) console.log(`ok   ${label}`);
+  else { failures.push(label); console.log(`FAIL ${label}${detail ? ` — ${detail}` : ''}`); }
+};
+
+const OWNER = 'coverage-owner';
+const USAGE = { input: 40, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 50, costKind: 'model-estimate' as const };
+const LIMITS = { searches: 40, fetches: 40, http: 80, modelCalls: 60, modelTokens: 300_000, elapsedMs: 900_000 };
+const SYNTHESIS = { modelCalls: 10, modelTokens: 60_000 };
+
+/** Deterministic long paragraph (~170 tokens) with the branch anchor woven in. */
+function longParagraph(seed: string): string {
+  const words: string[] = [];
+  for (let i = 0; i < 180; i++) {
+    if (i % 34 === 0) { words.push('quantum', 'foxberry', 'taxonomy'); i += 2; continue; }
+    words.push(`${seed}w${i}`);
+  }
+  return words.join(' ');
+}
+
+interface Ctx {
+  root: string; store: ObjectStore; ledger: Ledger; requestId: string; state: Investigation;
+  commits: number; modelCalls: Record<string, number>; assessInputs: any[]; reportInputs: any[];
+  /** Usage the fake host reports per call; case F uses realistic per-call cost, default is negligible. */
+  usage: typeof USAGE;
+  assess: (input: any) => unknown;
+  report: (input: any) => unknown;
+  acquire: (url: string) => Snapshot;
+  discover: (query: string) => Promise<DiscoveryResult>;
+}
+
+function fixtureSnapshot(store: ObjectStore, url: string, text: string): Snapshot {
+  const raw = `<html><head><title>Fixture</title></head><body><pre>${text}</pre></body></html>`;
+  const rawBlob = store.put(raw); const textBlob = store.put(text);
+  const snapshot: Snapshot = {
+    id: rawBlob, requestedUrl: url, finalUrl: url, canonicalUrl: url, fetchedAt: new Date().toISOString(),
+    contentHash: rawBlob, textHash: textBlob, rawBlob, textBlob, mime: 'text/html', status: 200,
+    title: 'Coverage fixture', extraction: 'fixture', extractionVersion: '1', text,
+  };
+  store.saveSnapshot(snapshot);
+  return snapshot;
+}
+
+function createCtx(limits = LIMITS, synthesis: Parameters<Ledger['authorize']>[1] = SYNTHESIS): Ctx {
+  const root = mkdtempSync(join(tmpdir(), 'engine-coverage-perm-'));
+  const store = new ObjectStore(root);
+  const ledger = new Ledger(join(root, 'ledger.sqlite'));
+  const allowanceId = ledger.authorize(limits, synthesis, `auth-${randomUUID()}`);
+  const requestId = randomUUID();
+  const state = newInvestigation({ id: `inv-${randomUUID()}`, allowanceId, storageRoot: root, question: 'Quantum foxberry taxonomy survey methods' });
+  ledger.authorizeRequest({ id: requestId, allowanceId, investigationId: state.id, sessionId: `session-${requestId}`,
+    kind: 'report', question: state.originalQuestion, provider: 'brave', searchTool: 'web', storageRoot: root });
+  ledger.claimRequest(requestId, OWNER);
+  return { root, store, ledger, requestId, state, commits: 0, modelCalls: {}, assessInputs: [], reportInputs: [], usage: USAGE,
+    assess: () => ({ relevantPassageIds: [], contributions: [] }),
+    report: () => ({ sections: [] }),
+    acquire: url => fixtureSnapshot(store, url, longParagraph('beta')),
+    discover: async query => ({ query, provider: 'brave', rankingKind: 'ranked', results: [] }) };
+}
+
+function engineFor(ctx: Ctx, state: Investigation = ctx.state, options: EngineOptions = { maxActions: 12 }): ResearchEngine {
+  const host: EngineHost = {
+    model: {
+      async complete(task, input) {
+        ctx.modelCalls[task] = (ctx.modelCalls[task] ?? 0) + 1;
+        if (task === 'assess') { ctx.assessInputs.push(input); return { value: ctx.assess(input), usage: ctx.usage, usageComplete: true }; }
+        if (task === 'classify') return { value: { decisions: [] }, usage: ctx.usage, usageComplete: true };
+        if (task === 'report') { ctx.reportInputs.push(input); return { value: ctx.report(input), usage: ctx.usage, usageComplete: true }; }
+        throw new Error(`unexpected model task ${task}`);
+      },
+    },
+    discover: async query => ctx.discover(query), acquire: async url => ctx.acquire(url),
+    commit: state => { ctx.state = state; ctx.commits += 1; },
+    isCurrent: () => true,
+    progress: () => { /* progress not under test */ },
+  };
+  return new ResearchEngine({ state, ledger: ctx.ledger, store: ctx.store, host, requestId: ctx.requestId,
+    owner: OWNER, signal: new AbortController().signal, options });
+}
+
+function makeFixture(seed: string, limits = LIMITS) {
+  const ctx = createCtx(limits);
+  const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}`, longParagraph(seed));
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const branch: Investigation['branches'][number] = {
+    id: `branch-${seed}`, objectiveId: objective.id, question: 'Which survey methods repeat?', anchor: 'quantum foxberry taxonomy',
+    origin: 'initial', introducing: [], priority: 0.7, status: 'active',
+    needs: [{ id: `need-${seed}`, question: 'identify survey methods', weight: 1, status: 0 }],
+    aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  };
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const passages = index.all();
+  const groupOf = new Map(passages.map(p => [p.id, p.duplicateGroup]));
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches: [branch] };
+  return { ctx, objective, branch, snapshot, passages, groupOf, representative: passages[0]!, state };
+}
+
+type Fixture = ReturnType<typeof makeFixture>;
+
+/** Adds a second snapshot to the corpus and bumps the revision, leaving the stamped key stale. */
+function extendCorpus(f: Fixture, url: string): Passage[] {
+  const snapshot = fixtureSnapshot(f.ctx.store, url, longParagraph('beta'));
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const added = index.all();
+  f.state = { ...f.state, snapshotIds: [...f.state.snapshotIds, snapshot.id], passages: [...f.state.passages, ...added],
+    corpusRevision: f.state.corpusRevision + 1 };
+  return added;
+}
+
+function supportRow(f: Fixture, assessment: string): Investigation['contributions'][number] {
+  return { objectiveId: f.objective.id, branchId: f.branch.id, needId: f.branch.needs[0]!.id,
+    passageId: f.representative.id, duplicateGroup: f.groupOf.get(f.representative.id)!, role: 'support', assessment };
+}
+
+/** Closed branch with a revision-1 stamped key, then a new revision-2 snapshot. */
+function closedWithLaterCorpus(seed: string): { f: Fixture; witness: Passage } {
+  const f = makeFixture(seed);
+  f.branch.needs[0]!.status = 1;
+  const covered: Investigation = { ...f.state, snapshotIds: [f.snapshot.id], passages: f.passages, corpusRevision: 1, contributions: [supportRow(f, 'closing support')] };
+  f.branch.retrievalKey = retrievalKey(covered, f.branch);
+  f.state = covered;
+  const added = extendCorpus(f, `https://example.org/${seed}-later`);
+  validateInvestigation(f.state);
+  f.ctx.state = f.state;
+  return { f, witness: added[0]! };
+}
+
+const retire = (ctx: Ctx): void => { try { ctx.ledger.close(); } catch { /* closed */ } rmSync(ctx.root, { recursive: true, force: true }); };
+
+// ------------------------------ A: partial -> adequate on the same contribution key
+async function casePartialToAdequate(): Promise<void> {
+  const f = makeFixture('one');
+  try {
+    f.branch.needs[0]!.status = 0.5;
+    f.state = { ...f.state, snapshotIds: [f.snapshot.id], passages: f.passages, corpusRevision: 1, contributions: [supportRow(f, 'earlier partial justification')] };
+    validateInvestigation(f.state);
+    f.ctx.state = f.state;
+    f.ctx.assess = () => ({ relevantPassageIds: [f.representative.id],
+      contributions: [{ passageId: f.representative.id, needId: f.branch.needs[0]!.id, role: 'support', status: 1, assessment: 'later evidence strengthens the earlier answer' }],
+      coverageUpdates: [{ needId: f.branch.needs[0]!.id, status: 1, passageIds: [f.representative.id], assessment: 'answer now adequate with direct contextual support' }],
+    });
+    const final = await engineFor(f.ctx).run('', 'report');
+    const need = final.branches[0]!.needs[0]!;
+    const support = final.contributions.filter(c => c.needId === need.id && c.role === 'support');
+    const retrieve = final.actions.filter(a => a.kind === 'retrieve');
+    check('A explicit update closes the need from 0.5', need.status === 1, `status=${need.status}`);
+    check('A same contribution key keeps exactly one support row', support.length === 1, `rows=${support.length}`);
+    check('A repeated evidence earns no yield', retrieve.length === 1 && retrieve[0]!.yield === 0, JSON.stringify(retrieve.map(a => a.yield)));
+    check('A the explicit update owns the audit',
+      need.assessment?.reason === 'answer now adequate with direct contextual support' && need.assessment.passageIds[0] === f.representative.id, JSON.stringify(need.assessment));
+  } finally { retire(f.ctx); }
+}
+
+// ---------------------------- B: changed key at zero deficit, new contradiction yields
+async function caseChangedKeyContradiction(): Promise<void> {
+  const { f, witness } = closedWithLaterCorpus('closed');
+  try {
+    f.ctx.assess = () => ({ relevantPassageIds: [witness.id],
+      contributions: [{ passageId: witness.id, needId: f.branch.needs[0]!.id, role: 'contradiction', status: 0.5, assessment: 'later evidence contradicts the closed answer' }],
+    });
+    const final = await engineFor(f.ctx).run('', 'report');
+    const need = final.branches[0]!.needs[0]!;
+    const contradictions = final.contributions.filter(c => c.role === 'contradiction');
+    const retrieve = final.actions.filter(a => a.kind === 'retrieve');
+    check('B changed key evaluates the zero-deficit branch once', f.ctx.assessInputs.length === 1, `assess=${f.ctx.assessInputs.length}`);
+    check('B the new contradiction lands exactly once', contradictions.length === 1 && contradictions[0]!.passageId === witness.id, JSON.stringify(contradictions.map(c => c.passageId)));
+    check('B contradiction never downgrades coverage by itself', need.status === 1, `status=${need.status}`);
+    check('B the new contradiction earns yield', retrieve.length === 1 && retrieve[0]!.yield === 1, JSON.stringify(retrieve.map(a => [a.status, a.yield])));
+  } finally { retire(f.ctx); }
+}
+
+// ------------------------------------ C: explicit downgrade reopens with its witness
+async function caseExplicitDowngrade(): Promise<void> {
+  const { f, witness } = closedWithLaterCorpus('reopen');
+  try {
+    f.ctx.assess = () => ({ relevantPassageIds: [witness.id],
+      contributions: [{ passageId: witness.id, needId: f.branch.needs[0]!.id, role: 'contradiction', status: 0.5, assessment: 'later source qualifies the closed answer' }],
+      coverageUpdates: [{ needId: f.branch.needs[0]!.id, status: 0.5, passageIds: [witness.id], assessment: 'reopened: qualification reduces adequacy' }],
+    });
+    const final = await engineFor(f.ctx).run('', 'report');
+    const need = final.branches[0]!.needs[0]!;
+    const unclassified = final.concepts.filter(c => c.branchId === f.branch.id && c.classification === undefined);
+    check('C changed key evaluates the covered branch once', f.ctx.assessInputs.length === 1, `assess=${f.ctx.assessInputs.length}`);
+    check('C explicit downgrade reopens coverage to 0.5', need.status === 0.5 && unmetMass(final.branches[0]!) > 0, `status=${need.status} unmet=${unmetMass(final.branches[0]!)}`);
+    check('C audit names the qualifying witness',
+      need.assessment?.reason === 'reopened: qualification reduces adequacy' && need.assessment.passageIds[0] === witness.id, JSON.stringify(need.assessment));
+    check('C expansion leaves the weighted query key pending',
+      unclassified.length > 0 && final.branches[0]!.retrievalKey !== retrievalKey(final, final.branches[0]!), `unclassified=${unclassified.length}`);
+  } finally { retire(f.ctx); }
+}
+
+// -------------------------- D: one real PRF follow-up, then a stable key (no repeats)
+async function casePrfFollowUp(): Promise<void> {
+  const f = makeFixture('prf');
+  try {
+    f.state = { ...f.state, snapshotIds: [f.snapshot.id], passages: f.passages, corpusRevision: 1 };
+    validateInvestigation(f.state); f.ctx.state = f.state;
+    f.ctx.assess = () => ({ relevantPassageIds: [f.representative.id],
+      contributions: [{ passageId: f.representative.id, needId: f.branch.needs[0]!.id, role: 'support', status: 1, assessment: 'full support' }] });
+    const first = await engineFor(f.ctx).run('', 'report');
+    const firstBranch = first.branches[0]!;
+    const unclassified = first.concepts.filter(c => c.branchId === f.branch.id && c.classification === undefined);
+    check('D first evaluation closes the need once', f.ctx.modelCalls.assess === 1 && firstBranch.needs[0]!.status === 1,
+      `assess=${f.ctx.modelCalls.assess} status=${firstBranch.needs[0]!.status}`);
+    check('D PRF expansion leaves the stamped weighted query key stale',
+      firstBranch.retrievalKey !== undefined && unclassified.length > 0 && firstBranch.retrievalKey !== retrievalKey(first, firstBranch), `concepts=${first.concepts.length} unclassified=${unclassified.length}`);
+    const retrievesAfterFirst = first.actions.filter(a => a.kind === 'retrieve').length;
+    const followup = await engineFor(f.ctx).run('', 'report');
+    const followupBranch = followup.branches[0]!;
+    const followupRetrieves = followup.actions.filter(a => a.kind === 'retrieve');
+    check('D exactly one follow-up evaluation runs at zero deficit',
+      f.ctx.modelCalls.assess === 2 && followupRetrieves.length === retrievesAfterFirst + 1 && followupRetrieves.at(-1)!.yield === 0, `assess=${f.ctx.modelCalls.assess} retrieves=${followupRetrieves.length} yield=${followupRetrieves.at(-1)?.yield}`);
+    check('D the follow-up re-stamps the expanded key',
+      followupBranch.retrievalKey === retrievalKey(followup, followupBranch), `stampMatches=${followupBranch.retrievalKey === retrievalKey(followup, followupBranch)}`);
+    const third = await engineFor(f.ctx).run('', 'report');
+    const thirdRetrieves = third.actions.filter(a => a.kind === 'retrieve').length;
+    check('D stable key causes no further assessment or retrieval',
+      f.ctx.modelCalls.assess === 2 && thirdRetrieves === followupRetrieves.length, `assess=${f.ctx.modelCalls.assess} retrieves=${thirdRetrieves}`);
+  } finally { retire(f.ctx); }
+}
+
+// ------------- E: fetch-allowance exhaustion truncates the episode, not the evaluation
+interface ExhaustedEpisode { ctx: Ctx; final: Investigation; }
+
+/**
+ * Two credited fetches are all the allowance admits: the first fails at DNS (still
+ * accounted), the second commits passages, and a third eligible source must never be
+ * attempted. The episode must then evaluate committed evidence instead of unwinding.
+ */
+async function runExhaustedEpisode(seed: string, assess: (input: any) => unknown): Promise<ExhaustedEpisode> {
+  const f = makeFixture(seed, { ...LIMITS, fetches: 2 });
+  const traffic = [
+    `https://dns-failure.example.org/${seed}`,
+    `https://committed.example.org/${seed}`,
+    `https://never-attempted.example.org/${seed}`,
+  ];
+  f.ctx.assess = assess;
+  f.ctx.discover = async query => ({ query, provider: 'brave', rankingKind: 'ranked',
+    results: traffic.map((url, rank) => ({ url, title: `result ${rank}`, snippet: `quantum foxberry taxonomy ${seed}`, rank })) });
+  f.ctx.acquire = url => {
+    if (url.includes('dns-failure')) throw new Error('getaddrinfo ENOTFOUND dns-failure.example.org');
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-source`));
+  };
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1 }).run();
+  return { ctx: f.ctx, final };
+}
+
+async function caseEpisodeFetchExhaustion(): Promise<void> {
+  const zero = await runExhaustedEpisode('truncated-zero', () => ({ relevantPassageIds: [], contributions: [] }));
+  try {
+    const search = zero.final.actions.filter(a => a.kind === 'search');
+    const fetches = zero.final.actions.filter(a => a.kind === 'fetch');
+    const branch = zero.final.branches[0]!;
+    check('E truncated episode still evaluates committed evidence once', zero.ctx.modelCalls.assess === 1, `assess=${zero.ctx.modelCalls.assess}`);
+    check('E truncated episode closes as completed (not interrupted)', search.length === 1 && search[0]!.status === 'completed', JSON.stringify(search.map(a => a.status)));
+    check('E action error states the fetch-allowance truncation', /fetch allowance exhausted/.test(search[0]!.error ?? '') && /2\/3/.test(search[0]!.error ?? ''), String(search[0]?.error));
+    check('E no fetch is attempted without credit', fetches.length === 2, `fetches=${fetches.length}`);
+    check('E zero-yield truncation earns no saturation credit or cooldown', branch.zeroYieldEpisodes === 0 && branch.status === 'active', `zeroYield=${branch.zeroYieldEpisodes} status=${branch.status}`);
+  } finally { retire(zero.ctx); }
+
+  const productive = await runExhaustedEpisode('truncated-yield', input => {
+    const passageId = input.passages[0].passageId as string;
+    return { relevantPassageIds: [passageId], contributions: [
+      { passageId, needId: input.branch.needs[0].id as string, role: 'support', status: 1, assessment: 'committed evidence supports the need' }] };
+  });
+  try {
+    const search = productive.final.actions.filter(a => a.kind === 'search');
+    const branch = productive.final.branches[0]!;
+    check('E assessed yield from committed evidence reaches the truncated episode', search.length === 1 && search[0]!.yield === 1, JSON.stringify(search.map(a => [a.status, a.yield])));
+    check('E search credit records one completed, successful episode', branch.stats.search?.completed === 1 && branch.stats.search?.successful === 1, JSON.stringify(branch.stats.search));
+  } finally { retire(productive.ctx); }
+}
+
+// ------------------------------ F: work-lane reserve for the first follow-up
+// Work-lane cap 70,000 tokens / 50 calls ⇒ a 17,500-token, 3-call hold (24,000 ceiling, 25% share).
+const RESERVE_LIMITS = { ...LIMITS, modelTokens: 100_000 };
+const RESERVE_SYNTHESIS = { modelCalls: 10, modelTokens: 30_000 };
+
+/** Eight unmet branches over one small corpus, so every retrieve is exactly one assess call. */
+function makeWideFixture(seed: string, limits = RESERVE_LIMITS, synthesis = RESERVE_SYNTHESIS) {
+  const ctx = createCtx(limits, synthesis);
+  const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}`, longParagraph(seed));
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const passages = index.all();
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const branches: Investigation['branches'] = Array.from({ length: 8 }, (_, i) => ({
+    id: `branch-${seed}-${i}`, objectiveId: objective.id, question: `Which ${seed} survey method repeats (${i})?`,
+    anchor: `${seed} quantum foxberry ${i}`, origin: 'initial' as const, introducing: [],
+    priority: 0.7 - i * 0.01, status: 'active' as const,
+    needs: [{ id: `need-${seed}-${i}`, question: `identify survey method ${i}`, weight: 1, status: 0 as const }],
+    aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  }));
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches,
+    snapshotIds: [snapshot.id], passages, corpusRevision: 1 };
+  validateInvestigation(state);
+  ctx.state = state;
+  // Observed per-call usage close to the reserved amount, as a real provider reports it.
+  ctx.usage = { input: 8_500, output: 500, cacheRead: 0, cacheWrite: 0, totalTokens: 9_000, costKind: 'model-estimate' };
+  ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  return { ctx, state };
+}
+
+/** Assess operations the ledger actually reserved during the run. */
+const assessOps = (ledger: Ledger, allowanceId: string) =>
+  ledger.snapshot(allowanceId).operations.filter(op => (op.payload as { task?: string } | undefined)?.task === 'assess');
+
+async function caseFollowUpReserve(): Promise<void> {
+  const { ctx, state } = makeWideFixture('reserve');
+  const allowanceId = state.allowanceId;
+  try {
+    const start = await engineFor(ctx, state).run();
+    const afterStart = ctx.ledger.snapshot(allowanceId);
+    const startAssess = ctx.modelCalls.assess ?? 0;
+    const callCost = Math.max(0, ...assessOps(ctx.ledger, allowanceId).map(op => op.amount.modelTokens ?? 0));
+    const remaining = afterStart.lanes.work.remaining.modelTokens;
+    check('F start dispatches real assessments before the hold blocks it', startAssess >= 2, `assess=${startAssess}`);
+    check('F start stops on the follow-up hold, not exhaustion',
+      start.status === 'complete' && /held for the first follow-up/.test(start.stopReason ?? '') && !/exhausted/.test(start.stopReason ?? ''), String(start.stopReason));
+    check('F the hold keeps one full assessment of the work lane available',
+      callCost > 0 && remaining >= callCost, `call=${callCost} remaining=${remaining}`);
+    check('F the hold is headroom, not a ledger reservation',
+      afterStart.lanes.work.reserved.modelTokens === 0 && afterStart.lanes.synthesis.reserved.modelTokens === 0,
+      `work=${afterStart.lanes.work.reserved.modelTokens} synthesis=${afterStart.lanes.synthesis.reserved.modelTokens}`);
+    check('F accounting confirms only observed usage, never the hold',
+      afterStart.confirmed.modelTokens === startAssess * ctx.usage.totalTokens, `confirmed=${afterStart.confirmed.modelTokens} expected=${startAssess * ctx.usage.totalTokens}`);
+
+    const second = await engineFor(ctx).run();
+    check('F a repeated start cannot spend the held capacity',
+      (ctx.modelCalls.assess ?? 0) === startAssess && /held for the first follow-up/.test(second.stopReason ?? ''),
+      `assess=${ctx.modelCalls.assess} stop=${String(second.stopReason)}`);
+
+    const continuation = await engineFor(ctx).run('', 'continue');
+    const continueAssess = (ctx.modelCalls.assess ?? 0) - startAssess;
+    check('F continue releases the reserve and dispatches the follow-up assessment',
+      continueAssess >= 1, `assess=${ctx.modelCalls.assess}`);
+    check('F continue is no longer stopped by the hold',
+      !/held for the first follow-up/.test(continuation.stopReason ?? ''), String(continuation.stopReason));
+  } finally { retire(ctx); }
+}
+
+async function caseSmallLaneReserve(): Promise<void> {
+  // 40,000-token work lane: the hold is 10,000 (25%), not the 24,000 ceiling.
+  const { ctx, state } = makeWideFixture('smallreserve', { ...LIMITS, modelTokens: 70_000 });
+  try {
+    const start = await engineFor(ctx, state).run();
+    const afterStart = ctx.ledger.snapshot(state.allowanceId);
+    const remaining = afterStart.lanes.work.remaining.modelTokens;
+    check('F a small lane caps the hold proportionally instead of starving start',
+      (ctx.modelCalls.assess ?? 0) >= 3 && remaining < 24_000, `assess=${ctx.modelCalls.assess} remaining=${remaining}`);
+    check('F the small-lane stop still explains the hold', /held for the first follow-up/.test(start.stopReason ?? ''), String(start.stopReason));
+  } finally { retire(ctx); }
+}
+
+async function caseFollowUpCallReserve(): Promise<void> {
+  // Work-lane call cap 6 ⇒ a one-call hold (25% of six), not the three-call ceiling.
+  const { ctx, state } = makeWideFixture('callreserve', { ...LIMITS, modelCalls: 8 }, { modelCalls: 2, modelTokens: 30_000 });
+  try {
+    const start = await engineFor(ctx, state).run();
+    const startAssess = ctx.modelCalls.assess ?? 0;
+    check('F the call hold is proportional, so start keeps most of its calls',
+      startAssess >= 4 && /held for the first follow-up/.test(start.stopReason ?? '') && /modelCalls/.test(start.stopReason ?? ''),
+      `assess=${startAssess} stop=${String(start.stopReason)}`);
+    check('F the call hold keeps one call for the follow-up',
+      ctx.ledger.snapshot(state.allowanceId).lanes.work.remaining.modelCalls === 1,
+      `remainingCalls=${ctx.ledger.snapshot(state.allowanceId).lanes.work.remaining.modelCalls}`);
+    await engineFor(ctx).run('', 'continue');
+    check('F continue spends the protected call', (ctx.modelCalls.assess ?? 0) > startAssess, `assess=${ctx.modelCalls.assess}`);
+  } finally { retire(ctx); }
+}
+
+// ------------------------- G: compact synthesis packet and packet-bound citations
+/** Twelve need-audit witnesses (priority) plus four ordinary support passages, in corpus order. */
+function makePacketFixture(seed: string) {
+  const ctx = createCtx();
+  const text = Array.from({ length: 16 }, (_, i) => longParagraph(`${seed}p${i}`)).join('\n\n');
+  const snapshot = fixtureSnapshot(ctx.store, `https://example.org/${seed}-packet`, text);
+  const index = new PassageIndex(); index.add(segment(snapshot));
+  const passages = index.all();
+  if (passages.length !== 16) throw new Error(`packet fixture expected 16 passages, got ${passages.length}`);
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const needs = passages.slice(0, 12).map((passage, i) => ({
+    id: `need-${seed}-${i}`, question: `addressed question ${i}`, weight: 1 / 12, status: 1 as const,
+    assessment: { passageIds: [passage.id], reason: `audit witness ${i}`, corpusRevision: 1, createdAt: new Date().toISOString() },
+  }));
+  const branch: Investigation['branches'][number] = {
+    id: `branch-${seed}`, objectiveId: objective.id, question: 'Which survey methods repeat?', anchor: 'quantum foxberry taxonomy',
+    origin: 'initial', introducing: [], priority: 0.7, status: 'active', needs, aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  };
+  const contributions = passages.slice(12).map(passage => ({
+    objectiveId: objective.id, branchId: branch.id, needId: needs[0]!.id, passageId: passage.id,
+    duplicateGroup: passage.duplicateGroup, role: 'support' as const, assessment: 'ordinary supporting evidence',
+  }));
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches: [branch],
+    snapshotIds: [snapshot.id], passages, contributions, corpusRevision: 1 };
+  branch.retrievalKey = retrievalKey(state, branch); // unchanged key: no refresh assessment before synthesis
+  validateInvestigation(state);
+  ctx.state = state;
+  return { ctx, state, passages, witnesses: passages.slice(0, 12), ordinary: passages.slice(12) };
+}
+
+async function caseCompactReportPacket(): Promise<void> {
+  const f = makePacketFixture('compact');
+  try {
+    f.ctx.report = input => {
+      const packet = input.evidence as { passageId: string }[];
+      return { sections: [{ title: 'Answer', statements: [
+        { text: 'The earliest witness supports the answer.', citations: [{ passageId: packet[0]!.passageId, start: 0, end: 20 }] },
+        { text: 'The latest witness qualifies it.', citations: [{ passageId: packet.at(-1)!.passageId, start: 5, end: 30 }] },
+      ] }] };
+    };
+    const final = await engineFor(f.ctx).run('', 'report');
+    const packet = f.ctx.reportInputs[0]?.evidence as { passageId: string; text: string }[] | undefined;
+    const report = final.reports.at(-1)!;
+    const ids = new Set((packet ?? []).map(p => p.passageId));
+    const chars = (packet ?? []).reduce((sum, p) => sum + p.text.length, 0);
+    check('G synthesis is called once with a packet under the hard maximum',
+      f.ctx.modelCalls.report === 1 && !!packet && packet.length <= 40 && chars <= 48_000, `calls=${f.ctx.modelCalls.report} packet=${packet?.length} chars=${chars}`);
+    check('G every need-audit witness is kept past the compact target',
+      f.witnesses.every(p => ids.has(p.id)) && (packet?.length ?? 0) > 10 && chars > 16_000, `packet=${packet?.length} chars=${chars}`);
+    check('G ordinary evidence beyond the compact target is omitted and disclosed',
+      f.ordinary.every(p => !ids.has(p.id)) && f.ctx.reportInputs[0]?.evidenceOmitted === 4
+      && /compact target 10 passages \/ 16000 characters/.test(String(f.ctx.reportInputs[0]?.packetNote)),
+      `omitted=${f.ctx.reportInputs[0]?.evidenceOmitted} note=${String(f.ctx.reportInputs[0]?.packetNote).slice(0, 120)}`);
+    check('G packet citations resolve without the fallback',
+      report.fallback === false && report.sections[0]?.statements.length === 2
+      && report.sections[0]!.statements.every(s => ids.has(s.citations[0]!.passageId)), JSON.stringify(report.sections.map(s => s.statements.length)));
+  } finally { retire(f.ctx); }
+}
+
+async function caseReportPacketCitationBound(): Promise<void> {
+  const f = makePacketFixture('bound');
+  try {
+    // Cite an eligible passage that the compact packet omitted: provenance must fail closed.
+    f.ctx.report = () => ({ sections: [{ title: 'Answer', statements: [
+      { text: 'Omitted evidence supports this claim.', citations: [{ passageId: f.ordinary[0]!.id, start: 0, end: 20 }] },
+    ] }] });
+    const final = await engineFor(f.ctx).run('', 'report');
+    const report = final.reports.at(-1)!;
+    check('G a citation outside the packet falls back instead of publishing', report.fallback === true, `fallback=${report.fallback}`);
+    check('G the invalid report gets exactly one bounded repair attempt', f.ctx.modelCalls.report === 2, `calls=${f.ctx.modelCalls.report}`);
+    check('G the fallback is explicitly extractive',
+      /Extractive evidence outline/.test(report.markdown) && report.sections.every(s => s.statements.every(t => !t.text.includes('Omitted evidence supports this claim.'))));
+  } finally { retire(f.ctx); }
+}
+
+async function caseCandidateFilteringAndDedup(): Promise<void> {
+  const url1 = 'https://Example.org:443/article/amp/?utm_source=twitter&fbclid=123#header';
+  const url2 = 'https://example.org/article';
+  const url3 = 'http://example.org:80/article?ref=homepage';
+  check('H normalizeUrl strips tracking parameters, ports, amp, trailing slash',
+    normalizeUrl(url1) === 'https://example.org/article' &&
+    normalizeUrl(url2) === 'https://example.org/article' &&
+    normalizeUrl(url3) === 'http://example.org/article');
+
+  check('H shouldSkipCandidateUrl flags non-article video/social/login and binary extensions',
+    shouldSkipCandidateUrl('https://www.youtube.com/watch?v=123').skip === true &&
+    shouldSkipCandidateUrl('https://twitter.com/user/status/123').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/path/login').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/image.png').skip === true &&
+    shouldSkipCandidateUrl('https://example.org/paper.pdf').skip === false &&
+    shouldSkipCandidateUrl('https://example.org/research-article').skip === false);
+
+  const seed = 'filtering-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const fetchedUrls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    fetchedUrls.push(url);
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: `https://example.org/${seed}/article-a?utm_source=feed`, title: `Article A ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: `https://example.org/${seed}/article-a/`, title: `Article A duplicate ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+      { url: 'https://youtube.com/watch?v=quantumfoxberry', title: `Video on quantum foxberry ${seed}`, snippet: 'quantum foxberry video', rank: 3 },
+      { url: `https://example.org/${seed}/unrelated`, title: 'Cooking recipes and kitchen tips', snippet: 'baking cakes and bread recipes', rank: 4 },
+      { url: `https://example.org/${seed}/article-b`, title: `Article B survey methods ${seed}`, snippet: 'quantum foxberry taxonomy notes', rank: 5 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 3 }).run();
+  try {
+    const candidates = final.candidates;
+    const articleACands = candidates.filter(c => c.url.includes('article-a'));
+    check('H tracking-param duplicate is deduped to one candidate', articleACands.length === 1, `count=${articleACands.length}`);
+
+    const videoCand = candidates.find(c => c.url.includes('youtube.com'));
+    check('H non-article video candidate is marked blocked with reason',
+      videoCand !== undefined && videoCand.status === 'blocked' && /skipped: non-article/.test(videoCand.error ?? ''), `status=${videoCand?.status} error=${videoCand?.error}`);
+
+    const offTopicCand = candidates.find(c => c.url.includes('unrelated'));
+    check('H off-topic candidate with zero overlap was not fetched in this episode',
+      offTopicCand !== undefined && offTopicCand.status === 'unread', `status=${offTopicCand?.status}`);
+
+    check('H only relevant article candidates were fetched',
+      fetchedUrls.some(u => u.includes('article-a')) &&
+      fetchedUrls.some(u => u.includes('article-b')) &&
+      !fetchedUrls.some(u => u.includes('youtube') || u.includes('unrelated')),
+      `fetched=${fetchedUrls.join(', ')}`);
+  } finally { retire(f.ctx); }
+}
+
+async function caseBotChallengeAndCircuitBreaker(): Promise<void> {
+  // 1. isBotChallenge and isThinContent tests
+  check('I isBotChallenge detects Cloudflare challenge title',
+    isBotChallenge('<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>') === true);
+  check('I isBotChallenge detects challenge-platform and verification markers',
+    isBotChallenge('<div class="cf-browser-verification"><script src="/cdn-cgi/challenge-platform/h/b/scripts/alpha.js"></script></div>') === true &&
+    isBotChallenge('<html><head><title>Verify</title></head><body><div id="px-captcha"></div></body></html>') === true);
+  check('I isBotChallenge exempts pages with <article> tags',
+    isBotChallenge('<html><body><article><h1>Quantum Foxberry Challenges</h1><p>Full article text about challenge-platform research.</p></article></body></html>') === false);
+  check('I isBotChallenge exempts pages with schema.org NewsArticle / Article',
+    isBotChallenge('<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","headline":"Browser Verification"}</script></head><body><p>Article body</p></body></html>') === false);
+  check('I isThinContent flags thin text under 80 characters',
+    isThinContent('Please enable cookies to continue.') === true &&
+    isThinContent('A'.repeat(85)) === false);
+
+  // 2. Circuit breaker in engine
+  const seed = 'circuit-breaker-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const acquireCalls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    acquireCalls.push(url);
+    if (url.includes('blocked-host.example.org/item-1')) {
+      throw new Error('bot-challenge detected (Cloudflare/CAPTCHA challenge screen)');
+    }
+    if (url.includes('blocked-host.example.org/item-2')) {
+      throw new Error('should not be called due to circuit breaker');
+    }
+    return fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: 'https://blocked-host.example.org/item-1', title: `Survey item 1 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: 'https://blocked-host.example.org/item-2', title: `Survey item 2 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+      { url: 'https://good-host.example.org/item-3', title: `Survey item 3 ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 3 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 3 }).run();
+  try {
+    const cand1 = final.candidates.find(c => c.url.includes('blocked-host.example.org/item-1'));
+    const cand2 = final.candidates.find(c => c.url.includes('blocked-host.example.org/item-2'));
+    const cand3 = final.candidates.find(c => c.url.includes('good-host.example.org/item-3'));
+
+    check('I item 1 was attempted and marked blocked with challenge error',
+      cand1 !== undefined && cand1.status === 'blocked' && /bot-challenge/i.test(cand1.error ?? ''),
+      `status=${cand1?.status} error=${cand1?.error}`);
+
+    check('I item 2 was skipped by circuit breaker without making an acquire call',
+      cand2 !== undefined && cand2.status === 'blocked' && /previously blocked/i.test(cand2.error ?? ''),
+      `status=${cand2?.status} error=${cand2?.error}`);
+
+    check('I good host item 3 was successfully fetched',
+      cand3 !== undefined && cand3.status === 'fetched',
+      `status=${cand3?.status} error=${cand3?.error}`);
+
+    check('I acquire was only called for item 1 and item 3',
+      acquireCalls.length === 2 &&
+      acquireCalls.some(u => u.includes('item-1')) &&
+      acquireCalls.some(u => u.includes('item-3')) &&
+      !acquireCalls.some(u => u.includes('item-2')),
+      `calls=${acquireCalls.join(', ')}`);
+  } finally { retire(f.ctx); }
+}
+
+async function caseAcquisitionSummaryView(): Promise<void> {
+  // 1. classifyFailure
+  check('J classifyFailure classifies known failure modes',
+    classifyFailure('bot-challenge detected (Cloudflare)') === 'Bot challenge / CAPTCHA' &&
+    classifyFailure('HTTP 403 for https://example.org') === 'HTTP 403 Forbidden' &&
+    classifyFailure('HTTP 429 for https://example.org') === 'HTTP 429 Rate limited' &&
+    classifyFailure('HTTP 503 Service Unavailable') === 'HTTP 5xx Server error' &&
+    classifyFailure('HTTP 404 for https://example.org') === 'HTTP 404 Not found' &&
+    classifyFailure('timeout after 15000ms') === 'Timeout' &&
+    classifyFailure('Readability produced thin text (30 chars)') === 'Extraction failure / thin content' &&
+    classifyFailure('getaddrinfo ENOTFOUND') === 'DNS / Network error' &&
+    classifyFailure('skipped: host foo.com previously blocked requests') === 'Host circuit-broken' &&
+    classifyFailure('skipped: non-article video/social route') === 'Non-article route filter' &&
+    classifyFailure('Robots.txt denies /path') === 'Robots.txt policy');
+
+  // 2. summarizeAcquisition and formatAcquisitionSummary
+  const mockState: Investigation = {
+    schema: 1,
+    id: 'test-inv',
+    revisionId: 'rev-1',
+    originalQuestion: 'test question',
+    activeObjectiveId: 'obj-1',
+    storageRoot: '',
+    allowanceId: '',
+    objectives: [],
+    branches: [],
+    passages: [],
+    concepts: [],
+    contributions: [],
+    actions: [],
+    feedback: [],
+    reports: [],
+    corpusRevision: 1,
+    status: 'complete',
+    snapshotIds: ['snap-1', 'snap-2'],
+    candidates: [
+      { id: 'c1', branchId: 'b1', query: 'q', url: 'https://site-a.com/page1', title: 'Page 1', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-1' },
+      { id: 'c2', branchId: 'b1', query: 'q', url: 'https://site-a.com/page2', title: 'Page 2', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-2' },
+      { id: 'c3', branchId: 'b1', query: 'q', url: 'https://site-b.com/page3', title: 'Page 3', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'failed', error: 'HTTP 403 Forbidden' },
+      { id: 'c4', branchId: 'b1', query: 'q', url: 'https://site-b.com/page4', title: 'Page 4', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'blocked', error: 'skipped: host site-b.com previously blocked requests' },
+      { id: 'c5', branchId: 'b1', query: 'q', url: 'https://site-c.com/video', title: 'Video', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'blocked', error: 'skipped: non-article video/social route' },
+      { id: 'c6', branchId: 'b1', query: 'q', url: 'https://site-d.com/page5', title: 'Page 5', snippet: '', provider: 'brave', rankingKind: 'ranked', discoveredAt: '2026-01-01', status: 'unread' },
+    ],
+  };
+
+  const summary = summarizeAcquisition(mockState);
+  check('J summarizeAcquisition counts total candidates and yields correctly',
+    summary.totalDiscovered === 6 &&
+    summary.fetched === 2 &&
+    summary.failed === 1 &&
+    summary.blocked === 2 &&
+    summary.unread === 1 &&
+    summary.attempts === 3 &&
+    Math.round(summary.yieldPct) === 67,
+    `summary=${JSON.stringify(summary)}`);
+
+  check('J summarizeAcquisition tracks failures by cause and host outcomes',
+    summary.failuresByCause['HTTP 403 Forbidden'] === 1 &&
+    summary.failuresByCause['Host circuit-broken'] === 1 &&
+    summary.failuresByCause['Non-article route filter'] === 1 &&
+    summary.hostOutcomes['site-a.com']?.fetched === 2 &&
+    summary.hostOutcomes['site-b.com']?.circuitBroken === true &&
+    summary.hostOutcomes['site-b.com']?.failed === 1,
+    `causes=${JSON.stringify(summary.failuresByCause)} hosts=${JSON.stringify(summary.hostOutcomes)}`);
+
+  const formatted = formatAcquisitionSummary(summary);
+  check('J formatAcquisitionSummary includes sections and host flags',
+    formatted.includes('=== Acquisition Summary ===') &&
+    formatted.includes('Yield: 2/3 attempt(s) (66.7%)') &&
+    formatted.includes('Failures and policy exclusions:') &&
+    formatted.includes('Host outcomes:') &&
+    formatted.includes('site-b.com: 2 discovered, 0 fetched, 1 failed, 1 blocked [circuit-broken]'));
+
+  const renderedList = sourceList(mockState);
+  check('J sourceList integrates acquisition summary at the end',
+    renderedList.includes('=== Acquisition Summary ===') &&
+    renderedList.includes('Page 1') &&
+    renderedList.indexOf('Page 1') < renderedList.indexOf('=== Acquisition Summary ==='));
+}
+
+async function caseMetadataExtractionAndCanonicalDedup(): Promise<void> {
+  // 1. parseHtmlMetadata
+  const htmlWithMeta = `<html><head>
+    <link rel="canonical" href="https://example.org/canonical-paper">
+    <meta property="article:published_time" content="2025-11-20T10:00:00Z">
+    <meta property="article:modified_time" content="2025-11-21T12:00:00Z">
+  </head><body><p>Some article text</p></body></html>`;
+  const metaResult = parseHtmlMetadata(htmlWithMeta);
+  check('K parseHtmlMetadata extracts canonical link and meta timestamps',
+    metaResult.canonicalUrl === 'https://example.org/canonical-paper' &&
+    metaResult.publishedAt === '2025-11-20T10:00:00.000Z' &&
+    metaResult.modifiedAt === '2025-11-21T12:00:00.000Z',
+    `meta=${JSON.stringify(metaResult)}`);
+
+  const dummyBody = 'Quantum foxberry taxonomy analysis '.repeat(10);
+  const htmlWithJsonLd = `<html><head>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "TechArticle",
+      "headline": "Quantum Computing Survey",
+      "url": "https://example.org/qc-survey",
+      "datePublished": "2025-10-15T08:30:00Z",
+      "articleBody": "${dummyBody}"
+    }
+    </script>
+  </head><body></body></html>`;
+  const jsonLdResult = parseHtmlMetadata(htmlWithJsonLd);
+  check('K parseHtmlMetadata extracts JSON-LD metadata and articleBody fallback',
+    jsonLdResult.jsonLdTitle === 'Quantum Computing Survey' &&
+    jsonLdResult.canonicalUrl === 'https://example.org/qc-survey' &&
+    jsonLdResult.publishedAt === '2025-10-15T08:30:00.000Z' &&
+    (jsonLdResult.jsonLdBody?.length ?? 0) >= 80,
+    `jsonLd=${JSON.stringify(jsonLdResult)}`);
+
+  // 2. object-store validation of publishedAt & modifiedAt
+  const tempDir = mkdtempSync(join(tmpdir(), 'obj-meta-test-'));
+  try {
+    const store = new ObjectStore(tempDir);
+    const bodyText = 'Sample article body text for object store metadata validation testing.';
+    const rawBlob = store.put(`<html><body><p>${bodyText}</p></body></html>`);
+    const textBlob = store.put(bodyText);
+    const snap: Snapshot = {
+      id: rawBlob,
+      requestedUrl: 'https://example.org/req',
+      finalUrl: 'https://example.org/final',
+      canonicalUrl: 'https://example.org/canonical',
+      fetchedAt: new Date().toISOString(),
+      contentHash: rawBlob,
+      textHash: textBlob,
+      rawBlob,
+      textBlob,
+      mime: 'text/html',
+      status: 200,
+      title: 'Title',
+      extraction: 'readability',
+      extractionVersion: '2',
+      text: bodyText,
+      publishedAt: '2025-11-20T10:00:00.000Z',
+      modifiedAt: '2025-11-21T12:00:00.000Z',
+    };
+    store.saveSnapshot(snap);
+    const loaded = store.loadSnapshot(snap.id);
+    check('K object store persists and validates publishedAt and modifiedAt',
+      loaded.publishedAt === '2025-11-20T10:00:00.000Z' &&
+      loaded.modifiedAt === '2025-11-21T12:00:00.000Z',
+      `publishedAt=${loaded.publishedAt} modifiedAt=${loaded.modifiedAt}`);
+
+    let caughtInvalid = false;
+    try {
+      store.saveSnapshot({ ...snap, id: textBlob, contentHash: textBlob, rawBlob: textBlob, publishedAt: 'invalid-date' });
+    } catch { caughtInvalid = true; }
+    check('K object store rejects unparseable publishedAt timestamp', caughtInvalid === true);
+  } finally {
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  // 3. sourceList and buildReport citations show source-claimed date
+  const snapForView: Snapshot = {
+    id: 'snap-meta-1',
+    requestedUrl: 'https://example.org/page?ref=feed',
+    finalUrl: 'https://example.org/page',
+    canonicalUrl: 'https://example.org/canonical-page',
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    contentHash: 'hash1',
+    textHash: 'hash2',
+    rawBlob: 'hash1',
+    textBlob: 'hash2',
+    mime: 'text/html',
+    status: 200,
+    title: 'Quantum Survey',
+    extraction: 'readability',
+    extractionVersion: '2',
+    text: 'Quantum foxberry survey findings and taxonomy details for investigation report.',
+    publishedAt: '2025-11-20T10:00:00.000Z',
+  };
+  const testState: Investigation = {
+    schema: 1, id: 'inv-meta', revisionId: 'r1', originalQuestion: 'What are survey findings?',
+    activeObjectiveId: 'obj-1', storageRoot: '', allowanceId: '',
+    objectives: [{ id: 'obj-1', input: 'What are survey findings?', question: 'What are survey findings?', constraints: [], createdAt: '2026-01-01' }],
+    branches: [{
+      id: 'b1', objectiveId: 'obj-1', question: 'What are survey findings?', anchor: 'survey',
+      origin: 'initial', introducing: [], priority: 1, status: 'active',
+      needs: [{ id: 'n1', question: 'findings', weight: 1, status: 1 }],
+      aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+    }],
+    passages: [{ id: 'p1', snapshotId: 'snap-meta-1', start: 0, end: snapForView.text.length, text: snapForView.text, duplicateGroup: 'g1' }],
+    concepts: [],
+    contributions: [{ objectiveId: 'obj-1', branchId: 'b1', needId: 'n1', passageId: 'p1', duplicateGroup: 'g1', role: 'support', assessment: 'support' }],
+    actions: [], feedback: [], reports: [], corpusRevision: 1, status: 'complete',
+    snapshotIds: ['snap-meta-1'],
+    candidates: [{
+      id: 'cand-1', branchId: 'b1', query: 'survey', url: 'https://example.org/page?ref=feed',
+      title: 'Quantum Survey', snippet: 'survey', provider: 'brave', rankingKind: 'ranked',
+      discoveredAt: '2026-01-01', status: 'fetched', snapshotId: 'snap-meta-1',
+    }],
+  };
+  const renderedSources = sourceList(testState, [snapForView]);
+  check('K sourceList displays source-claimed published date and canonical URL',
+    renderedSources.includes('published: 2025-11-20 (source-claimed)') &&
+    renderedSources.includes('canonical: https://example.org/canonical-page'),
+    renderedSources);
+
+  const report = buildReport(testState, [snapForView]);
+  check('K report footnote includes source-claimed published date',
+    report.markdown.includes('published 2025-11-20 (source-claimed)'),
+    report.markdown);
+
+  // 4. Canonical URL deduplication across search episodes in engine
+  const seed = 'canonical-dedup-test';
+  const f = makeFixture(seed, { ...LIMITS, searches: 5, fetches: 10 });
+  const acquiredUrls: string[] = [];
+  f.ctx.assess = () => ({ relevantPassageIds: [], contributions: [] });
+  f.ctx.acquire = url => {
+    acquiredUrls.push(url);
+    const snap = fixtureSnapshot(f.ctx.store, url, longParagraph(`${seed}-${url}`));
+    return { ...snap, canonicalUrl: `https://example.org/${seed}/canonical-destination` };
+  };
+  f.ctx.discover = async query => ({
+    query, provider: 'brave', rankingKind: 'ranked',
+    results: [
+      { url: `https://example.org/${seed}/alias-source`, title: `Alias Source ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 1 },
+      { url: `https://example.org/${seed}/canonical-destination`, title: `Canonical Source ${seed}`, snippet: 'quantum foxberry taxonomy survey', rank: 2 },
+    ],
+  });
+
+  const final = await engineFor(f.ctx, f.state, { maxActions: 1, maxFetchesPerEpisode: 2 }).run();
+  try {
+    check('K alias source was acquired first',
+      acquiredUrls.includes(`https://example.org/${seed}/alias-source`));
+    const aliasCand = final.candidates.find(c => c.url.includes('alias-source'));
+    check('K alias source candidate is fetched', aliasCand?.status === 'fetched');
+  } finally { retire(f.ctx); }
+}
+
+async function caseLinkHarvestingAndCorroboration(): Promise<void> {
+  // 1. parseArticleLinks
+  const htmlSample = `<html><body>
+    <p>Check the <a href="/research/deep-study">deep study</a> and <a href="https://example.org/docs/analysis">analysis paper</a>.</p>
+    <p>Ignore <a href="#heading">anchor</a> and <a href="javascript:void(0)">js</a> and <a href="mailto:test@example.com">email</a>.</p>
+  </body></html>`;
+  const parsedLinks = parseArticleLinks(htmlSample, 'https://example.org/base/page');
+  check('L parseArticleLinks extracts resolved links and anchor text, filtering internal schemes',
+    parsedLinks.length === 2 &&
+    parsedLinks[0]?.url === 'https://example.org/research/deep-study' &&
+    parsedLinks[0]?.text === 'deep study' &&
+    parsedLinks[1]?.url === 'https://example.org/docs/analysis' &&
+    parsedLinks[1]?.text === 'analysis paper',
+    `parsed=${JSON.stringify(parsedLinks)}`);
+
+  // 2. Corroboration & syndication detection
+  const snapA: Snapshot = {
+    id: 'snap-syn-a', requestedUrl: 'https://wire-service.com/story-1', finalUrl: 'https://wire-service.com/story-1', canonicalUrl: 'https://wire-service.com/story-1',
+    fetchedAt: '2026-01-01', contentHash: 'h1', textHash: 'h2', rawBlob: 'h1', textBlob: 'h2', mime: 'text/html', status: 200,
+    title: 'Wire Story A', extraction: 'readability', extractionVersion: '2', text: 'Quantum foxberry survey findings confirm replication.',
+  };
+  const snapB: Snapshot = {
+    id: 'snap-syn-b', requestedUrl: 'https://syndicated-mirror.com/story-1', finalUrl: 'https://syndicated-mirror.com/story-1', canonicalUrl: 'https://syndicated-mirror.com/story-1',
+    fetchedAt: '2026-01-01', contentHash: 'h3', textHash: 'h4', rawBlob: 'h3', textBlob: 'h4', mime: 'text/html', status: 200,
+    title: 'Wire Story B (Syndicated)', extraction: 'readability', extractionVersion: '2', text: 'Quantum foxberry survey findings confirm replication.',
+  };
+  const snapC: Snapshot = {
+    id: 'snap-indep-c', requestedUrl: 'https://independent-lab.org/results', finalUrl: 'https://independent-lab.org/results', canonicalUrl: 'https://independent-lab.org/results',
+    fetchedAt: '2026-01-01', contentHash: 'h5', textHash: 'h6', rawBlob: 'h5', textBlob: 'h6', mime: 'text/html', status: 200,
+    title: 'Independent Study C', extraction: 'readability', extractionVersion: '2', text: 'Independent lab confirms quantum foxberry taxonomy findings.',
+  };
+
+  const pA: Passage = { id: 'p-a', snapshotId: snapA.id, start: 0, end: snapA.text.length, text: snapA.text, duplicateGroup: 'dup-group-wire' };
+  const pB: Passage = { id: 'p-b', snapshotId: snapB.id, start: 0, end: snapB.text.length, text: snapB.text, duplicateGroup: 'dup-group-wire' }; // same duplicateGroup!
+  const pC: Passage = { id: 'p-c', snapshotId: snapC.id, start: 0, end: snapC.text.length, text: snapC.text, duplicateGroup: 'dup-group-indep' };
+
+  const synState: Investigation = {
+    schema: 1, id: 'inv-syn', revisionId: 'r1', originalQuestion: 'Question',
+    activeObjectiveId: 'obj-1', storageRoot: '', allowanceId: '',
+    objectives: [{ id: 'obj-1', input: 'Q', question: 'Q', constraints: [], createdAt: '2026-01-01' }],
+    branches: [{
+      id: 'b1', objectiveId: 'obj-1', question: 'Survey question', anchor: 'quantum foxberry survey',
+      origin: 'initial', introducing: [], priority: 1, status: 'active',
+      needs: [{ id: 'n-syn', question: 'Need with syndicated support', weight: 1, status: 1 }, { id: 'n-indep', question: 'Need with independent support', weight: 1, status: 1 }],
+      aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+    }],
+    passages: [pA, pB, pC], concepts: [],
+    contributions: [
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-syn', passageId: pA.id, duplicateGroup: pA.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-syn', passageId: pB.id, duplicateGroup: pB.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-indep', passageId: pA.id, duplicateGroup: pA.duplicateGroup, role: 'support', assessment: 'support' },
+      { objectiveId: 'obj-1', branchId: 'b1', needId: 'n-indep', passageId: pC.id, duplicateGroup: pC.duplicateGroup, role: 'support', assessment: 'support' },
+    ],
+    actions: [], feedback: [], reports: [], corpusRevision: 1, status: 'complete',
+    snapshotIds: [snapA.id, snapB.id, snapC.id], candidates: [],
+  };
+
+  const corrobSyn = needCorroboration(synState, 'b1', 'n-syn', [snapA, snapB]);
+  check('L needCorroboration flags syndicated copies sharing duplicateGroup',
+    corrobSyn.rawPassages === 2 &&
+    corrobSyn.distinctGroups === 1 &&
+    corrobSyn.isSyndicated === true,
+    `syn=${JSON.stringify(corrobSyn)}`);
+
+  const corrobIndep = needCorroboration(synState, 'b1', 'n-indep', [snapA, snapC]);
+  check('L needCorroboration recognizes independent corroboration across domains and groups',
+    corrobIndep.rawPassages === 2 &&
+    corrobIndep.distinctGroups === 2 &&
+    corrobIndep.distinctDomains === 2 &&
+    corrobIndep.isSyndicated === false,
+    `indep=${JSON.stringify(corrobIndep)}`);
+
+  const stmtSyn = {
+    text: 'Claim supported by syndicated wire stories',
+    citations: [{ passageId: pA.id, start: 0, end: 10 }, { passageId: pB.id, start: 0, end: 10 }],
+  };
+  const stCorrob = statementCorroboration(stmtSyn, new Map([[pA.id, pA], [pB.id, pB]]), new Map([[snapA.id, snapA], [snapB.id, snapB]]));
+  check('L statementCorroboration flags statement citing syndicated passages',
+    stCorrob.isSyndicated === true && stCorrob.distinctGroups === 1);
+
+  const reportSyn = buildReport(synState, [snapA, snapB], {
+    sections: [{
+      title: 'Findings',
+      statements: [stmtSyn],
+    }],
+  });
+  check('L report includes Responsible IR syndication warning',
+    reportSyn.markdown.includes('Responsible IR note: 1 statement(s) cite syndicated or duplicate coverage'));
+
+  // 3. Link harvesting in engine
+  const seed = 'link-harvest-test';
+  const ctx = createCtx({ ...LIMITS, searches: 5, fetches: 10 });
+  const rawText = longParagraph(seed);
+  const rawHtml = `<html><head><title>Fixture</title></head><body><pre>${rawText}</pre></body></html>`;
+  const rawBlob = ctx.store.put(rawHtml);
+  const textBlob = ctx.store.put(rawText);
+  const snapWithLink: Snapshot = {
+    id: rawBlob, requestedUrl: `https://example.org/${seed}`, finalUrl: `https://example.org/${seed}`,
+    canonicalUrl: `https://example.org/${seed}`, fetchedAt: new Date().toISOString(),
+    contentHash: rawBlob, textHash: textBlob, rawBlob, textBlob, mime: 'text/html', status: 200,
+    title: 'Coverage fixture', extraction: 'fixture', extractionVersion: '1', text: rawText,
+    links: [
+      { url: `https://example.org/${seed}/harvested-study`, text: 'quantum foxberry survey replication' },
+      { url: 'https://youtube.com/watch?v=ignore', text: 'video' },
+    ],
+  };
+  ctx.store.saveSnapshot(snapWithLink);
+
+  const objective = { id: `obj-${seed}`, input: ctx.state.originalQuestion, question: ctx.state.originalQuestion, constraints: [], createdAt: new Date().toISOString() };
+  const branch: Investigation['branches'][number] = {
+    id: `branch-${seed}`, objectiveId: objective.id, question: 'Which survey methods repeat?', anchor: 'quantum foxberry taxonomy',
+    origin: 'initial', introducing: [], priority: 0.7, status: 'active',
+    needs: [{ id: `need-${seed}`, question: 'identify survey methods', weight: 1, status: 0 }],
+    aliases: [], queries: [], zeroYieldEpisodes: 0, stats: {},
+  };
+  const index = new PassageIndex(); index.add(segment(snapWithLink));
+  const passages = index.all();
+  const state: Investigation = { ...ctx.state, objectives: [objective], activeObjectiveId: objective.id, branches: [branch],
+    snapshotIds: [snapWithLink.id], passages, corpusRevision: 1 };
+  validateInvestigation(state);
+  ctx.state = state;
+  const rep = passages[0]!;
+
+  ctx.assess = () => ({
+    relevantPassageIds: [rep.id],
+    contributions: [{ passageId: rep.id, needId: branch.needs[0]!.id, role: 'support', status: 1, assessment: 'supported' }],
+    coverageUpdates: [{ needId: branch.needs[0]!.id, status: 1, passageIds: [rep.id], assessment: 'adequate' }],
+  });
+
+  try {
+    const final = await engineFor(ctx, state, { maxActions: 1 }).run('', 'continue');
+    const harvestedCand = final.candidates.find(c => c.url.includes('harvested-study'));
+    check('L in-article link from relevant passage was harvested as a candidate',
+      harvestedCand !== undefined &&
+      harvestedCand.provider === 'in-article-link' &&
+      harvestedCand.rankingKind === 'citation-list' &&
+      harvestedCand.status === 'unread',
+      `cand=${JSON.stringify(harvestedCand)}`);
+
+    const videoCand = final.candidates.find(c => c.url.includes('youtube.com'));
+    check('L video link from relevant passage was filtered by route filter',
+      videoCand !== undefined && videoCand.status === 'blocked',
+      `video=${JSON.stringify(videoCand)}`);
+  } finally { retire(ctx); }
+}
+
+// ------------------------------ M: TUI Progress, Stage Bar, Usage and Fallback Rendering
+async function caseProgressAndUsageRendering(): Promise<void> {
+  // 1. Stage-based progress bar
+  check('M renderProgressBar formats 3/5 stages',
+    renderProgressBar(3, 5) === '[██████░░░░] 3/5 stages',
+    `bar=${renderProgressBar(3, 5)}`);
+  check('M renderProgressBar formats 5/5 complete stages',
+    renderProgressBar(5, 5) === '[██████████] 5/5 stages',
+    `bar=${renderProgressBar(5, 5)}`);
+  check('M renderProgressBar formats 1/2 stages',
+    renderProgressBar(1, 2) === '[█████░░░░░] 1/2 stages',
+    `bar=${renderProgressBar(1, 2)}`);
+
+  // 2. Status line formatting
+  const f = makeFixture('progress-test');
+  try {
+    f.state.snapshotIds = [f.snapshot.id];
+    f.state.contributions = [supportRow(f, 'witness')];
+
+    const statusRunning = renderProgressStatus(
+      f.state,
+      { activity: 'Acquiring sources', stage: 3, totalStages: 5, round: 1 },
+      { confirmed: 12, limit: 40 }
+    );
+    check('M renderProgressStatus includes stage prefix, activity, calls, and counters',
+      statusRunning.includes('[3/5]') &&
+      statusRunning.includes('Acquiring sources') &&
+      statusRunning.includes('Calls: 12/40') &&
+      statusRunning.includes('1 source') &&
+      statusRunning.includes('1 assessed'),
+      `status=${statusRunning}`);
+
+    // 3. Progress widget rendering
+    const widgetLines = renderProgressWidget(
+      f.state,
+      { activity: 'Acquiring sources', stage: 3, totalStages: 5, round: 1 },
+      { confirmed: 12, limit: 40 }
+    );
+    check('M renderProgressWidget line 1 has stage progress bar and activity',
+      widgetLines[0] !== undefined && widgetLines[0].includes('[██████░░░░] 3/5 stages · Acquiring sources'),
+      `line0=${widgetLines[0]}`);
+    check('M renderProgressWidget line 2 has sources, evidence, and model calls',
+      widgetLines[1] !== undefined && widgetLines[1].includes('Sources acquired: 1 | Evidence assessed: 1 | Model calls: 12 / 40'),
+      `line1=${widgetLines[1]}`);
+    check('M renderProgressWidget line 3 has objective question',
+      widgetLines[2] !== undefined && widgetLines[2].includes('Objective: Quantum foxberry taxonomy'),
+      `line2=${widgetLines[2]}`);
+
+    // 4. Extractive fallback labeling
+    const reportFallback = buildReport(f.state, [f.snapshot]);
+    check('M fallback report has fallback: true', reportFallback.fallback === true);
+    f.state.reports.push(reportFallback);
+    f.state.status = 'complete';
+
+    const widgetFallback = renderProgressWidget(f.state);
+    check('M widget explicitly warns when report is an extractive fallback',
+      widgetFallback.some(line => line.includes('⚠️ Extractive fallback report')),
+      `widget=${widgetFallback.join('\n')}`);
+
+    const statusFallback = renderProgressStatus(f.state, { activity: 'Research completed (extractive fallback)' });
+    check('M status line labels extractive fallback on completion',
+      statusFallback.includes('extractive fallback') && statusFallback.includes('[Complete]'),
+      `status=${statusFallback}`);
+
+    // 5. Failure state
+    const statusFailed = renderProgressStatus(
+      f.state,
+      { activity: 'Research failed: Model timeout at Evaluating evidence' },
+      { confirmed: 15, limit: 40 }
+    );
+    check('M status line displays failure message and final calls cleanly',
+      statusFailed.includes('Research failed') && statusFailed.includes('Calls: 15/40'),
+      `status=${statusFailed}`);
+  } finally { retire(f.ctx); }
+}
+
+async function caseClusterPassagesAndNaiveBayesLive(): Promise<void> {
+  const f = makeFixture('cluster-nb', { ...LIMITS, searches: 5, fetches: 10 });
+  try {
+    f.state.passages = [
+      { id: 'p1', snapshotId: 's1', text: 'machine learning training serving skew pipelines and monitoring', start: 0, end: 60, duplicateGroup: 'g1' },
+      { id: 'p2', snapshotId: 's1', text: 'feature store logging consistency in production ml models', start: 61, end: 120, duplicateGroup: 'g2' },
+      { id: 'p3', snapshotId: 's2', text: 'optical character recognition image angle deskew sensor filters', start: 0, end: 60, duplicateGroup: 'g3' },
+      { id: 'p4', snapshotId: 's2', text: 'scanner photo perspective transform rotation angle deskew', start: 61, end: 120, duplicateGroup: 'g4' },
+    ];
+    const map = researchMap(f.state);
+    check('N researchMap renders semantic topic clusters',
+      map.includes('Semantic topic clusters (passage facets):') &&
+      map.includes('Cluster [') &&
+      map.includes('passage(s)'),
+      `map=${map}`);
+
+    // Test Naive Bayes candidate filtering in live chooseAction
+    f.state.feedback = [
+      { id: 'fb1', targetId: 'p3', kind: 'irrelevant', createdAt: new Date().toISOString() },
+      { id: 'fb2', targetId: 'p4', kind: 'irrelevant', createdAt: new Date().toISOString() },
+      { id: 'fb3', targetId: 'p1', kind: 'useful', createdAt: new Date().toISOString() },
+    ];
+    f.state.candidates = [
+      {
+        id: 'c-off',
+        branchId: f.state.branches[0]!.id,
+        url: 'https://example.com/deskew-scanner',
+        title: 'Scanner photo angle deskew filter',
+        snippet: 'How to correct image perspective and deskew scanned photos using optical character recognition',
+        query: 'deskew',
+        provider: 'exa',
+        rankingKind: 'ranked',
+        rank: 1,
+        status: 'unread',
+        discoveredAt: new Date().toISOString(),
+      },
+      {
+        id: 'c-on',
+        branchId: f.state.branches[0]!.id,
+        url: 'https://example.com/ml-serving-skew',
+        title: 'Quantum foxberry taxonomy survey methods in machine learning',
+        snippet: 'Production guide for detecting training serving skew and feature logging in machine learning',
+        query: 'quantum foxberry taxonomy',
+        provider: 'exa',
+        rankingKind: 'ranked',
+        rank: 1,
+        status: 'unread',
+        discoveredAt: new Date().toISOString(),
+      },
+    ];
+
+    const engine = engineFor(f.ctx, f.state);
+    // @ts-expect-error accessing private method for verification
+    const classifier = engine.buildCandidateClassifier();
+    const offPred = classifier.predict('Scanner photo angle deskew filter optical character recognition');
+    check('N candidate classifier identifies off-topic candidate from negative feedback',
+      offPred.label === 'off-topic' && offPred.confidence > 0.6,
+      `pred=${JSON.stringify(offPred)}`);
+
+    const onPred = classifier.predict(`${f.state.candidates[1]!.title} ${f.state.candidates[1]!.snippet}`);
+
+    // Settle retrievalKey and record initial query so chooseAction evaluates candidate fetch rather than unexplored search
+    f.state.branches[0]!.retrievalKey = retrievalKey(f.state, f.state.branches[0]!, false);
+    f.state.branches[0]!.queries = ['quantum foxberry taxonomy'];
+    const relOn = candidateRelevance(f.state.candidates[1]!, f.state.branches[0]!, classifier);
+    const relOff = candidateRelevance(f.state.candidates[0]!, f.state.branches[0]!, classifier);
+    const proposal = chooseAction(f.state, { mode: 'adaptive', expand: false }, classifier);
+    check('N chooseAction prunes off-topic candidate and selects on-topic candidate',
+      proposal?.kind === 'fetch' && proposal.candidateId === 'c-on',
+      `relOn=${relOn} relOff=${relOff} proposal=${JSON.stringify(proposal)}`);
+  } finally { retire(f.ctx); }
+}
+
+async function main(): Promise<void> {
+  await casePartialToAdequate(); await caseChangedKeyContradiction();
+  await caseExplicitDowngrade(); await casePrfFollowUp();
+  await caseEpisodeFetchExhaustion();
+  await caseFollowUpReserve(); await caseSmallLaneReserve(); await caseFollowUpCallReserve();
+  await caseCompactReportPacket(); await caseReportPacketCitationBound();
+  await caseCandidateFilteringAndDedup();
+  await caseBotChallengeAndCircuitBreaker();
+  await caseAcquisitionSummaryView();
+  await caseMetadataExtractionAndCanonicalDedup();
+  await caseLinkHarvestingAndCorroboration();
+  await caseProgressAndUsageRendering();
+  await caseClusterPassagesAndNaiveBayesLive();
+  if (failures.length) {
+    console.error(`\n${failures.length} check(s) failed:\n- ${failures.join('\n- ')}`);
+    process.exitCode = 1;
+  } else console.log('\nall permanent coverage checks passed');
+}
+
+main().catch(error => {
+  console.error('permanent coverage regression crashed:', error);
+  process.exitCode = 1;
+});
