@@ -21,7 +21,8 @@ import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
 import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply, stageTimeoutMs } from "./research-loop.js";
-import { checkPublicTarget, classifyFetchFailure, findArchivedCopy } from "./research-acquisition.js";
+import { AcquisitionService, checkPublicTarget, classifyFetchFailure, findArchivedCopy } from "./research-acquisition.js";
+import { BROWSER_USER_AGENT, browserEnabled, readWithBrowser, usableBrowserText } from "./research-browser.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
 /** Set by the host: this process is the child session doing the actual run. */
@@ -325,6 +326,22 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	 * no third-party reader and the archived copy is as citable as the original URL.
 	 */
 	const ARCHIVE_FALLBACK_LIMIT = 6;
+	/**
+	 * The same page, fetched directly with a browser-like User-Agent. The fetch tool's own request
+	 * is refused by a lot of hosts, and a self-identifying bot string ("PiResearchBot/0.1") is the
+	 * most common reason: it is a decision about headers, not about the content.
+	 */
+	const crawler = AcquisitionService({ userAgent: BROWSER_USER_AGENT, timeoutMs: 20_000 });
+	const acquireOne = async (url: string, signal?: AbortSignal) => {
+		try {
+			const snapshot = await crawler.acquire(url, signal ?? new AbortController().signal);
+			const text = usableBrowserText(snapshot.text);
+			if (!text) return undefined;
+			return { url, title: snapshot.title || url, content: text };
+		} catch {
+			return undefined;
+		}
+	};
 	const fetchReadable = async (urls: string[], ctx: ExtensionToolContext, signal?: AbortSignal) => {
 		const outcome = await boundedFetch(urls, ctx, signal);
 		type Hit = { url: string; title: string; content: string; error?: string };
@@ -336,12 +353,27 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			.map(({ index }) => index)
 			.slice(0, ARCHIVE_FALLBACK_LIMIT);
 		for (const index of walled) {
-			const snapshot = await findArchivedCopy(urls[index]!, signal);
-			if (!snapshot) continue;
-			const copy = await boundedFetch([snapshot], ctx, signal).catch(() => undefined);
-			const hit = (copy?.result.structuredContent as { urls?: Hit[] } | undefined)?.urls?.[0];
-			if (hit?.content?.trim() && !hit.error) {
-				pages[index] = { url: urls[index]!, title: `${hit.title || urls[index]} (archived copy)`, content: hit.content };
+			const target = urls[index]!;
+			// Rung one: the same page with a browser-like User-Agent.
+			const direct = await acquireOne(target, signal);
+			if (direct) {
+				pages[index] = direct;
+				continue;
+			}
+			// Rung two: a public archive of the same page.
+			const snapshot = await findArchivedCopy(target, signal);
+			if (snapshot) {
+				const copy = await boundedFetch([snapshot], ctx, signal).catch(() => undefined);
+				const hit = (copy?.result.structuredContent as { urls?: Hit[] } | undefined)?.urls?.[0];
+				if (hit?.content?.trim() && !hit.error) {
+					pages[index] = { url: target, title: `${hit.title || target} (archived copy)`, content: hit.content };
+					continue;
+				}
+			}
+			// Rung three: render it in a local browser, only when that is asked for.
+			if (browserEnabled()) {
+				const rendered = await readWithBrowser(target);
+				if (rendered) pages[index] = rendered;
 			}
 		}
 		return outcome;

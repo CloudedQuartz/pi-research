@@ -7,7 +7,7 @@
     "test": "test"
   },
   "scripts": {
-    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts && tsx test/porter.test.ts && tsx test/research-acquisition.test.ts && tsx test/research-retry.test.ts && tsx test/research-reply.test.ts && tsx test/research-timeout.test.ts",
+    "test": "tsx test/research-loop.test.ts && tsx test/research-evidence.test.ts && tsx test/research-corpus.test.ts && tsx test/source-credibility.test.ts && tsx test/porter.test.ts && tsx test/research-acquisition.test.ts && tsx test/research-retry.test.ts && tsx test/research-reply.test.ts && tsx test/research-timeout.test.ts && tsx test/research-browser.test.ts",
     "typecheck": "tsc --noEmit",
     "eval:retrieval": "tsx scripts/retrieval-eval.ts"
   },
@@ -47,5 +47,8 @@
     "tsx": "^4.23.15",
     "typebox": "1.3.36",
     "typescript": "7.0.2"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.65.1"
   }
 }
