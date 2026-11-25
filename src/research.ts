@@ -20,7 +20,7 @@ import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionToolContex
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
-import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply } from "./research-loop.js";
+import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply, stageTimeoutMs } from "./research-loop.js";
 import { checkPublicTarget, classifyFetchFailure } from "./research-acquisition.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
@@ -49,8 +49,12 @@ const SEARCH_WAIT_MS = 90_000;
 const FETCH_WAIT_MS = 60_000;
 /** Per round, not per run: enough to check a few claims, not to re-read the corpus. */
 const INSPECTIONS_PER_ROUND = 8;
-/** A stage that never comes back must not leave the run waiting forever. */
-const STAGE_WATCHDOG_MS = 20 * 60_000; // Bound one unresponsive search batch, not the investigation.
+/**
+ * Off by default. A deep-research turn legitimately runs long - one turn here spent 25 tool calls
+ * and 25 minutes collecting evidence - and a clock that ends it throws that work away. Set
+ * PI_RESEARCH_STAGE_TIMEOUT_MS to bring back a bound on a stage that never replies.
+ */
+const STAGE_TIMEOUT_MS = stageTimeoutMs(process.env.PI_RESEARCH_STAGE_TIMEOUT_MS);
 
 /** Package that supplies the search and read tools; installed as a dependency of this package. */
 const WEB_ACCESS_PACKAGE = "pi-web-access";
@@ -277,11 +281,16 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (run) run.awaitingSettle = true;
 		if (run) run.stageSentAt = Date.now();
 		clearTimeout(stageWatchdog);
-		stageWatchdog = setTimeout(() => {
-			// Nothing came back: end with a reason instead of waiting forever.
-			if (run?.awaitingSettle && stageContext) void finish(stageContext, false);
-		}, STAGE_WATCHDOG_MS);
-		stageWatchdog.unref?.();
+		if (STAGE_TIMEOUT_MS > 0) {
+			stageWatchdog = setTimeout(() => {
+				// Only reachable when the bound is asked for: still say why, in the journal and the notice.
+				if (run?.awaitingSettle && stageContext) {
+					run.loop.stopReason = `The stage produced no reply within ${Math.round(STAGE_TIMEOUT_MS / 60_000)} minutes.`;
+					void finish(stageContext, false);
+				}
+			}, STAGE_TIMEOUT_MS);
+			stageWatchdog.unref?.();
+		}
 		pi.sendMessage(
 			{ customType: STAGE_MESSAGE, content, display: false, details: { stage } },
 			followUp ? { triggerTurn: true, deliverAs: "followUp" } : { triggerTurn: true },
@@ -868,8 +877,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_call", (event, ctx) => {
 		if (!ownsSession(ctx) || event.parentToolCallId || nestedCalls > 0) return;
+		// The run can be gone while the model is still mid-turn: without this the dereference throws,
+		// the hook error is swallowed, and the call goes through - which is how a hand-written report
+		// appeared 90s after a run had ended.
+		if (!run) return { block: true, reason: "No research run is collecting evidence." };
 		// A delegated agent runs its own tools; only this run's own calls are restricted.
-		if (run!.stage !== "research") return { block: true, reason: "Only the evidence collection tool is used during /research." };
+		if (run.stage !== "research") return { block: true, reason: "Only the evidence collection tool is used during /research." };
 		if (![ROUND_TOOL, INSPECT_TOOL, ADD_URLS_TOOL, ...DELEGATE_TOOLS].includes(event.toolName)) {
 			return { block: true, reason: "Only the evidence collection and delegation tools are used during /research." };
 		}

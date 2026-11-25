@@ -224,3 +224,13 @@ export function pickAssistantReply(
 	}
 	return undefined;
 }
+
+/**
+ * How long a stage may go without replying before the run is ended. Off unless asked for: a
+ * research turn that is still collecting evidence is not stuck, and ending it discards the work.
+ */
+export function stageTimeoutMs(value: string | undefined): number {
+	if (!value) return 0;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
