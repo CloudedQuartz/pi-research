@@ -414,6 +414,25 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	// Every web fetch lands in the corpus, whatever issued it: this turn's collection, a nested tool
+	// call, or a delegated agent working in its own session. Without this, a page read outside
+	// research_round was spent and then thrown away, never citable.
+	pi.on("tool_result", (event) => {
+		const current = run;
+		if (!current || (event as { toolName?: string }).toolName !== FETCH_TOOL) return;
+		const payload = (event as { structuredContent?: unknown }).structuredContent as
+			| { urls?: { url?: string; title?: string; content?: string; error?: string }[] }
+			| undefined;
+		let added = 0;
+		for (const page of payload?.urls ?? []) {
+			if (!page?.url || page.error || !page.content?.trim() || !/^https?:\/\//i.test(page.url)) continue;
+			const before = current.loop.library.passages.length;
+			current.loop.library.addSource({ url: page.url, title: page.title ?? page.url, text: page.content, retrievedAt: new Date().toISOString() });
+			if (current.loop.library.passages.length > before) added += 1;
+		}
+		if (added) void writeJournal(current, "running");
+	});
+
 	// One collapsed line per round: the queries, sources and failures are there when opened.
 	const roundEntry: EntryRenderer<RoundEntry> = (entry, { expanded }, theme) => {
 		const data = entry.data;
