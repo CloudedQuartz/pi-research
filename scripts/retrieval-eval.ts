@@ -55,6 +55,8 @@ Reply with JSON only: {"<passage id>": <0|1|2>, ...} for every passage listed.`;
 
 /** Judge calls share a rate limit with the research runs, so a 429 backs off rather than aborting. */
 async function request(prompt: string): Promise<Response> {
+	// Only needed when a label is actually missing: a cached run stays offline and key-free.
+	if (!process.env.JUDGE_KEY) throw new Error("JUDGE_KEY is not set, and this run has uncached labels");
 	let lastError = "";
 	for (let attempt = 1; attempt <= 5; attempt++) {
 		try {
@@ -120,7 +122,6 @@ async function expand(args: string[]): Promise<string[]> {
 }
 
 async function main(): Promise<void> {
-	if (!process.env.JUDGE_KEY) throw new Error("JUDGE_KEY is not set");
 	const files = await expand(process.argv.slice(2));
 	if (!files.length) throw new Error("no evidence files given");
 	console.log("| evidence file | needs | passages | nDCG@10 | MAP | R-Prec | BPref |");
