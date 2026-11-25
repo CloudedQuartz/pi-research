@@ -203,7 +203,7 @@ export class EvidenceLibrary {
 	}
 
 	/** Passages for one subquestion, diverse by MMR and capped per source. */
-	retrieve(subquestion: string, limit = PASSAGES_PER_SUBQUESTION): { passage: Passage; score: number }[] {
+	retrieve(subquestion: string, limit = PASSAGES_PER_SUBQUESTION, perSourceLimit = PER_SOURCE_LIMIT): { passage: Passage; score: number }[] {
 		const query = [...new Set(contentTerms(subquestion))];
 		if (!query.length || !this.passages.length) return [];
 		const docs = this.passages.map((passage) => ({ passage, terms: contentTerms(passage.text) }));
@@ -235,7 +235,7 @@ export class EvidenceLibrary {
 			for (let i = 0; i < scored.length; i++) {
 				if (chosen.includes(i)) continue;
 				const sourceId = scored[i]!.passage.sourceId;
-				if ((perSource.get(sourceId) ?? 0) >= PER_SOURCE_LIMIT) continue;
+				if ((perSource.get(sourceId) ?? 0) >= perSourceLimit) continue;
 				const relevance = scored[i]!.score / maxScore;
 				let similarity = 0;
 				for (const j of chosen) similarity = Math.max(similarity, cosine(vectors[i]!, vectors[j]!));

@@ -120,7 +120,7 @@ async function main(): Promise<void> {
 		let dirty = false;
 		const rows: { ndcg: number; map: number; rPrec: number; bpref: number }[] = [];
 		for (const need of evidence.needs) {
-			const hits = library.retrieve(need.question, 400);
+			const hits = library.retrieve(need.question, 400, 400);
 			if (!hits.length) continue;
 			const passages = hits.map((hit) => ({ id: key(hit.passage.text), text: hit.passage.text }));
 			if (!cache[need.id]) {
