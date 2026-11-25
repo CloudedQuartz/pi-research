@@ -44,6 +44,7 @@ check("institutions, journals and aggregators are told apart", () => {
 	assert.equal(credibilityOf("https://arxiv.org/abs/2406.05054").tier, "journal", "arxiv");
 	assert.equal(credibilityOf("https://doi.org/10.1109/access.2020.3013411").tier, "journal", "DOI");
 	assert.equal(credibilityOf("https://www.scribd.com/document/878122637/x").tier, "aggregator", "aggregator");
+	assert.equal(credibilityOf("https://hubpages.com/technology/water-leaks").tier, "aggregator", "content farm");
 	assert.equal(hostOf("https://WWW.EPA.gov/a"), "epa.gov");
 });
 

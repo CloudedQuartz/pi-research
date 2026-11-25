@@ -25,7 +25,7 @@ export interface SourceCredibility {
 	detail: string;
 }
 
-/** Mirrors and document farms: usable as a pointer, not as the source of record. */
+/** Mirrors, document farms and content farms: usable as a pointer, not as the source of record. */
 const AGGREGATOR_HOSTS = [
 	"scribd.",
 	"slidetodoc.",
@@ -40,6 +40,14 @@ const AGGREGATOR_HOSTS = [
 	"dokumen.pub",
 	"slideshare.",
 	"academia.edu",
+	// Article mills that publish SEO filler rather than reporting or research.
+	"hubpages.",
+	"ezinearticles.",
+	"articlesbase.",
+	"brighthub.",
+	"helium.com",
+	"buzzle.",
+	"sooperarticles.",
 ];
 
 const INSTITUTION_HOST = /\.(gov|mil|edu|ac\.[a-z]{2})$/;
@@ -118,7 +126,7 @@ export function credibilityOf(url: string): SourceCredibility {
 			detail: `CRED-1 rates this outlet ${rating.level} (${rating.category}, score ${rating.score.toFixed(2)}, ${rating.sources} source list${rating.sources === 1 ? "" : "s"})`,
 		};
 	} else if (AGGREGATOR_HOSTS.some((marker) => host.includes(marker))) {
-		result = { tier: "aggregator", factor: 0.75, detail: "content aggregator or document mirror, not the source of record" };
+		result = { tier: "aggregator", factor: 0.75, detail: "content aggregator, document mirror or article mill, not the source of record" };
 	} else if (INSTITUTION_HOST.test(host)) {
 		result = { tier: "institution", factor: 1.05, detail: "government or academic host" };
 	} else if (JOURNAL_HOST.test(host)) {
