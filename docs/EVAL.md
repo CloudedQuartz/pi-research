@@ -89,3 +89,26 @@ Two real findings stand:
    `stopReason=None` and an empty error list is what all five show, which is exactly
    the failure mode `8f5bd1a` was meant to remove. Reproducing it needs a run that
    stops on an error rather than an empty completion.
+
+## Retrieval quality over each run's own corpus
+
+`scripts/retrieval-eval.ts` rebuilds each run's library, ranks every passage for each
+research need with the production retriever (BM25 then MMR, credibility-weighted),
+and scores that ranking against relevance labels from the same judge. Labels are
+cached beside the evidence file, so the numbers are reproducible offline.
+
+| run | needs | passages | nDCG@10 | MAP | R-Precision | BPref |
+|---|---:|---:|---:|---:|---:|---:|
+| 77 · need for closure | 7 | 336 | 0.389 | 0.511 | 0.507 | 0.485 |
+| 85 · piezo isolation | 7 | 599 | 0.502 | 0.621 | 0.527 | 0.500 |
+| 88 · Netflix adaptation | 7 | 111 | 0.394 | 0.596 | 0.528 | 0.454 |
+| **mean** | | | **0.428** | **0.576** | **0.521** | **0.480** |
+
+Ranking is roughly half-right: MAP 0.58 says the first relevant passage usually
+arrives early, nDCG@10 0.43 says the top ten are mixed. The corpus is the limit, not
+the ranker - 111-599 labelled passages per run, from 3-12 sources.
+
+Caveats: labels come from the same model that wrote the reports and judges them
+(`deepseek-v4.1-flash`), three runs only, and the per-source cap of 2 was lifted for
+this measurement while production keeps it, so these numbers describe the ranker
+rather than the exact packet the writer sees.
