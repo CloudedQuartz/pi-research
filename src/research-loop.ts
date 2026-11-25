@@ -193,3 +193,28 @@ export function providerRetryDelay(reason: string | undefined, attempt: number):
 	if (!/429|rate[_ ]?limit|overloaded|too many requests|timed? ?out|\b50[0234]\b/i.test(reason)) return undefined;
 	return Math.min(120_000, 20_000 * 2 ** Math.max(0, attempt - 1));
 }
+
+/**
+ * The reply for a stage, read from the session transcript. `agent_settled` can arrive before the
+ * message_end hook has recorded the response, and without this a finished report already sitting in
+ * the session is thrown away and the run ends claiming it produced nothing. Only turns that started
+ * after the stage prompt are eligible.
+ */
+export function pickAssistantReply(
+	branch: readonly unknown[],
+	since?: number,
+): { text: string; stopReason?: string } | undefined {
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index] as { type?: string; message?: { role?: string; stopReason?: string; timestamp?: string; content?: unknown } };
+		if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+		if (since && entry.message.timestamp && Date.parse(entry.message.timestamp) < since) return undefined;
+		const parts = Array.isArray(entry.message.content) ? entry.message.content : [];
+		const text = parts
+			.filter((part): part is { type: "text"; text: string } => Boolean(part) && (part as { type?: string }).type === "text")
+			.map((part) => part.text)
+			.join("\n")
+			.trim();
+		if (text) return { text, stopReason: entry.message.stopReason };
+	}
+	return undefined;
+}

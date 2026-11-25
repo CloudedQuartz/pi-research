@@ -20,7 +20,7 @@ import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionToolContex
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
-import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay } from "./research-loop.js";
+import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply } from "./research-loop.js";
 import { checkPublicTarget, classifyFetchFailure } from "./research-acquisition.js";
 import { formatJournal, hostResearch, queueUrls, type HostedRun, type ResearchJournal } from "./research-host.js";
 
@@ -153,6 +153,8 @@ interface ResearchRun {
 	emptyTurns?: number;
 	/** Provider error text for the turn that just ended, if it ended on an error. */
 	lastError?: string;
+	/** When the current stage prompt was sent, so a transcript read cannot pick up an older turn. */
+	stageSentAt?: number;
 	finishRequested?: boolean;
 }
 
@@ -273,6 +275,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	// of the transcript, where they used to be the bulk of what the user scrolled past.
 	const sendStage = (content: string, stage: ResearchRun["stage"], followUp = false) => {
 		if (run) run.awaitingSettle = true;
+		if (run) run.stageSentAt = Date.now();
 		clearTimeout(stageWatchdog);
 		stageWatchdog = setTimeout(() => {
 			// Nothing came back: end with a reason instead of waiting forever.
@@ -900,7 +903,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		}
 		current.awaitingSettle = false;
 		clearTimeout(stageWatchdog);
-		const response = current.finalResponse;
+		let response = current.finalResponse;
+		if (!response) {
+			try {
+				response = pickAssistantReply(ctx.sessionManager.getBranch(), current.stageSentAt);
+			} catch {
+				/* no branch access: fall back to the event path */
+			}
+		}
+		if (response /* adopt a reply the settle raced ahead of */) current.finalResponse = response;
 		// A provider can return an empty completion, or stop on a transient error (a rate limit is
 		// the common one when several runs share a key). Neither is the end of the run: ask again,
 		// backing off on a retryable error, instead of writing no report at all.
