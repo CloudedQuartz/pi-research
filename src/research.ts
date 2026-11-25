@@ -44,6 +44,8 @@ const DELEGATE_TOOLS = ["subagent", "get_subagent_result"];
 const SUBAGENT_TOOL = "subagent";
 const SUBAGENT_RESULT_TOOL = "get_subagent_result";
 const SEARCH_WAIT_MS = 90_000;
+/** Bound one unresponsive read batch: a single slow host must not stall the round. */
+const FETCH_WAIT_MS = 60_000;
 /** Per round, not per run: enough to check a few claims, not to re-read the corpus. */
 const INSPECTIONS_PER_ROUND = 8; // Bound one unresponsive search batch, not the investigation.
 
@@ -266,6 +268,18 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			nestedCalls--;
 		}
 	};
+	/** Run a fetch with a deadline, so one stalled host cannot hold up the round. */
+	const boundedFetch = async (urls: string[], ctx: ExtensionToolContext, signal?: AbortSignal) => {
+		const deadline = AbortSignal.timeout(FETCH_WAIT_MS);
+		const scoped = signal ? AbortSignal.any([signal, deadline]) : deadline;
+		try {
+			return await nested(() => ctx.executeTool(FETCH_TOOL, { urls, mode: "readable" }, { signal: scoped }));
+		} catch (error) {
+			if (deadline.aborted) throw new Error(`Read timed out after ${FETCH_WAIT_MS / 1000}s`);
+			throw error;
+		}
+	};
+
 	/** A document has to go through the parser: readable extraction returns nothing for a scan. */
 	const DOCUMENT_URL = /\.(pdf|docx?|pptx?|xlsx?|csv|tiff?|png|jpe?g|webp)(\?|$)/i;
 
@@ -389,8 +403,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
 				showProgress(ctx, `Reading sources ${index + 1}–${index + batch.length} of ${readable.length}`);
-				const outcome = await nested(() => ctx.executeTool(FETCH_TOOL, { urls: batch, mode: "readable" }, { signal }));
+				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
+					const reason = error instanceof Error ? error.message : String(error);
+					for (const url of batch) loop.failures.add(`${url}: ${reason}`);
+					return undefined;
+				});
 				signal?.throwIfAborted();
+				if (!outcome) continue;
 				const structured = outcome.result.structuredContent as { urls?: { url: string; title: string; content: string; error?: string }[] } | undefined;
 				const pages = structured?.urls ?? [];
 				for (const [offset, url] of batch.entries()) {
@@ -475,8 +494,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			}
 			for (let index = 0; index < readable.length; index += 6) {
 				const batch = readable.slice(index, index + 6);
-				const outcome = await nested(() => ctx.executeTool(FETCH_TOOL, { urls: batch, mode: "readable" }, { signal }));
+				const outcome = await boundedFetch(batch, ctx, signal).catch((error: unknown) => {
+					const reason = error instanceof Error ? error.message : String(error);
+					for (const url of batch) failed.push({ url, reason });
+					return undefined;
+				});
 				signal?.throwIfAborted();
+				if (!outcome) continue;
 				const structured = outcome.result.structuredContent as { urls?: { url: string; title: string; content: string; error?: string }[] } | undefined;
 				const pages = structured?.urls ?? [];
 				for (const [offset, url] of batch.entries()) {
