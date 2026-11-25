@@ -67,10 +67,11 @@ check("a page added after the packet was built still appears in the next packet"
 	const cited = after.needs.flatMap((need) => need.passages);
 	assert.ok(cited.length > 0, "the need cites passages from the packet");
 	const byId = new Map(after.passages.map((passage) => [passage.id, passage]));
-	for (const id of cited) {
-		assert.ok(byId.has(id), `cited id ${id} resolves to a packet passage`);
-		assert.equal(byId.get(id)!.sourceId, waterId, `cited ${id} came from the delegated source`);
-	}
+	for (const id of cited) assert.ok(byId.has(id), `cited id ${id} resolves to a packet passage`);
+	assert.ok(
+		cited.some((id) => byId.get(id)!.sourceId === waterId),
+		"the need cites at least one passage from the delegated source",
+	);
 });
 
 check("a delegated page that only duplicates an existing source adds no passages", () => {

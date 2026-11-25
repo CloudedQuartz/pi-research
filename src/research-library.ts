@@ -54,9 +54,11 @@ const MIN_PASSAGES_PER_SUBQUESTION = 2;
 const MMR_LAMBDA = 0.7;
 const STOPWORDS = new Set("a an and are as at be by for from has have in is it its of on or that the this to was were with which who what how why when where do does did can could should would not no".split(" "));
 
+import { stem } from "./porter.js";
+
 const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
-const contentTerms = (text: string): string[] => words(text).filter((term) => term.length > 1 && !STOPWORDS.has(term));
+const contentTerms = (text: string): string[] => words(text).filter((term) => term.length > 1 && !STOPWORDS.has(term)).map((term) => stem(term));
 
 function shingles(text: string): Set<string> {
 	const tokens = words(text);
