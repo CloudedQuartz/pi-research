@@ -11,14 +11,15 @@
  * See NOTICE for the upstream license.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { renderReport } from "./research-evidence.js";
 import { ResearchLoop, type EvidencePacket, type SearchGroup } from "./research-loop.js";
-import { hostResearch, type HostedRun } from "./research-host.js";
+import { formatJournal, hostResearch, type HostedRun, type ResearchJournal } from "./research-host.js";
 
 /** Set by the host: this process is the child session doing the actual run. */
 const IS_CHILD = process.env.PI_RESEARCH_CHILD === "1";
@@ -96,11 +97,15 @@ interface RoundEntry {
 	totalSources: number;
 }
 
+const journalPathFor = (reportPath: string) => reportPath.replace(/\.md$/, ".journal.json");
+
 interface ResearchRun {
 	question: string;
 	finalResponse?: AssistantText;
 	stage: "brief" | "research" | "report";
 	startedAt: number;
+	/** This session's file, so the journal can point at the full transcript. */
+	sessionFile?: string;
 	/** Thinking level to restore when the run ends; JSON stages run with thinking off. */
 	previousThinking?: ReturnType<ExtensionAPI["getThinkingLevel"]>;
 	/** Timestamp of the assistant message that carried the final report, if one was produced. */
@@ -172,10 +177,46 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	// bill the whole run again. One window per completed run, minus the final report message.
 	const completedRuns: { from: number; to: number; keep?: number }[] = [];
 	let roundLog: RoundEntry[] = [];
+	let journalAssessments: ResearchJournal["assessments"] = [];
+
+	const writeJournal = async (current: ResearchRun, status: ResearchJournal["status"]) => {
+		try {
+			const journal: ResearchJournal = {
+				question: current.question,
+				sessionFile: current.sessionFile,
+				status,
+				startedAt: current.startedAt,
+				finishedAt: status === "running" ? undefined : Date.now(),
+				rounds: roundLog.map(({ round, queries, sources, failures, passages, totalSources }) => ({
+					round,
+					queries,
+					failures,
+					passages,
+					totalSources,
+					sources: sources.map(({ title, url }) => ({ title, url })),
+				})),
+				assessments: journalAssessments,
+				inspections: current.loop.inspections.map(({ id, sourceId, start, end, matches }) => ({
+					id,
+					sourceId,
+					start,
+					end,
+					...(matches?.length ? { terms: matches.map((match) => match.term) } : {}),
+				})),
+				...(current.loop.stopReason ? { stopReason: current.loop.stopReason } : {}),
+				...(status === "complete" ? { reportPath: current.path } : {}),
+			};
+			await writeFile(journalPathFor(current.path), `${JSON.stringify(journal, null, 1)}\n`, "utf8");
+		} catch {
+			/* the journal is a convenience; it never fails a run */
+		}
+	};
 
 	let run: ResearchRun | undefined;
 	/** Child session hosting a run in parent mode, if one is live. */
 	let hosted: HostedRun | undefined;
+	/** Last journal written by a run, so /research-view works after it settles. */
+	let lastJournal: string | undefined;
 	let progressTimer: ReturnType<typeof setInterval> | undefined;
 	// Stage instructions reach the model as user text. `display: false` keeps the long prompts out
 	// of the transcript, where they used to be the bulk of what the user scrolled past.
@@ -297,6 +338,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			};
 			roundLog.push(record);
 			pi.appendEntry<RoundEntry>(ROUND_ENTRY, record);
+			await writeJournal(current, "running");
 			return { content: [{ type: "text", text: JSON.stringify({ ...current.packet, failures: [...loop.failures] }) }], details: {} };
 		},
 	});
@@ -358,16 +400,15 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (!current) return;
 		if (current.previousThinking) pi.setThinkingLevel(current.previousThinking);
 		completedRuns.push({ from: current.startedAt, to: Date.now(), keep: current.reportAt });
-		roundLog = [];
 		showProgress(ctx);
 
 		const candidate = current.finalResponse;
 		try {
 			const evidencePath = current.path.replace(/\.md$/, ".evidence.json");
 			if (current.stage !== "report" && current.loop.library.sources.size) await saveEvidence(current);
-			if (aborted || current.stage !== "report" || candidate?.stopReason !== "stop") {
+				if (aborted || current.stage !== "report" || candidate?.stopReason !== "stop") {
 				const saved = current.loop.library.sources.size || current.stage === "report";
-				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text." })}\n`, "utf8");
+				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", journal: journalPathFor(current.path) })}\n`, "utf8");
 				notify(ctx, saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", "warning");
 				if (IS_CHILD) ctx.shutdown();
 				return;
@@ -381,12 +422,68 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			pi.appendEntry("research/report", { path: current.path, evidencePath, question: current.question });
 			const elapsed = Math.max(0, Math.round((Date.now() - current.startedAt) / 1000));
 			const summary = `${current.round} round${current.round === 1 ? "" : "s"} \u00b7 ${current.loop.library.sources.size} sources \u00b7 ${current.packet?.passages.length ?? 0} passages \u00b7 ${elapsed}s`;
-			if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ path: current.path, detail: summary })}\n`, "utf8");
+			await writeJournal(current, "complete");
+			if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ path: current.path, detail: summary, journal: journalPathFor(current.path) })}\n`, "utf8");
 			pi.sendMessage({ customType: "research-report", content: `Report saved (${summary}): ${current.path}`, display: true });
 			if (IS_CHILD) ctx.shutdown();
 		} catch (error) {
 			notify(ctx, `Could not save the research report: ${error instanceof Error ? error.message : String(error)}`, "error");
 		}
+	};
+
+	const viewJournal = async (ctx: ExtensionContext) => {
+		// Prefer the journal of the run this session hosted; otherwise use the newest one on disk,
+		// so the view still works after a restart or for a run started before this session.
+		let path = lastJournal && existsSync(lastJournal) ? lastJournal : undefined;
+		if (!path) {
+			try {
+				const dir = join(ctx.cwd, "research");
+				const found = (await readdir(dir)).filter((name) => name.endsWith(".journal.json"));
+				const stamps = await Promise.all(found.map(async (name) => ({ name, at: (await stat(join(dir, name))).mtimeMs })));
+				stamps.sort((a, b) => b.at - a.at);
+				path = stamps.length ? join(dir, stamps[0]!.name) : undefined;
+			} catch {
+				path = undefined;
+			}
+		}
+		if (!path) {
+			notify(ctx, "No research journal yet; run /research first.", "info");
+			return;
+		}
+		let lines: string[];
+		try {
+			lines = formatJournal(JSON.parse(await readFile(path, "utf8")) as ResearchJournal);
+		} catch {
+			notify(ctx, `Could not read the research journal at ${path}.`, "error");
+			return;
+		}
+		if (ctx.mode !== "tui") {
+			notify(ctx, lines.slice(0, 30).join("\n"), "info");
+			return;
+		}
+		const page = 22;
+		await ctx.ui.custom<void>((_tui, theme, _keybindings, done) => {
+			let top = 0;
+			const clamp = () => {
+				top = Math.max(0, Math.min(top, Math.max(0, lines.length - page)));
+			};
+			return {
+				render(width: number) {
+					const body = lines.slice(top, top + page).map((line) => truncateToWidth(line, width));
+					const footer = theme.fg("dim", `research \u00b7 ${top + 1}\u2013${Math.min(lines.length, top + page)}/${lines.length} \u00b7 j/k scroll \u00b7 space page \u00b7 q close`);
+					return [...body, footer];
+				},
+				handleInput(data: string) {
+					if (data === "q" || data === "\u001b") done();
+					else if (data === "j" || data === "\u001b[B") { top += 1; clamp(); }
+					else if (data === "k" || data === "\u001b[A") { top -= 1; clamp(); }
+					else if (data === " ") { top += page; clamp(); }
+					else if (data === "g") top = 0;
+					else if (data === "G") { top = lines.length; clamp(); }
+				},
+				invalidate() {},
+			};
+		});
 	};
 
 	/**
@@ -406,9 +503,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		roundLog = [];
+		journalAssessments = [];
 		run = {
 			question, stage: "brief", startedAt: Date.now(), round: 0, loop: new ResearchLoop(), gainedEvidence: false,
 			previousThinking: pi.getThinkingLevel(),
+			sessionFile: (() => { try { return ctx.sessionManager.getSessionFile(); } catch { return undefined; } })(),
 			path: join(ctx.cwd, "research", `${stamp}-${slugify(question)}.md`),
 		};
 		// Brief and assessment turns return JSON; their reasoning only floods the transcript.
@@ -466,7 +566,16 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			} else {
 				if (!current.packet) throw new Error("The model did not run the queued evidence collection.");
 				if (current.finishRequested) current.loop.stopReason = "The user requested synthesis after the current research turn.";
-				if (current.finishRequested || !current.loop.assess(response.text, current.packet, current.gainedEvidence)) {
+				const stopping = current.finishRequested || !current.loop.assess(response.text, current.packet, current.gainedEvidence);
+				journalAssessments.push({
+					round: current.round,
+					answered: current.loop.needs.filter((need) => need.answered).length,
+					total: current.loop.needs.length,
+					continueSearching: !stopping,
+					...(current.loop.stopReason ? { reason: current.loop.stopReason } : {}),
+				});
+				await writeJournal(current, "running");
+				if (stopping) {
 					await writeFromEvidence(current);
 					// The report is the one writing turn: let it think again before it starts.
 					if (current.previousThinking) pi.setThinkingLevel(current.previousThinking);
@@ -549,6 +658,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				onNotify: (message, level) => notify(ctx, message, level),
 				onSettled: (summary) => {
 					hosted = undefined;
+					if (summary.journal) lastJournal = summary.journal;
 					if (ctx.hasUI) ctx.ui.setWidget("research", undefined);
 					if (summary.path) {
 						pi.appendEntry("research/report", { path: summary.path, question });
@@ -559,6 +669,13 @@ export default function researchExtension(pi: ExtensionAPI): void {
 				},
 			});
 			notify(ctx, "Research started in its own session; progress appears here.", "info");
+		},
+	});
+
+	pi.registerCommand("research-view", {
+		description: "Open the last research run's journal: rounds, queries, sources, failures",
+		handler: async (_args, ctx) => {
+			await viewJournal(ctx);
 		},
 	});
 

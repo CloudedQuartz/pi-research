@@ -9,6 +9,52 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+/** What a run did, written by the child and read by the parent's viewer. */
+export interface ResearchJournal {
+	question: string;
+	sessionFile?: string;
+	status: "running" | "complete" | "stopped";
+	startedAt: number;
+	finishedAt?: number;
+	rounds: { round: number; queries: string[]; sources: { title: string; url: string }[]; failures: string[]; passages: number; totalSources: number }[];
+	assessments: { round: number; answered: number; total: number; continueSearching: boolean; reason?: string }[];
+	inspections: { id: string; sourceId: string; start: number; end: number; terms?: string[] }[];
+	stopReason?: string;
+	reportPath?: string;
+}
+
+/** Render a journal as plain lines for the pager. */
+export function formatJournal(journal: ResearchJournal): string[] {
+	const lines: string[] = [];
+	const elapsed = Math.max(0, Math.round(((journal.finishedAt ?? Date.now()) - journal.startedAt) / 1000));
+	lines.push(`Question: ${journal.question}`);
+	lines.push(`Status: ${journal.status} \u00b7 ${journal.rounds.length} round${journal.rounds.length === 1 ? "" : "s"} \u00b7 ${journal.rounds.at(-1)?.totalSources ?? 0} sources \u00b7 ${elapsed}s`);
+	if (journal.reportPath) lines.push(`Report: ${journal.reportPath}`);
+	if (journal.sessionFile) lines.push(`Child session: ${journal.sessionFile}`);
+	lines.push("", "Rounds");
+	if (!journal.rounds.length) lines.push("  (no round finished)");
+	for (const round of journal.rounds) {
+		lines.push(`  Round ${round.round} \u00b7 ${round.queries.length} queries \u00b7 ${round.sources.length} new \u00b7 ${round.passages} passages${round.failures.length ? ` \u00b7 ${round.failures.length} failed` : ""}`);
+		for (const query of round.queries) lines.push(`    query: ${query}`);
+		for (const source of round.sources) lines.push(`    source: ${source.title || "(untitled)"} \u2014 ${source.url}`);
+		for (const failure of round.failures) lines.push(`    failed: ${failure}`);
+	}
+	if (journal.assessments.length) {
+		lines.push("", "Assessments");
+		for (const entry of journal.assessments) {
+			lines.push(`  Round ${entry.round}: ${entry.answered}/${entry.total} needs answered \u00b7 continue=${entry.continueSearching}${entry.reason ? ` \u00b7 ${entry.reason}` : ""}`);
+		}
+	}
+	if (journal.inspections.length) {
+		lines.push("", "Inspections");
+		for (const entry of journal.inspections) {
+			lines.push(`  ${entry.id} \u00b7 ${entry.sourceId} \u00b7 offsets ${entry.start}\u2013${entry.end}${entry.terms?.length ? ` \u00b7 terms ${entry.terms.join(", ")}` : ""}`);
+		}
+	}
+	if (journal.stopReason) lines.push("", `Stop: ${journal.stopReason}`);
+	return lines;
+}
+
 export interface HostOptions {
 	question: string;
 	cwd: string;
@@ -16,7 +62,7 @@ export interface HostOptions {
 	extensionPath?: string;
 	onProgress?: (lines: string[]) => void;
 	onNotify?: (message: string, level: "info" | "warning" | "error") => void;
-	onSettled?: (summary: { path?: string; detail?: string; exitCode: number | null }) => void;
+	onSettled?: (summary: { path?: string; detail?: string; journal?: string; exitCode: number | null }) => void;
 }
 
 export interface HostedRun {
@@ -95,12 +141,13 @@ export function hostResearch(options: HostOptions): HostedRun {
 	const finish = (exitCode: number | null) => {
 		if (settled) return;
 		settled = true;
-		const summary: { path?: string; detail?: string; exitCode: number | null } = { exitCode };
+		const summary: { path?: string; detail?: string; journal?: string; exitCode: number | null } = { exitCode };
 		if (existsSync(options.reportFile)) {
 			try {
-				const saved = JSON.parse(readFileSync(options.reportFile, "utf8")) as { path?: string; detail?: string };
+				const saved = JSON.parse(readFileSync(options.reportFile, "utf8")) as { path?: string; detail?: string; journal?: string };
 				summary.path = saved.path;
 				summary.detail = saved.detail;
+				summary.journal = saved.journal;
 			} catch {
 				/* the child writes this file last; a torn read just means no summary */
 			}
