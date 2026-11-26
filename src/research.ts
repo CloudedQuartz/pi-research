@@ -1020,7 +1020,10 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		// the common one when several runs share a key). Neither is the end of the run: ask again,
 		// backing off on a retryable error, instead of writing no report at all.
 		const backoff = providerRetryDelay(current.lastError, (current.emptyTurns ?? 0) + 1);
-		if (!response && (current.emptyTurns ?? 0) < (backoff ? 4 : 2)) {
+		// A rate limit is transient and worth waiting out: the delays grow to a cap, so a longer budget
+		// costs minutes at worst, while giving up costs the whole run.
+		const retryLimit = backoff ? 6 : 2;
+		if (!response && (current.emptyTurns ?? 0) < retryLimit) {
 			current.emptyTurns = (current.emptyTurns ?? 0) + 1;
 			const again = current.stage === "brief" ? briefPrompt(current.question) : current.stage === "research" ? researchPrompt(current, delegationReady()) : reportPrompt(current);
 			if (backoff) {
@@ -1034,6 +1037,11 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		current.emptyTurns = 0;
+		// Name the reason before finishing: a journal that says status=stopped with no stopReason is
+		// indistinguishable from every other way a run can end.
+		if (!response && current.lastError && !current.loop.stopReason) {
+			current.loop.stopReason = `The provider kept refusing (${current.lastError.slice(0, 120)}); stopped after ${retryLimit} attempts.`;
+		}
 		if (event.aborted || current.stage === "report" || !response || response.stopReason !== "stop") {
 			await finish(ctx, event.aborted);
 			return;
