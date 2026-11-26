@@ -66,7 +66,6 @@ const STALL_RETRY_MS = stageTimeoutMs(process.env.PI_RESEARCH_STALL_RETRY_MS);
 
 /** Package that supplies the search and read tools; installed as a dependency of this package. */
 const WEB_ACCESS_PACKAGE = "pi-web-access";
-const SUBAGENTS_PACKAGE = "@gotgenes/pi-subagents";
 const REQUIRED_TOOLS = [SEARCH_TOOL, FETCH_TOOL] as const;
 
 type ToolState = "ready" | "inactive" | "uncallable" | "missing";
@@ -96,25 +95,6 @@ async function loadWebAccess(pi: ExtensionAPI): Promise<boolean> {
 		if (typeof factory !== "function") return false;
 		(factory as (api: ExtensionAPI) => void)(pi);
 		return true;
-	} catch {
-		return false;
-	}
-}
-
-/**
- * Load the subagents extension this package depends on when the session has no `subagent` tool.
- * Pi loads extensions from a package's `pi` manifest, not from its dependencies, so a dependency
- * that should actually run has to be imported through its own path and handed the api - the same
- * arrangement as the web-access package above.
- */
-async function loadSubagents(pi: ExtensionAPI): Promise<boolean> {
-	const entry = new URL(`../node_modules/${SUBAGENTS_PACKAGE}/src/index.ts`, import.meta.url);
-	try {
-		const loaded: unknown = await import(entry.href);
-		const factory = (loaded as { default?: unknown }).default;
-		if (typeof factory !== "function") return false;
-		(factory as (api: ExtensionAPI) => unknown)(pi);
-		return pi.getAllTools().some((tool) => tool.name === SUBAGENT_TOOL);
 	} catch {
 		return false;
 	}
@@ -921,7 +901,6 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		if (readiness.some((tool) => tool.state === "missing")) {
 			// The dependency is installed with this package; load it when nothing else registered it.
 			if (await loadWebAccess(pi)) readiness = toolReadiness(pi);
-			if (delegationEnabled && !delegationReady()) await loadSubagents(pi);
 		}
 		const blocked = readiness.filter((tool) => tool.state !== "ready");
 		if (blocked.length) {
