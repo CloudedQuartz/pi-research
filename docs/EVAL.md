@@ -710,3 +710,62 @@ includes task 85's -0.8 and task 88's -2.4 against their bars - are not evidence
 
 The honest summary of quality: mean of medians across the eight tasks lands at 90-91 against 87.8 for
 the best baseline, on runs whose within-run medians are stable but whose between-run spread is wide.
+
+## Verification construction, recorded
+
+Every measurement in this document was taken in a container built from `/tmp/eval/Dockerfile`
+(node 22, tmux, pi 1.6.0) with the package mounted read-only and `/agent` holding three files.
+
+The container command for every cycle from 10 onward differs only in the mounted package directory:
+
+```sh
+docker run -d --name <cycle> \
+  -v /tmp/bench/pkg-v<N>:/pkg:ro \
+  -v /tmp/bench/ag-<cycle>:/agent \
+  -v /tmp/bench/wk-<cycle>:/work \
+  -w /work \
+  -e PI_CODING_AGENT_DIR=/agent \
+  -e PI_RESEARCH_MODEL=deepseek-v4.1-flash \
+  -e PI_RESEARCH_BROWSER=1 \
+  -e PI_RESEARCH_STALL_RETRY_MS=300000 \
+  -e PI_RESEARCH_NO_DELEGATION=1 \
+  pi-research-sandbox:browser
+```
+
+| cycle | package | commit | purpose |
+|---|---|---|---|
+| 10 | pkg-v7 | `0738c56` | a need per named part of the question |
+| 11 | pkg-v7 | `0738c56` | refresh 62 and 77 on that build |
+| 12 | pkg-v8 | `95743a0` | twenty sources per round |
+| 13 | pkg-v9 | `890d8bd` | tolerant JSON parsing |
+| 14 | pkg-v11 | `2596eda` | plan and judgment as tool arguments |
+
+`/agent` holds `auth.json`, `models.json` and a `settings.json` that declares no packages:
+
+```json
+{ "defaultProvider": "opencode-go", "defaultModel": "deepseek-v4.1-flash" }
+```
+
+### Tool inventory, captured rather than asserted
+
+The parent session and the child research session have different inventories, and only the child
+carries the web and document tools. Both were listed on the running container:
+
+```sh
+docker exec -w /work pi-smoke2 bash -lc 'pi -ne -e /pkg -p "/tools"'
+docker exec -w /work pi-smoke2 bash -lc \
+  'pi -ne -e /pkg -e npm:pi-web-access -e npm:@gotgenes/pi-subagents -e npm:pi-docparser -p "/tools"'
+```
+
+| session | tools present |
+|---|---|
+| parent | `bash edit read write research_brief research_assess research_round research_inspect research_add_urls` |
+| child, all three extensions | adds `web_search fetch_content document_parse document_search document_screenshot subagent` |
+| child, without pi-docparser | `fetch_content web_search` only - the document tools are pi-docparser's |
+
+The child is spawned by `src/research-host.ts` as `pi -ne -e <self> -e npm:pi-web-access
+-e npm:@gotgenes/pi-subagents -e npm:pi-docparser --thinking off`, each opt-out via
+`PI_RESEARCH_TOOLS_EXT`, `PI_RESEARCH_SUBAGENTS_EXT` and `PI_RESEARCH_OCR_EXT`. That is why a
+parent-only listing shows no `document_parse`: the capability lives one level down, where the research
+stage runs. `document_parse` is used by `parseDocument()`, which downloads the bytes and hands the
+parser a file with the right suffix, falling back to the fetch tool when a direct GET is refused.
