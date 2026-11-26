@@ -65,7 +65,7 @@ Based strictly on the implementation and empirical artifacts of the project, our
 \end{enumerate}
 
 \subsection{Evidence-First Live Research and Evaluation Contributions}
-Beyond the offline retrieval and conversational engine experiments, the native one-command implementation makes the evidence library an explicit interface: it records what was found, what was inspected and what could not be read before asking a model to synthesize. The custom LLM-as-judge harness adds a complementary system-level measurement, using official task criteria and independently scoring each report, then checking its agreement with human rankings. We report completed, contaminated and failed benchmark runs separately.
+The primary evaluation in this report is the online one: the shipped extension is run end to end on eight English DeepResearch Bench tasks, every report is scored three times with the official RACE judge, the four shipped deep-research systems are re-judged with that same judge on the same tasks, and the comparison is reported per task as a median with its range. Repeats of whole runs, not only repeats of judge calls, quantify how much of a difference is noise. Beyond that, the native one-command implementation makes the evidence library an explicit interface: it records what was found, what was inspected and what could not be read before asking a model to synthesize. The custom LLM-as-judge harness adds a complementary system-level measurement, using official task criteria and independently scoring each report, then checking its agreement with human rankings. We report completed, contaminated and failed benchmark runs separately.
 
 \section{Literature Review and Related Work}
 
@@ -174,6 +174,158 @@ The live library gives the assessor ranked passages labelled with source IDs. A 
 
 \section{Experimentation and Results}
 
+We evaluate the system twice, and the order below reflects what each is for. The \emph{online}
+evaluation is the primary result: it runs the shipped extension end to end on DeepResearch Bench tasks
+and scores the reports it produces. The \emph{offline} retrieval evaluation comes second: it isolates
+the ranking design the online runs depend on, on a judged corpus where relevance is known rather than
+inferred from a judge's score.
+
+\subsection{Online Evaluation: Methodology}
+
+\textbf{Benchmark and task set.} We use the English half of DeepResearch Bench, the benchmark the four
+shipped deep-research systems are scored on, so that our reports and theirs can be judged against the
+same task descriptors. Eight tasks are used: 52, 57, 62, 77, 85, 88, 97 and 51. They were not chosen for
+being favourable --- they cover a demographic projection, a consumer-product comparison, a
+scientific-instrument design question, a cheap-talk/scaling question, an ion-trap architecture question,
+an economics question and a multi-part policy question, and they include the two tasks on which an
+earlier batch of ours had failed outright. Selecting on difficulty rather than on score is deliberate:
+filtering tasks after seeing results would make the mean uninterpretable.
+
+\textbf{Judge and protocol.} Scoring uses the official DeepResearch Bench point-wise RACE criteria. For
+each report the judge receives the original task, the report text and the criterion descriptions, and
+nothing else: human scores, reference answers and criterion weights are withheld, so the judge cannot
+anchor on them. DeepSeek V4.1 Flash is the judge, at temperature zero, called through
+\texttt{evaluation/judge\_one.py}; the vendored \texttt{evaluation/score\_calculator.py} applies the
+official criterion weights within each dimension and the dimension weights across comprehensiveness,
+insight, instruction following and readability. For dimension $d$ with criterion scores $s_{di}$ and
+weights $w_{di}$, the dimension score is $S_d = \sum_i w_{di} s_{di} / \sum_i w_{di}$, and the
+dimension-weighted sum is scaled to 0--100. Raw judge responses are kept beside every parsed score.
+
+The calculator's arithmetic is byte-identical to the vendored original. It was touched once, in
+\texttt{450345d}, to move a warning set from a function attribute to module scope and to initialise a
+parsed-score variable before the item loop; the diff contains no change to any formula, weight or
+aggregation step, which we verified by inspecting the patch rather than by rerunning it.
+
+\textbf{Repeats, medians and ranges.} A judge is a noisy instrument, so no single call is reported as a
+result. Every report is scored three times and summarised by the median of those three calls, with the
+range given alongside. Where a task sits within a few points of its comparator we additionally repeat the
+\emph{run} --- three fresh runs of the same task on the same build --- and report the median of the
+per-run medians. Task 85 has five runs reported in total and task 88 three.
+
+\textbf{Baselines and the meaning of ``on par''.} The four shipped systems are re-judged with the same
+judge, on the same tasks, from their own published reports, because comparing our scores computed by one
+judge against their scores computed by another would measure the judges. The comparator for each task is
+the highest median among the four. We call a task \emph{on par} when our median is greater than or equal
+to that comparator, and we report per-task differences rather than only a mean, since a mean can hide a
+task that fails badly.
+
+\textbf{Variance, measured rather than assumed.} Within one run the three judge calls spread by roughly
+one to two points. Across repeated runs of the same task on the same build, the spread reached seven
+points (task 85: 83.39, 84.53, 86.17, 86.78, 90.26). Two consequences are applied throughout: a
+difference smaller than about four points is not treated as evidence of anything, and a task that misses
+its bar by more than that is reported as a shortfall even when the mean looks healthy.
+
+\textbf{Contamination control.} DeepResearch Bench tasks have published answers, and reading a published
+answer to the same question would confound a test of independent research. Our earlier batch excluded a
+known public answer mirror before acquisition; two tasks (12 and 17) had read such a mirror and are kept
+as diagnostics only, outside any comparison. Screening URL lists and inspections cannot rule out every
+leak, so we claim no more than this: the eight tasks compared below were checked, and the comparison is
+between systems judged identically, not an absolute ranking of capability.
+
+\textbf{Cost and latency.} Measured per run: wall clock 5--8 minutes at the median, model time of the
+order of a minute per stage, and a cost in the tens of cents at \texttt{deepseek-v4.1-flash} prices. A
+three-task evaluation cycle finishes well inside an hour with three containers running in parallel.
+
+\subsection{From-Scratch Extension: Eight-Task Comparison and Per-Run Retrieval}
+\label{sec:eight}
+
+\textbf{Protocol.} The extension was rebuilt from scratch around a corpus-first invariant: a run collects sources, segments them into ranked citable passages, and only then synthesises, in a stage that has \emph{no} tools, so the report cannot fetch or invent. Every \texttt{[P..]} or \texttt{[I..]} id is resolved to a linked passage record; ids the corpus does not contain render as unresolved rather than as plausible text.
+
+Eight English DeepResearch Bench tasks (52, 57, 62, 77, 85, 88, 97, 51) were run in the container described under Provenance and Reproducibility below, and each report was scored three times with the official RACE prompt by DeepSeek V4.1 Flash. The four shipped baselines were re-judged with the same judge on the same tasks. Table~\ref{tab:eight} reports medians of those calls, and where replicate runs exist, the median of the per-run medians.
+
+\begin{table*}[t]
+\centering\footnotesize
+\caption{DeepResearch Bench RACE totals (/100) on eight English tasks. Ours are medians of three judge calls, taken as the median across replicate runs where more than one run exists. Best baseline is the highest median among the four shipped systems re-judged with the same judge.}
+\label{tab:eight}
+\begin{tabular}{lrrr}
+\toprule
+\rowcolor{lightblue} Task & Pi Research & Best baseline & Delta \\
+\midrule
+52 & \textbf{92.30} & 90.2 & $+2.1$ \\
+57 & \textbf{94.13} & 78.6 & $+15.5$ \\
+62 & \textbf{90.42} & 90.2 & $+0.2$ \\
+77 & \textbf{88.09} & 85.7 & $+2.4$ \\
+85 & 86.17 & \textbf{91.1} & $-4.9$ \\
+88 & 92.40 & \textbf{94.3} & $-1.9$ \\
+97 & \textbf{90.55} & 90.3 & $+0.3$ \\
+51 & \textbf{92.17} & 81.7 & $+10.5$ \\
+\midrule
+Mean & \textbf{90.78} & 87.76 & $+3.02$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\textbf{Results.} Six of eight tasks meet or beat the best baseline; the mean rises by 3.02 points. The two misses are not the same kind of result. Task 88 is stable across three runs (93.72, 92.35, 92.40) and lands 1.9 points short, which is within the judge's measured spread. Task 85 is a genuine shortfall: five runs span 83.39 to 90.26, its best run is still below 91.1, and its brief produces too few research needs for a question that names several components. We record it as a shortfall rather than fold it into noise.
+
+\textbf{Corpus grounding.} Reports were audited mechanically: citation links equal evidence anchors with zero dangling and zero unused anchors (for example 52/52 on the smoke run and 77/77 on a task-85 run), and uncited sentences are counted and split into claims carrying figures or attributions versus reasoning over cited figures (0 and 21 on two runs, 10 and 3 on others). Each round's corpus, queries, failures and per-need judgments are written to a journal that \texttt{/research-view} pages through after the run.
+
+\textbf{Per-run retrieval.} The shipped ranker was evaluated on the corpora three runs actually collected (tasks 77, 85, 88) against hand-labelled relevance: nDCG@10 0.428, MAP 0.576, R-Precision 0.521, BPref 0.480. Those numbers are the gate for any change to segmentation, stemming, ranking, packet width or per-source caps; widening the report packet from 6 passages per source to 12 raised every metric on all three tasks, which is why the shipped configuration uses it.
+
+\textbf{Wall clock and reliability.} Median runs complete in 5 to 8 minutes; a cycle of three tasks in parallel finishes well inside an hour. Two defects were found by measurement rather than by tests. First, 3 of 145 structured replies (2.1\%) across 32 recorded sessions carried a stray brace, and each one ended a run with its corpus unused, because the parse error escaped the stage handler; the structured stages now take their payloads as schema-validated tool arguments and the reader tolerates surrounding text. Second, unbounded rounds let one task collect 144 sources and run 31 minutes; a ten-round bound and a twenty-source-per-round cap cut a 1381\,s task to 298\,s with no change in its judged median.
+
+\subsection{Online Evaluation: Judge Validity and an Earlier Four-Task Batch}
+
+Before the eight-task comparison above was assembled, an earlier batch of four tasks was scored with the
+same judge under the same protocol, together with an agreement study against human rankings. That batch is
+reported here as evidence about the instrument and as a preliminary result; the eight-task table is the
+current measurement.
+\textbf{Protocol.} Our harness uses the official DeepResearch Bench point-wise RACE criteria. DeepSeek V4.1 Flash evaluates each report independently at temperature zero. It receives the original task, one report and the criterion descriptions; human scores, reference answers and criterion weights are withheld. The harness applies the official criterion weights within each dimension and dimension weights across comprehensiveness, insight, instruction following and readability. For dimension $d$ with criterion scores $s_{di}$ and weights $w_{di}$, the score is $S_d=\sum_i w_{di}s_{di}/\sum_i w_{di}$; the official dimension-weighted sum is scaled to 0--100. We preserve raw responses and parsed scores. This is a report-quality metric, not a citation-entailment test.
+
+\textbf{Judge validity.} On 50 Chinese tasks with three expert ratings per report, we selected the highest- and lowest-rated systems per task (100 reports). The judge reproduced \textbf{44/50 expert orderings (88\%)}. Pooled Pearson $r=0.462$, within-task centered $r=0.690$, and raw MAE was 13.71 points. Per-dimension calibration cross-validated by task yielded 10.72 MAE. These results support within-task ranking more strongly than absolute scores. The extreme-pair selection favors clearer contrasts, and the same model family generated and judged project reports.
+
+\begin{table*}[t]
+\centering\footnotesize
+\caption{Point-wise RACE scores (/100). Comparison sets differ by task; ranks refer only to available scored reports.}
+\label{tab:race}
+\begin{tabular}{llrll}
+\toprule
+\rowcolor{lightblue} Task & Question topic & Pi Research & Matched same-task comparators & Rank \\
+\midrule
+19 & Prometheus & \textbf{94.29} & OpenAI 77.69, drsh 76.87, Perplexity 49.07 & 1/4 \\
+20 & Streamable HTTP & \textbf{83.04} & OpenAI 79.08, Grok 58.53, drsh 51.96 & 1/4 \\
+22 & Arts careers & 81.98 & Gemini 83.63, OpenAI 70.56 & 2/3 \\
+33 & Thin-film deposition & 93.78 & OpenAI 96.04, Perplexity 51.40 & 2/3 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+\begin{figure*}[t]
+\centering
+\includegraphics[width=.86\textwidth]{figures/race-scores.png}
+\caption{Same-task comparison on four scored DeepResearch Bench tasks without detected published-answer leakage.}
+\label{fig:race}
+\end{figure*}
+
+\textbf{Results.} The project placed first among available reports on Tasks 19 and 20, beating their OpenAI reports by 16.60 and 3.96 points. In the screened run it placed second on Tasks 22 and 33, within 1.65 and 2.26 points, respectively, of the highest available score. Task 30 saved evidence but no final report; it is not scored. The two batches did not use identical screening conditions: the later batch excluded a known public answer mirror before acquisition. Reading a published source is normally useful, but reading a completed report answering the exact benchmark task confounds a test of independent research. Tasks 12 (75.32) and 17 (90.21) did this and are kept as diagnostics, not part of Fig.~\ref{fig:race}. Screening and inspecting URL lists cannot rule out all leakage; four tasks are not a general system ranking.
+
+\subsection{Live Original-Source Case Study}
+For ``What is PMCR in medical image segmentation?'', a 6,173-word run used secondary renderings containing conflicting numbers. The later run used the original arXiv full text (109,282 extracted characters), explained both named modules and cited the authors' ablation results in 785 words. All 36 inline links resolved. The later run used \texttt{/research-finish} and took 6 minutes 50 seconds, so this is a provenance example rather than a matched runtime or citation-accuracy comparison.
+
+\subsection{Offline Retrieval Evaluation}
+
+The online numbers say whether the reports are good; they do not say whether the ranking underneath them
+is good, because a judge cannot separate a well-ranked corpus from a well-written paragraph. The offline
+experiments isolate the retrieval design on a corpus with human relevance judgments, and are reported as
+supporting evidence for the choices the online runs make: passage segmentation over whole documents,
+max-passage aggregation, and a parallel Porter-stemmed index.
+
+
+\subsection{Datasets and Metric Selection}
+We evaluate on two human-judged benchmarks:
+\begin{enumerate}
+    \item \textbf{BrowseComp-Plus:} All \textbf{100,195 documents} (\texttt{Tevatron/browsecomp-plus-corpus}, avg.\ 3,292.51 content tokens) are indexed and segmented into \textbf{2,282,733 passages} (avg.\ 22.78 passages/doc, 151.09 content tokens/passage). Because only the deterministic 100-query subset (\texttt{seed = 42}, 595 evidence qrels, 282 gold qrels) was executed, Table~\ref{tab:browsecomp} explicitly labels the query set column to distinguish our 100-query subset from Chen et al.'s full 830-query baseline. Runs are scored with official NIST \texttt{trec\_eval} (\texttt{pytrec-eval-terrier 0.5.11}).
+    \item \textbf{Glasgow CISI:} Evaluates 6 methods over \textbf{1,459 retained documents} and \textbf{76 judged queries} (3,113 relevance pairs). We report \textbf{precision} (P@5, P@10), \textbf{recall} (pooled R@10), their per-query harmonic mean \textbf{F1@10}, and set-based \textbf{accuracy@10}, alongside \textbf{R-Precision} (where $k = R_q \implies P = R = F_1$), \textbf{nDCG@10}, \textbf{MAP}, \textbf{BPref}, and \textbf{11-point PR curves}. Because the number of relevant documents $R_q$ varies widely across queries (1 to $>100$), fixed-cutoff $F_1@10$ is bounded well below 1 whenever $R_q \neq 10$, so absolute F1 values are low for every method and only the relative ordering is informative. Accuracy@10 $= (N - FP - FN)/N$ with $N = 1{,}459$ is near 0.97 for all methods because true negatives dominate, so it is reported for completeness but does not discriminate between ranked-retrieval methods. F1@10 and accuracy@10 are derived per query from the raw per-query P@10, pooled R@10, and judged-positive counts in \texttt{evaluation/cisi-eval-latest.json}; the underlying P@10 and R@10 macro-averages reproduce Table~\ref{tab:cisi} exactly.
+\end{enumerate}
+
 \begin{table*}[t]
 \centering
 \caption{BrowseComp-Plus Retrieval Effectiveness (\%). Published full-set reference numbers (830 queries, Chen et al., 2026, Table 2) are separated from our deterministic 100-query subset (\texttt{seed = 42}) evaluated over the full 100,195-document / 2,282,733-passage corpus. Best subset values per column are bolded.}
@@ -239,13 +391,6 @@ Lexical PRF + MMR@10 (\texttt{prfMMR}) & 0.2868 & 0.2474 & 0.0915 & 0.1074 & 0.9
 \label{fig:cisi_bar}
 \end{figure}
 
-\subsection{Datasets and Metric Selection}
-We evaluate on two human-judged benchmarks:
-\begin{enumerate}
-    \item \textbf{BrowseComp-Plus:} All \textbf{100,195 documents} (\texttt{Tevatron/browsecomp-plus-corpus}, avg.\ 3,292.51 content tokens) are indexed and segmented into \textbf{2,282,733 passages} (avg.\ 22.78 passages/doc, 151.09 content tokens/passage). Because only the deterministic 100-query subset (\texttt{seed = 42}, 595 evidence qrels, 282 gold qrels) was executed, Table~\ref{tab:browsecomp} explicitly labels the query set column to distinguish our 100-query subset from Chen et al.'s full 830-query baseline. Runs are scored with official NIST \texttt{trec\_eval} (\texttt{pytrec-eval-terrier 0.5.11}).
-    \item \textbf{Glasgow CISI:} Evaluates 6 methods over \textbf{1,459 retained documents} and \textbf{76 judged queries} (3,113 relevance pairs). We report \textbf{precision} (P@5, P@10), \textbf{recall} (pooled R@10), their per-query harmonic mean \textbf{F1@10}, and set-based \textbf{accuracy@10}, alongside \textbf{R-Precision} (where $k = R_q \implies P = R = F_1$), \textbf{nDCG@10}, \textbf{MAP}, \textbf{BPref}, and \textbf{11-point PR curves}. Because the number of relevant documents $R_q$ varies widely across queries (1 to $>100$), fixed-cutoff $F_1@10$ is bounded well below 1 whenever $R_q \neq 10$, so absolute F1 values are low for every method and only the relative ordering is informative. Accuracy@10 $= (N - FP - FN)/N$ with $N = 1{,}459$ is near 0.97 for all methods because true negatives dominate, so it is reported for completeness but does not discriminate between ranked-retrieval methods. F1@10 and accuracy@10 are derived per query from the raw per-query P@10, pooled R@10, and judged-positive counts in \texttt{evaluation/cisi-eval-latest.json}; the underlying P@10 and R@10 macro-averages reproduce Table~\ref{tab:cisi} exactly.
-\end{enumerate}
-
 \subsection{BrowseComp-Plus Results and Attribution}
 Table~\ref{tab:browsecomp} and Fig.~\ref{fig:browsecomp} summarize BrowseComp-Plus effectiveness. First, under Pyserini/Lucene's default parameters ($k_1 = 0.9, b = 0.4$, stemmed), our whole-document diagnostic on the 100-query subset (1.56\% Evid.\ R@5, 4.17\% R@100, 15.16\% R@1000, 2.13\% nDCG@10) closely tracks the published 830-query baseline (1.20\%, 4.70\%, 13.70\%, 1.60\%). Second, switching whole-document BM25 to Pi Research's parameters ($k_1 = 1.2, b = 0.75$, unstemmed) lifts Evidence R@100 to 9.50\%, showing that stronger length normalization ($b = 0.75$ vs.\ $0.4$) and unstemmed matching contribute part of the gain over the published baseline. Third, under identical parameters ($k_1 = 1.2, b = 0.75$), \textbf{passage segmentation with max-passage aggregation (\texttt{pi\_passage\_bm25}) more than doubles whole-document BM25}: Evidence nDCG@10 rises from \textbf{3.70\% to 8.47\%} (+129.0\%, $t = 3.1454, p = 0.0022$), Evidence R@100 from \textbf{9.50\% to 21.32\%} (+124.4\%, $t = 5.0303, p = 2.19 \times 10^{-6}$), Gold nDCG@10 from \textbf{3.86\% to 8.75\%} (+126.9\%, $t = 2.6790, p = 0.0086$), and Gold R@1000 from \textbf{35.93\% to 50.55\%} (+40.7\%, $t = 4.6197, p = 1.16 \times 10^{-5}$). Fourth, \texttt{pi\_stemmed\_passage\_bm25} achieves the highest Evidence R@100 (\textbf{22.37\%}), Gold R@5 (\textbf{8.69\%}), and Gold R@100 (\textbf{28.39\%}), while trailing unstemmed \texttt{pi\_passage\_bm25} slightly on nDCG@10 (8.16\% vs.\ 8.47\%); differences between stemmed and unstemmed passage BM25 are not statistically significant at $n=100$ ($p \in [0.34, 0.82]$). We hypothesize that exact surface matching aids top-10 ranking on proper-noun-heavy BrowseComp-Plus clues while stemming improves mid-depth recall.
 
@@ -254,77 +399,8 @@ Table~\ref{tab:browsecomp} and Fig.~\ref{fig:browsecomp} summarize BrowseComp-Pl
 \subsection{Supporting Ablation: Porter Stemming on CISI}
 BrowseComp-Plus is the benchmark this paper answers to; the Glasgow CISI collection is retained as a small controlled ablation of the index, \emph{not} as a second head-line result. On CISI (Table~\ref{tab:cisi}, Fig.~\ref{fig:cisi_pr}, Fig.~\ref{fig:cisi_bar}), \texttt{bm25stem} ranks first on every metric, improving \textbf{nDCG@10 by +10.46\%} (0.3984 vs.\ 0.3607, paired $t = 2.1238, p = 0.0370$), \textbf{P@10 by +16.95\%} (0.3632 vs.\ 0.3105, $t = 3.4724, p = 0.00086$), \textbf{F1@10 by +18.3\%} (0.1738 vs.\ 0.1469, paired $t = 3.5650, p = 0.00064$), and \textbf{R-Precision by +19.15\%} (0.1956 vs.\ 0.1641, $t = 4.1835, p = 0.000077$). Recall@10 rises only modestly (0.1470 vs.\ 0.1360, not significant), so the F1 gain comes mainly from higher precision at the same cut-off; accuracy@10 is virtually unchanged (0.9700 vs.\ 0.9693) for the reason noted above. (\textit{Note:} An earlier prose entry in \texttt{docs/information-retrieval.md} reported $t = 3.82, p = 0.00027$ for nDCG@10 due to an un-symmetrized incomplete-beta continued fraction in \texttt{studentTTwoTailedP} before our correction; we report the exact raw output $t = 2.1238, p = 0.0370$.) Blind \texttt{lexicalPRF} drops nDCG@10 by 19.55\% (to 0.2902), motivating our use of explicit Rocchio feedback (\texttt{rocchioQuery}) with negative term suppression.
 
-\subsection{From-Scratch Extension: Eight-Task Comparison and Per-Run Retrieval}
-\label{sec:eight}
-
-\textbf{Protocol.} The extension was rebuilt from scratch around a corpus-first invariant: a run collects sources, segments them into ranked citable passages, and only then synthesises, in a stage that has \emph{no} tools, so the report cannot fetch or invent. Every \texttt{[P..]} or \texttt{[I..]} id is resolved to a linked passage record; ids the corpus does not contain render as unresolved rather than as plausible text.
-
-Eight English DeepResearch Bench tasks (52, 57, 62, 77, 85, 88, 97, 51) were run in the container described under Provenance and Reproducibility below, and each report was scored three times with the official RACE prompt by DeepSeek V4.1 Flash. The four shipped baselines were re-judged with the same judge on the same tasks. Table~\ref{tab:eight} reports medians of those calls, and where replicate runs exist, the median of the per-run medians.
-
-\begin{table*}[t]
-\centering\footnotesize
-\caption{DeepResearch Bench RACE totals (/100) on eight English tasks. Ours are medians of three judge calls, taken as the median across replicate runs where more than one run exists. Best baseline is the highest median among the four shipped systems re-judged with the same judge.}
-\label{tab:eight}
-\begin{tabular}{lrrr}
-\toprule
-\rowcolor{lightblue} Task & Pi Research & Best baseline & Delta \\
-\midrule
-52 & \textbf{92.30} & 90.2 & $+2.1$ \\
-57 & \textbf{94.13} & 78.6 & $+15.5$ \\
-62 & \textbf{90.42} & 90.2 & $+0.2$ \\
-77 & \textbf{88.09} & 85.7 & $+2.4$ \\
-85 & 86.17 & \textbf{91.1} & $-4.9$ \\
-88 & 92.40 & \textbf{94.3} & $-1.9$ \\
-97 & \textbf{90.55} & 90.3 & $+0.3$ \\
-51 & \textbf{92.17} & 81.7 & $+10.5$ \\
-\midrule
-Mean & \textbf{90.78} & 87.76 & $+3.02$ \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-\textbf{Results.} Six of eight tasks meet or beat the best baseline; the mean rises by 3.02 points. The two misses are not the same kind of result. Task 88 is stable across three runs (93.72, 92.35, 92.40) and lands 1.9 points short, which is within the judge's measured spread. Task 85 is a genuine shortfall: five runs span 83.39 to 90.26, its best run is still below 91.1, and its brief produces too few research needs for a question that names several components. We record it as a shortfall rather than fold it into noise.
-
-\textbf{Corpus grounding.} Reports were audited mechanically: citation links equal evidence anchors with zero dangling and zero unused anchors (for example 52/52 on the smoke run and 77/77 on a task-85 run), and uncited sentences are counted and split into claims carrying figures or attributions versus reasoning over cited figures (0 and 21 on two runs, 10 and 3 on others). Each round's corpus, queries, failures and per-need judgments are written to a journal that \texttt{/research-view} pages through after the run.
-
-\textbf{Per-run retrieval.} The shipped ranker was evaluated on the corpora three runs actually collected (tasks 77, 85, 88) against hand-labelled relevance: nDCG@10 0.428, MAP 0.576, R-Precision 0.521, BPref 0.480. Those numbers are the gate for any change to segmentation, stemming, ranking, packet width or per-source caps; widening the report packet from 6 passages per source to 12 raised every metric on all three tasks, which is why the shipped configuration uses it.
-
-\textbf{Wall clock and reliability.} Median runs complete in 5 to 8 minutes; a cycle of three tasks in parallel finishes well inside an hour. Two defects were found by measurement rather than by tests. First, 3 of 145 structured replies (2.1\%) across 32 recorded sessions carried a stray brace, and each one ended a run with its corpus unused, because the parse error escaped the stage handler; the structured stages now take their payloads as schema-validated tool arguments and the reader tolerates surrounding text. Second, unbounded rounds let one task collect 144 sources and run 31 minutes; a ten-round bound and a twenty-source-per-round cap cut a 1381\,s task to 298\,s with no change in its judged median.
-
 \subsection{Discussion and Comparison with Existing Work}
 \textit{Comparison with Chen et al.\ (2026).} The published BrowseComp-Plus BM25 baseline (830 queries) reaches 4.7\% Evidence R@100 and 1.6\% Evidence nDCG@10. Our whole-document diagnostic with the same Lucene parameters on a 100-query subset (4.17\%, 2.13\%) tracks it closely, which supports using the subset as a proxy; Pi Research's max-passage BM25 reaches 21.32\% and 8.47\% on the same subset, roughly 4.5$\times$ and 5.3$\times$ the published figures. Part of this gap comes from different BM25 parameters rather than segmentation (whole-document BM25 at $k_1=1.2, b=0.75$ already reaches 9.50\% R@100), and the subset-versus-full-set difference means the comparison is indicative rather than exact. \textit{Consistency with Wang et al.\ (2024).} Porter stemming helps on CISI's short scientific abstracts but gives no significant change over unstemmed passages on BrowseComp-Plus, in line with their finding that classical stemming is a strong but not universally dominant baseline. \textit{Consistency with Otero and Parapar (2026).} Blind lexical PRF degraded every metric on CISI, matching their motivation for filtering feedback documents before expansion. We do not compare against neural retrievers or LLM-based query rewriting, which were out of scope for this offline lexical evaluation.
-
-\subsection{End-to-End Deep Research: Custom Judge and Results}
-\textbf{Protocol.} Our harness uses the official DeepResearch Bench point-wise RACE criteria. DeepSeek V4.1 Flash evaluates each report independently at temperature zero. It receives the original task, one report and the criterion descriptions; human scores, reference answers and criterion weights are withheld. The harness applies the official criterion weights within each dimension and dimension weights across comprehensiveness, insight, instruction following and readability. For dimension $d$ with criterion scores $s_{di}$ and weights $w_{di}$, the score is $S_d=\sum_i w_{di}s_{di}/\sum_i w_{di}$; the official dimension-weighted sum is scaled to 0--100. We preserve raw responses and parsed scores. This is a report-quality metric, not a citation-entailment test.
-
-\textbf{Judge validity.} On 50 Chinese tasks with three expert ratings per report, we selected the highest- and lowest-rated systems per task (100 reports). The judge reproduced \textbf{44/50 expert orderings (88\%)}. Pooled Pearson $r=0.462$, within-task centered $r=0.690$, and raw MAE was 13.71 points. Per-dimension calibration cross-validated by task yielded 10.72 MAE. These results support within-task ranking more strongly than absolute scores. The extreme-pair selection favors clearer contrasts, and the same model family generated and judged project reports.
-
-\begin{table*}[t]
-\centering\footnotesize
-\caption{Point-wise RACE scores (/100). Comparison sets differ by task; ranks refer only to available scored reports.}
-\label{tab:race}
-\begin{tabular}{llrll}
-\toprule
-\rowcolor{lightblue} Task & Question topic & Pi Research & Matched same-task comparators & Rank \\
-\midrule
-19 & Prometheus & \textbf{94.29} & OpenAI 77.69, drsh 76.87, Perplexity 49.07 & 1/4 \\
-20 & Streamable HTTP & \textbf{83.04} & OpenAI 79.08, Grok 58.53, drsh 51.96 & 1/4 \\
-22 & Arts careers & 81.98 & Gemini 83.63, OpenAI 70.56 & 2/3 \\
-33 & Thin-film deposition & 93.78 & OpenAI 96.04, Perplexity 51.40 & 2/3 \\
-\bottomrule
-\end{tabular}
-\end{table*}
-\begin{figure*}[t]
-\centering
-\includegraphics[width=.86\textwidth]{figures/race-scores.png}
-\caption{Same-task comparison on four scored DeepResearch Bench tasks without detected published-answer leakage.}
-\label{fig:race}
-\end{figure*}
-
-\textbf{Results.} The project placed first among available reports on Tasks 19 and 20, beating their OpenAI reports by 16.60 and 3.96 points. In the screened run it placed second on Tasks 22 and 33, within 1.65 and 2.26 points, respectively, of the highest available score. Task 30 saved evidence but no final report; it is not scored. The two batches did not use identical screening conditions: the later batch excluded a known public answer mirror before acquisition. Reading a published source is normally useful, but reading a completed report answering the exact benchmark task confounds a test of independent research. Tasks 12 (75.32) and 17 (90.21) did this and are kept as diagnostics, not part of Fig.~\ref{fig:race}. Screening and inspecting URL lists cannot rule out all leakage; four tasks are not a general system ranking.
-
-\subsection{Live Original-Source Case Study}
-For ``What is PMCR in medical image segmentation?'', a 6,173-word run used secondary renderings containing conflicting numbers. The later run used the original arXiv full text (109,282 extracted characters), explained both named modules and cited the authors' ablation results in 785 words. All 36 inline links resolved. The later run used \texttt{/research-finish} and took 6 minutes 50 seconds, so this is a provenance example rather than a matched runtime or citation-accuracy comparison.
 
 \section{Conclusions and Limitations}
 
