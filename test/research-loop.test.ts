@@ -3,7 +3,7 @@
  * No network, no model calls: run with `npm test`.
  */
 import assert from "node:assert/strict";
-import { ResearchLoop } from "../src/research-loop.js";
+import { MAX_ROUNDS, ResearchLoop } from "../src/research-loop.js";
 
 const failures: string[] = [];
 const check = (label: string, run: () => void) => {
@@ -68,6 +68,17 @@ check("no new queries stop the loop", () => {
 	loop.markSearched(["alpha"]);
 	assert.equal(loop.assess(assessment([]), packet, true), false);
 	assert.match(loop.stopReason, /No new search queries/);
+});
+
+check("a run that never runs out of queries stops at the round limit", () => {
+	const loop = new ResearchLoop();
+	loop.plan(plan(["alpha"]));
+	loop.markSearched(["alpha"]);
+	// The assessment wants to continue and offers fresh queries each time.
+	const keep = JSON.stringify({ needs: [{ id: 1, answered: false, passages: [], gap: "g", queries: ["alpha", "beta"] }], continueSearching: true, reason: "more" });
+	assert.equal(loop.assess(keep, packet, true, 1), true);
+	assert.equal(loop.assess(keep, packet, true, MAX_ROUNDS), false);
+	assert.match(loop.stopReason, /round limit/);
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");

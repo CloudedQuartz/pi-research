@@ -36,6 +36,9 @@ export function modelObject(text: string): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
+/** Upper bound on search rounds before the report is written anyway. */
+export const MAX_ROUNDS = 10;
+
 export class ResearchLoop {
 	readonly library = new EvidenceLibrary();
 	readonly failures = new Set<string>();
@@ -162,7 +165,7 @@ export class ResearchLoop {
 		return { needs, passages, sources };
 	}
 
-	assess(reply: string, packet: EvidencePacket, gainedEvidence: boolean): boolean {
+	assess(reply: string, packet: EvidencePacket, gainedEvidence: boolean, round = 0): boolean {
 		const { needs, continueSearching, reason } = modelObject(reply);
 		if (!Array.isArray(needs) || typeof continueSearching !== "boolean") throw new Error("The assessment did not contain coverage and a search decision.");
 		const judgments = new Map(needs.map((entry) => [entry?.id, entry]));
@@ -186,7 +189,11 @@ export class ResearchLoop {
 		}
 		if (gainedEvidence) this.stalledRounds = 0;
 		else this.stalledRounds += 1;
-		if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
+		// A run that keeps finding queries will keep going, and a long enough run ends with the provider
+		// silent at the end - task 51 spent eleven rounds and 57 sources, then produced no report at all.
+		// Bounding the rounds trades a little depth for a report that exists.
+		if (round >= MAX_ROUNDS) this.stopReason = `Reached the ${MAX_ROUNDS}-round limit; writing from the corpus collected.`;
+		else if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
 		else if (this.stalledRounds >= 2) this.stopReason = "Two rounds added no new sources or passages; further searches were not producing evidence.";
 		else if (!this.pendingQueries().length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
 		else if (!continueSearching && (!gainedEvidence || this.checkingStop)) {

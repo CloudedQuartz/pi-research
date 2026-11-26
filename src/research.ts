@@ -1100,7 +1100,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			} else {
 				if (!current.packet) throw new Error("The model did not run the queued evidence collection.");
 				if (current.finishRequested) current.loop.stopReason = "The user requested synthesis after the current research turn.";
-				const stopping = current.finishRequested || !current.loop.assess(response.text, current.packet, current.gainedEvidence);
+				const stopping = current.finishRequested || !current.loop.assess(response.text, current.packet, current.gainedEvidence, current.round);
 				journalAssessments.push({
 					round: current.round,
 					answered: current.loop.needs.filter((need) => need.answered).length,
