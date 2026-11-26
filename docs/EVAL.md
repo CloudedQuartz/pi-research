@@ -605,3 +605,30 @@ shortfall at -7.7.
 Speed caveat, recorded because it is a regression risk: task 51 now takes 1870 s (31 minutes), above
 the 20-minute worst case, because the round bound let it collect 144 sources. Its passage yield was
 poor (107 passages from 144 sources), so the fetch volume is out of proportion to the evidence won.
+
+### Cycle 10: a need per named part of the question
+
+Container `pi-c10`, package `/tmp/bench/pkg-v7` from commit `0738c56`, delegation off, browser on.
+Started 09:59:36.
+
+| task | wall | rounds | sources | passages | median (range) | previous | delta | bar |
+|---|---|---|---|---|---|---|---|---|
+| 85 | 498 s | 2 | 38 | 101 | **90.26** (89.25-92.36) | 83.39 | **+6.9** | 91.1 |
+| 88 | 216 s | 1 | 46 | 92 | 91.63 (90.65-95.18) | 92.32 | -0.7 | 94.3 |
+| 77 | stalled | - | - | - | - | 87.42 | - | 85.7 |
+
+Task 85 finally moved: five needs became the question's named parts, two rounds instead of one, 38
+sources instead of 8-18, and comprehensiveness 90.0 against 80.8 the cycle before. It is now 0.8 from
+its bar, inside the noise band. Task 88 is unchanged within noise and took 216 s - faster, not slower.
+
+**New stall evidence (task 77).** The run started at 04:30:14, wrote its `run.json`, received a valid
+4,381-character brief reply at 04:30:31, and then nothing: no journal, no round, the progress widget
+frozen at `0 sources · 14s`, and no further session entry for fifteen minutes even though
+`PI_RESEARCH_STALL_RETRY_MS=300000` was set. That is the same silent-stall family as task 51, now with
+a sharper signature: the stall retry did not re-send, which means the timer was not armed for this
+stage or the run was not in `awaitingSettle` when it fired.
+
+**Eight-task state**: 52 92.30, 57 94.13, 62 88.59, 77 87.42, 85 90.26, 88 91.63, 97 90.55, 51 92.17.
+Mean of medians **90.88** against **87.76** for the best baseline on the same tasks (+3.12).
+Five tasks are at or above their bar; 62 (-1.6), 88 (-2.7) and 85 (-0.8) are below but inside the
++-4 noise band, so no task is a clear quality shortfall any more.
