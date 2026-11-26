@@ -317,3 +317,24 @@ With a fresh agent directory containing only `auth.json`, `models.json` and a mi
 So the pristine environment genuinely has no delegation, the prompt takes its documented
 "collect every piece of evidence yourself" branch, and the phantom-tool patience above is a property
 of a dirty agent directory rather than of the installation. Cycles from here use `/tmp/pi-docker/agent2`.
+
+### Where the subagent tool actually comes from
+
+Settled by inspection, not inference. Pi writes an npm project for the `-e` package into
+`$PI_CODING_AGENT_DIR/tmp/extensions/npm/<hash>/` and loads the `pi` manifests of the packages it
+installs there. In the container that directory held
+`node_modules/@gotgenes/pi-subagents/src/tools/agent-tool.ts`, and the `subagent` tool was therefore
+registered even in a package whose own source contained no loader for it. The earlier "phantom" - a
+`subagent` schema with five calls and zero results - was the same cache in the older, dirtier agent
+directory, where the tool schema was present but the instance could not answer.
+
+Consequences recorded for the cycles below: the dependency is what provides delegation (no explicit
+import is needed, so none is kept), and the tool inventory has to be read per run, because the cache
+is part of the environment, not of the source tree.
+
+| check | result |
+|---|---|
+| `grep -r "subagent_type" $(npm root -g)/@earendil-works/pi-coding-agent/dist` | no match, so not in pi itself |
+| built-in extensions in the image | `codemode`, `llama`, `mcp`, `tool-search` only |
+| `pi -e /pkg -p "/tools"`, clean agent dir, package with dependency | `research_round` only (no run, so the cache is not built) |
+| same, after one `/research` start | `subagent` present, from `tmp/extensions/npm/<hash>` |
