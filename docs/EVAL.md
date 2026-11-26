@@ -358,3 +358,28 @@ costing 2.4x the wall clock (1521 s is also above the 20-minute worst-case bar).
 Recorded conclusion: delegation is available, works as extra search breadth at best, and is not
 worth its cost as a default in this environment. Cycles that measure quality use the off switch;
 the capability stays shipped because it costs nothing when the model is told not to use it.
+
+### Cycle 4: the run that still ends without a report
+
+Task 51 has now failed three times. The stop-reason recording added in `efea9a9` finally names it:
+
+```text
+status: stopped
+stop:   Stopped in the research stage without a report (no reply, 67 passages, 57 sources).
+rounds: 11   wall: 1598s
+```
+
+The last thing in the session is a complete assessment reply (`stop=stop`, 4,319 chars, a valid
+`{"needs":[...]}` object) at 02:20:40, immediately preceded by three identical tool errors:
+`{"error":"Inspection budget for this round is exhausted; judge the needs from the packet"}`.
+After that reply the loop asked for another round and got nothing at all - no reply, no error - three
+times, which exhausted the retry budget and ended the run with 57 collected sources unused.
+
+Two distinct defects are visible here and neither is the watchdog: an inspection budget that keeps
+refusing calls the model keeps making, and a provider that goes silent at the end of a long run
+(the stall retry covers silence inside a stage; here the stage prompt was re-sent and the provider
+never answered it).
+
+Per the iteration policy this line is now recorded rather than patched again: the reliability defect
+has resisted three attempts (retry budget, stall retry, stop-reason recording), so the evidence is
+reported instead of stacked with a fourth blind change.
