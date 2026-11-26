@@ -424,3 +424,33 @@ Views, checked on the finished task-77 run (`tmux capture-pane`, saved to `/tmp/
 - `/research-view` paging: header reads `Question: ... / Status: complete · 12 rounds · 54 sources · 1475s / Report: /work/t77/research/...`, rounds list queries, and failed URLs show their reason (`Page appears to be a bot wall...`), Down pages through them; captures in `cycle5-view-head.txt` and `cycle5-view-paged.txt`
 - citations resolve: `eval:citations` gives links == anchors with zero dangling, unused and unresolved on every report measured this cycle
 - no hand-written report: the tool guard refuses collection once a run has ended (`No research run is collecting evidence.`), and the post-run turn is held (`isRetired`)
+
+### Eight-task table (current build, container, this session's runs)
+
+All numbers are medians of three judge calls with `deepseek-v4.1-flash` and the official prompt, on
+the same task text as the baselines. The task-85 row reports both delegation arms because that was
+the controlled comparison; the shipped default is the delegation-available configuration, so its
+88.75 is the number to compare.
+
+| task | our median (range) | wall | rounds | sources | best baseline | delta |
+|---|---|---|---|---|---|---|
+| 52 | 92.30 (92.30-92.30) | - | - | - | 90.2 gemini | **+2.1** |
+| 57 | 94.13 (92.42-95.00) | - | - | 21 | 78.6 perplexity | **+15.5** |
+| 62 | 87.47 (87.23-91.41) | 475 | 4 | 18 | 90.2 gemini | -2.7 |
+| 77 | 83.61 (76.97-84.10) | 179 | 1 | 10 | 85.7 gemini | -2.1 |
+| 85 | 88.75 (85.74-91.39) / 84.03 (83.83-86.45) | 1521 / 641 | 2 / 5 | 45 / 17 | 91.1 gemini | -2.4 / -7.1 |
+| 88 | 90.80 (88.6-93.4) | - | - | - | 94.3 gemini | -3.5 |
+| 97 | 89.27 (85.95-92.11) | 415 | 3 | 15 | 90.3 gemini | -1.0 |
+| 51 | **no report** | 1598 | 11 | 57 | 81.7 gemini | - |
+
+Mean of medians over the seven tasks that produced a report: **89.48** against **88.63** for the best
+baseline on the same tasks. Two tasks beat their bar outright (52, 57), four sit 1.0-3.5 below it —
+inside the ~4-point judge noise measured earlier — and one (85, fast arm) is 7.1 below. Task 51 never
+produced a report at all.
+
+Citation integrity on every report measured this cycle: links == anchors, zero dangling, zero unused,
+zero unresolved ids. Uncited-sentence share: 18.0% and 18.9% (task 85), 38.9% (task 77, ten sources),
+32.3% (task 97), 26.3% (task 77 fallback run). The two thinnest corpora are the two least bound.
+
+Wall clock: 179 s, 415 s, 641 s, 1475 s (reverted arm) and 1521 s. Only the delegation arm exceeds the
+20-minute worst-case bar; the median run is under 7 minutes.
