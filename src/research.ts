@@ -285,7 +285,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	/** Child session hosting a run in parent mode, if one is live. */
 	let hosted: HostedRun | undefined;
 	/** A delegation tool only exists when a subagents extension supplies one. */
-	const delegationReady = () => pi.getAllTools().some((tool) => tool.name === SUBAGENT_TOOL);
+	// A tool can be listed while its implementation is not there - a stale inventory advertised a
+	// `subagent` that never answered a single call. Offering it then costs a whole batch of the run,
+	// so delegation can be switched off for measurement with PI_RESEARCH_NO_DELEGATION=1.
+	const delegationEnabled = !process.env.PI_RESEARCH_NO_DELEGATION;
+	const delegationReady = () =>
+		delegationEnabled && pi.getAllTools().some((tool) => tool.name === SUBAGENT_TOOL);
 
 	/** Last journal written by a run, so /research-view works after it settles. */
 	let lastJournal: string | undefined;
