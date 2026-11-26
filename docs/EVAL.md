@@ -402,3 +402,25 @@ compensate for the quality loss.
 Reverted. The one thing kept from that change is a test repair it exposed: the "clip on a word
 boundary" case sat below the exit-code line in `test/research-corpus.test.ts`, so it had been failing
 while `npm test` still exited 0. That is fixed, and the suite now reports zero failures.
+
+### Cycle 5 environment and view checks
+
+Environment (every cycle records this): image `pi-research-sandbox:browser`; package mounted read-only
+at `/pkg`; agent dir holding only `auth.json`, `models.json` and a three-line `settings.json` with no
+`packages`; run as `pi -e /pkg` inside tmux; commit `1184011` for the A/B and `7806043` for the
+fallback test; `PI_RESEARCH_NO_DELEGATION=1`, `PI_RESEARCH_BROWSER=1`, `PI_RESEARCH_STALL_RETRY_MS=300000`.
+
+```text
+docker run -d --name pi-off2 \
+  -v /tmp/bench/pkg-del:/pkg:ro -v /tmp/bench/ag-off:/agent -v /tmp/bench/wk-off:/work \
+  -w /work -e PI_CODING_AGENT_DIR=/agent -e PI_RESEARCH_MODEL=deepseek-v4.1-flash \
+  -e PI_RESEARCH_BROWSER=1 -e PI_RESEARCH_STALL_RETRY_MS=300000 -e PI_RESEARCH_NO_DELEGATION=1 \
+  pi-research-sandbox:browser
+```
+
+Views, checked on the finished task-77 run (`tmux capture-pane`, saved to `/tmp/eval/shots/`):
+
+- progress/widget and round lines: `Research · 50 sources · 20m06s`, then `Report saved (12 rounds · 54 sources · 78 passages · 1475s)`
+- `/research-view` paging: header reads `Question: ... / Status: complete · 12 rounds · 54 sources · 1475s / Report: /work/t77/research/...`, rounds list queries, and failed URLs show their reason (`Page appears to be a bot wall...`), Down pages through them; captures in `cycle5-view-head.txt` and `cycle5-view-paged.txt`
+- citations resolve: `eval:citations` gives links == anchors with zero dangling, unused and unresolved on every report measured this cycle
+- no hand-written report: the tool guard refuses collection once a run has ended (`No research run is collecting evidence.`), and the post-run turn is held (`isRetired`)
