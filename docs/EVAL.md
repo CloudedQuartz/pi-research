@@ -518,3 +518,29 @@ claims (the refined metric): 2, 3 and 10 per report against 19, 19 and 56 uncite
 97 89.27, 51 no report. Mean of the seven reporting medians **89.62** against **88.63** for the best
 baseline on the same tasks; three tasks beat their bar outright (52, 57, 77), four sit 1.0-2.9 below
 inside the noise band, task 85 is 6.5 below, and task 51 still produces nothing.
+
+### Audit update after cycles 6-7
+
+| requirement | state now |
+|---|---|
+| report stage has no tools | met (`src/research.ts:1022`) |
+| links == anchors, zero dangling/unused/unresolved | met on all seven reports measured this session |
+| uncited-claim count per cycle | met, refined to claims vs reasoning |
+| *every* claim cited | not met: 2-10 uncited claims per report |
+| median >= best baseline, 8 tasks | **3 of 7 above** (52, 57, 77); 4 within 1.0-2.9 (inside noise); 85 is 6.5 below; 51 produces none |
+| retrieval gate on corpus changes | met: 0.428/0.576/0.521/0.480 unchanged, packet 0.413 |
+| wall clock per cycle | met: 12 min and 18 min for three parallel tasks |
+| live UX + screenshots | met: `cycle5-view-head.png`, `cycle5-view.png` |
+| gates | met: `tsc --noEmit` 0, `npm test` 0, zero FAIL lines |
+
+Blocking defects, with the attempts each has survived:
+
+- **Task 51 ends with no report.** Silent provider at the end of a long run; survived three attempts
+  (retry budget `3ad49f1`, stall retry `9ec629b`, stop-reason recording `efea9a9`). Evidence: `Stopped
+  in the research stage without a report (no reply, 67 passages, 57 sources)` after 11 rounds.
+- **Task 85 is 6.5 below its bar.** Survived three levers (packet width `14ba2a0`, delegation breadth,
+  query breadth `be18518`); its dimensions are insight 81.0, readability 82.0, comprehensiveness 85.2,
+  instruction_following 90.0, so the shortfall is analysis depth rather than corpus size.
+
+Per the blocked stop condition these two are reported with their measurements rather than patched
+blind a fourth time.
