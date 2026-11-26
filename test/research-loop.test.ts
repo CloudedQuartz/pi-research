@@ -3,7 +3,7 @@
  * No network, no model calls: run with `npm test`.
  */
 import assert from "node:assert/strict";
-import { MAX_ROUNDS, ResearchLoop } from "../src/research-loop.js";
+import { MAX_ROUNDS, ResearchLoop, modelObject } from "../src/research-loop.js";
 
 const failures: string[] = [];
 const check = (label: string, run: () => void) => {
@@ -79,6 +79,22 @@ check("a run that never runs out of queries stops at the round limit", () => {
 	assert.equal(loop.assess(keep, packet, true, 1), true);
 	assert.equal(loop.assess(keep, packet, true, MAX_ROUNDS), false);
 	assert.match(loop.stopReason, /round limit/);
+});
+
+check("a reply with a stray brace after the object still parses", () => {
+	// This is the shape that ended a live run: valid JSON, then one extra closing brace.
+	const parsed = modelObject('{"needs":[{"id":1,"answered":true}],"continueSearching":false}\n}');
+	assert.equal(Array.isArray(parsed.needs), true);
+});
+
+check("a fenced reply with commentary around the object still parses", () => {
+	const parsed = modelObject('Here is my assessment:\n```json\n{"needs":[],"continueSearching":false}\n```\nDone.');
+	assert.deepEqual(parsed.needs, []);
+});
+
+check("a brace inside a string does not end the object early", () => {
+	const parsed = modelObject('{"gap":"the { bracket } test","continueSearching":true} trailing');
+	assert.equal(parsed.gap, "the { bracket } test");
 });
 
 console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");

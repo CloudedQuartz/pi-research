@@ -30,10 +30,43 @@ const strings = (value: unknown): string[] => Array.isArray(value)
 	? value.filter((item): item is string => typeof item === "string" && !!item.trim()).map((item) => item.trim())
 	: [];
 
+/**
+ * Parse the model's JSON object, tolerating prose or a stray brace around it.
+ *
+ * A reply of `{...}` followed by one extra `}` made JSON.parse throw "Extra data", the error escaped
+ * into the stage handler, and the run ended with no report while its corpus sat unused - three runs
+ * this session died that way. Taking the first balanced object keeps a cosmetic mistake from costing
+ * the whole run.
+ */
 export function modelObject(text: string): Record<string, unknown> {
-	const value: unknown = JSON.parse(text.trim().replace(/^```(?:json)?\s*\n|\n```$/gi, ""));
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object.");
-	return value as Record<string, unknown>;
+	const cleaned = text.trim().replace(/^```(?:json)?\s*\n|\n```$/gi, "");
+	const accept = (candidate: string): Record<string, unknown> => {
+		const value: unknown = JSON.parse(candidate);
+		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a JSON object.");
+		return value as Record<string, unknown>;
+	};
+	try {
+		return accept(cleaned);
+	} catch {
+		const start = cleaned.indexOf("{");
+		if (start < 0) throw new Error("The reply contained no JSON object.");
+		let depth = 0;
+		let inString = false;
+		let escaped = false;
+		for (let index = start; index < cleaned.length; index++) {
+			const character = cleaned[index]!;
+			if (inString) {
+				if (escaped) escaped = false;
+				else if (character === "\\") escaped = true;
+				else if (character === '"') inString = false;
+				continue;
+			}
+			if (character === '"') inString = true;
+			else if (character === "{") depth++;
+			else if (character === "}" && --depth === 0) return accept(cleaned.slice(start, index + 1));
+		}
+		throw new Error("The reply's JSON object was not closed.");
+	}
 }
 
 /** Upper bound on search rounds before the report is written anyway. */
