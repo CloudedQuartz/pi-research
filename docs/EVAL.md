@@ -291,3 +291,14 @@ and judged with the same judge, prompt and weights (`/tmp/eval/judge_baselines8.
 Per-task bar for "on par or better" is the bold number: 81.7 / 78.6 / 90.2 / 90.3. Single judge call
 per baseline article, so these carry the same ~4-point noise as everything else here; our own
 numbers are reported as medians of three.
+
+### Concurrency and throttling (cycle 3)
+
+Three container runs on one provider key throttle each other. In task 62's session the last
+successful turn took 11s with 2,629 input tokens, then nothing for five minutes while the retry
+budget waited (20+40+80+120s) - the wall clock goes into backoff, not into thinking or fetching.
+That is a property of the environment, not of the extension: the same build does 271s runs when
+the provider is not refusing.
+
+Consequence for measurement: judging must not run at the same time as a cycle, since the judge uses
+the same key, and per-run wall clock has to be reported with the concurrency it ran at.
