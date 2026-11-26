@@ -824,3 +824,40 @@ Two defects fell out of the smoke run and are recorded rather than fixed mid-fli
   library, the view reports the round's search results. Same word, two meanings.
 - `handmade.md` was written when a *new* turn asked for it. That is normal tool use in a new turn, not
   the extension writing a report without a corpus, but the earlier phrasing of this check was wrong.
+
+### Retrieval gate: why no re-run was triggered after cycle 7
+
+The standing numbers are nDCG@10 0.428, MAP 0.576, R-Precision 0.521, BPref 0.480 over the corpora of
+tasks 77, 85 and 88, measured after `PER_QUERY` was raised to 2. Changes since then, and why none of them
+requires a re-run:
+
+| change | affects retrieval? | why |
+|---|---|---|
+| brief prompt decomposition | no | plans needs, touches no index, no ranking, no extraction |
+| tolerant JSON parsing | no | transport of the model's reply |
+| plan and judgment as tool arguments | no | same payload, different channel |
+| ten-round bound | no | bounds how long a run continues, not how a passage ranks |
+| twenty sources per round | no | bounds how many candidates one round fetches; `selectUrls` still ranks with the same function and the same per-query cap |
+
+The last one is the only arguable case: it changes *which* candidates reach the corpus, so a corpus-level
+metric could move even though the ranker is untouched. The measured effect on quality was neutral (task
+77: 87.93 single run before the cap, 88.09 after; task 88: 91.63 before, 91.88 after), and the retrieval
+benchmark scores retrieval over a fixed stored corpus, so it would not register the difference. If packet
+width or segmentation is ever changed, the gate must be re-run.
+
+### Live UX coverage, stated honestly
+
+Cycle 5 and cycle 14 have captured evidence: `cycle5-view*.png|txt` and `cycle14-run.txt`,
+`cycle14-view.txt`, `cycle14-after-run.txt`, `cycle14-blocked.txt`, `cycle14-report.md` under
+`/tmp/eval/shots`. Cycles 6 to 13 were checked from live panes and journals (`Research · N sources ·
+XmYYs`, `✓ Round ...`, `Report saved (...)`, `/research-view` paging) but their captures were not saved
+to `/tmp/eval/shots`; that is a gap in the record, not in the checks, and it is recorded here rather
+than implied.
+
+### Citation integrity across every report on disk
+
+All 28 reports produced this session were audited. None contains an unresolved citation marker. The six
+newest: 52/52, 86/86, 50/50, 50/50, 73/73 and 54/54 links to anchors, zero dangling, zero unused, and
+uncited claims of 0, 9, 2, 1, 7 and 3 respectively. The invariant the objective asks for - every
+`[P..]`/`[I..]` resolving to a linked passage, nothing dangling, nothing unused - holds on every report
+checked.
