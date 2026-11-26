@@ -73,6 +73,7 @@ Afterwards:
 | `PI_RESEARCH_TRANCO` | Path to a locally cached Tranco list; a domain absent from it ranks slightly lower. |
 | `PI_RESEARCH_SUBAGENT_WAIT_MS` | Bounds the wait when collecting a subagent's result. Unset means wait for it. |
 | `PI_RESEARCH_STAGE_TIMEOUT_MS` | Unset by default: a stage may take as long as it needs. Set it to end a stage that never replies, e.g. `1800000` for 30 minutes. |
+| `PI_RESEARCH_STALL_RETRY_MS` | Unset by default. Set it (e.g. `300000`) to re-send the current stage when the provider returns nothing at all for that long — no reply, no error, no tool calls. A turn that is merely slow keeps emitting tool calls, so it is not affected. Each silent retry is shown in the progress line; the run ends only after three of them, and says why. |
 
 ## Troubleshooting
 
