@@ -494,3 +494,27 @@ run that scored worst was also the one that stopped after a single round.
 
 Eight-task mean of medians with this cycle's numbers: **89.09** against **88.63** for the best baseline
 on the same seven reporting tasks.
+
+### Cycle 7: two candidate pages per query
+
+Container `pi-par2`, package at `/tmp/bench/pkg-v4` from commit `be18518`, delegation off, browser on,
+same procedure as cycle 6. Started 08:37:46; last report saved 08:56 - about 18 minutes for three tasks.
+
+| task | wall | rounds | sources | median (range) | previous | delta | bar |
+|---|---|---|---|---|---|---|---|
+| 62 | 921 s | 2 | 44 | 87.33 (85.99-88.32) | 87.19 | +0.1 | 90.2 |
+| 77 | 354 s | 2 | 24 | **87.42** (87.12-89.54) | 83.61 | **+3.8** | 85.7 |
+| 85 | 468 s | 2 | 18 | 84.59 (83.76-84.90) | 84.80 | -0.2 | 91.1 |
+
+Corpora roughly doubled in the same number of rounds (77: 10 -> 24 sources, 85: 8 -> 18), and task 77
+crossed its bar. Task 85 did not move despite comprehensiveness rising to 85.2 from 72.6 - so its
+shortfall is not corpus size alone. Two of three tasks flat, one improved at the edge of the noise:
+recorded as neutral-to-positive, kept for the halved round count, and not pursued further.
+
+Citation integrity: 58/58, 56/56 and 68/68 links with zero dangling, unused or unresolved. Uncited
+claims (the refined metric): 2, 3 and 10 per report against 19, 19 and 56 uncited reasoning sentences.
+
+**Eight-task state after this cycle**: 52 92.30, 57 94.13, 62 87.33, 77 87.42, 85 84.59, 88 92.32,
+97 89.27, 51 no report. Mean of the seven reporting medians **89.62** against **88.63** for the best
+baseline on the same tasks; three tasks beat their bar outright (52, 57, 77), four sit 1.0-2.9 below
+inside the noise band, task 85 is 6.5 below, and task 51 still produces nothing.
