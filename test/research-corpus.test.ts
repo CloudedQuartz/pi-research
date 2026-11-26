@@ -187,9 +187,6 @@ check("a completion notification queues only new pages", () => {
 	assert.deepEqual(queueUrls("No links", []), [], "a reply without pages queues nothing");
 });
 
-console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
-if (failures.length) process.exitCode = 1;
-
 check("a long question is clipped on a word boundary, not mid-word", () => {
 	const question = `${"word ".repeat(90)}end`;
 	const lines = formatJournal({
@@ -198,8 +195,17 @@ check("a long question is clipped on a word boundary, not mid-word", () => {
 		startedAt: Date.now() - 1_000,
 		finishedAt: Date.now(),
 		rounds: [],
+		assessments: [],
+		inspections: [],
+		delegations: [],
 	} as never);
 	const line = lines.find((entry) => entry.startsWith("Question:")) ?? "";
 	assert.ok(line.endsWith("\u2026"), "the clip is marked");
-	assert.ok(!/\s\S+\u2026$/.test(line.replace(/^Question: /, "")), "clipped at whitespace");
+	const body = line.replace(/^Question: /, "").replace(/\u2026$/, "");
+	assert.ok(question.startsWith(body), "the clip is a prefix of the question");
+	// The character the clip stopped before must be whitespace, so no word was cut in half.
+	assert.equal(question.charAt(body.length), " ", "cut on a word boundary");
 });
+
+console.log(failures.length ? `\n${failures.length} case(s) failed: ${failures.join("; ")}` : "\nall cases passed");
+if (failures.length) process.exitCode = 1;
