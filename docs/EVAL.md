@@ -861,3 +861,27 @@ newest: 52/52, 86/86, 50/50, 50/50, 73/73 and 54/54 links to anchors, zero dangl
 uncited claims of 0, 9, 2, 1, 7 and 3 respectively. The invariant the objective asks for - every
 `[P..]`/`[I..]` resolving to a linked passage, nothing dangling, nothing unused - holds on every report
 checked.
+
+### Cycle 17: /research-inject, verified live
+
+Container `pi-demo` (repo mounted read-only at `/pkg`, `/agent` with no packages, `pi -ne -e /pkg`),
+against the report already on disk from the demo run.
+
+`/research-inject 4` produced, in the session itself:
+
+```
+Injected 4 cited records (2965 chars).
+```
+
+with the four records rendered in the transcript — question, status, stop reason, then each record
+numbered, sourced (URL, retrieval date, text offsets) and quoted. The capture is
+`/tmp/eval/shots/cycle17-inject.txt`.
+
+Offline coverage: six tests in `test/research-inject.test.ts` (record recovery from a rendered report,
+unresolved citations never becoming records, numbering, the record limit, the character budget, a run with
+no report). Suite at 35 checks, `tsc --noEmit` 0.
+
+Why it exists: before this, a finished run could be read (`/research-view`) but not discussed — the model
+had no handle on the evidence. Injection uses the report's own numbering so `[3]` in a follow-up means the
+same record the report meant, and it is bounded twice (400 chars per quote, 60,000 per bundle) because
+injected text is context every later turn pays for.
