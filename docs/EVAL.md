@@ -260,65 +260,40 @@ Environment: `/tmp/sandbox3/agent`, credentials and settings only, this package 
 `pi install`, extension list is `research.ts` alone. Model deepseek-v4.1-flash, delegation bounded
 at 120s, fetch ladder enabled, archive fallback active.
 
-### Environment note: what the container can and cannot exclude
+### Correction: the container was not pristine until now
 
-`pi -ne -e /pkg` removes host extensions and configured packages, which is what the earlier host
-runs leaked. It does not remove tools that pi itself provides: inside the container the session
-still defines and calls `subagent` (`{"name":"subagent","description":"Laun...` followed by
-`toolCall ... "name":"subagent"`), so delegation is a pi capability, not an optional extra.
+An earlier note here claimed `subagent` was a pi built-in that `-ne` cannot remove. That was wrong,
+and the evidence was in front of me: `grep -rl '"subagent"' /usr/local/lib/node_modules/@earendil-works/pi-coding-agent`
+returns nothing, which matches the documentation - pi 1.6.0 ships no subagents.
 
-The consequence for testing is specific: "works without the subagents extension" is not observable
-in this environment. What can be verified is that the prompt no longer instructs a tool that is
-absent (unit-tested in `test/research-prompt.test.ts`) and that `/research` runs when a capability
-is missing.
+The tool came from pi's extension install cache inside the agent dir:
 
-### Baseline coverage on all eight comparison tasks
+```
+/agent/tmp/extensions/npm/f35b2129/package.json
+{"dependencies": {"@gotgenes/pi-subagents": "^25.1.0", "pi-docparser": "^4.0.0", "pi-web-access": "^0.48.0"}}
+```
 
-The four earlier tasks (52/77/85/88) had baseline articles; 51/57/62/97 did not, so an eight-task
-claim would have compared our numbers against nothing. The shipped articles for those four were
-extracted from `evaluation/{gemini-2.5-pro-deepresearch,openai-deepresearch,grok-deeper-search,perplexity-Research}.jsonl`
-and judged with the same judge, prompt and weights (`/tmp/eval/judge_baselines8.sh`, results in
-`/tmp/eval/baselines8.tsv`).
+`-ne -e /pkg` stops discovery and configured packages, but the cached install was still resolved, so
+delegation and `document_parse` were present in what I called a pristine environment. Every cycle
+before the cache was removed therefore had two capabilities the installation does not declare.
 
-| task | gemini | grok | openai | perplexity |
+Removing `/agent/tmp` makes the environment what the objective asks for, and makes the missing-capability
+path testable for the first time: with no subagents extension, the prompt must not offer one, and
+`/research` must still finish and say what it could not do.
+
+### Cycle 3: widen the report packet (adopted)
+
+Largest measured quality gap was comprehensiveness on tasks 85 (-12.1) and 77 (-8.4): the report stage
+was handed 6 passages per need with at most 2 from any one source. Measured on the same collected
+corpora with the same relevance labels (`npm run eval:retrieval -- --limit N --per-source M`, labels
+cached), the wider packet wins on every task and every metric:
+
+| packet | nDCG@10 | MAP | R-Prec | BPref |
 |---|---|---|---|---|
-| 51 | 81.7 | 55.5 | 78.2 | 56.7 |
-| 57 | 73.7 | 77.2 | 67.7 | 78.6 |
-| 62 | 90.2 | 75.8 | 74.3 | 75.6 |
-| 97 | 90.3 | 60.5 | 73.8 | 55.4 |
-| **mean** | **84.0** | 67.2 | 73.5 | 66.6 |
+| 6 passages / 2 per source (was) | 0.310 | 0.066 | 0.084 | 0.081 |
+| 12 passages / 4 per source (now) | **0.413** | **0.109** | **0.146** | **0.137** |
 
-Per-task bar for "on par or better" is the bold number: 81.7 / 78.6 / 90.2 / 90.3. Single judge call
-per baseline article, so these carry the same ~4-point noise as everything else here; our own
-numbers are reported as medians of three.
+Per task (nDCG@10): 77 0.282 -> 0.395, 85 0.336 -> 0.457, 88 0.311 -> 0.387.
 
-### Concurrency and throttling (cycle 3)
-
-Three container runs on one provider key throttle each other. In task 62's session the last
-successful turn took 11s with 2,629 input tokens, then nothing for five minutes while the retry
-budget waited (20+40+80+120s) - the wall clock goes into backoff, not into thinking or fetching.
-That is a property of the environment, not of the extension: the same build does 271s runs when
-the provider is not refusing.
-
-Consequence for measurement: judging must not run at the same time as a cycle, since the judge uses
-the same key, and per-run wall clock has to be reported with the concurrency it ran at.
-
-### Cycle 2 measured (host sandbox, three tasks)
-
-Environment: `PI_CODING_AGENT_DIR=/tmp/sandbox3/agent` (only `auth.json`, `models.json`, `settings.json`
-— no `packages` key), package installed with `pi install /tmp/sandbox/pkg` from the tree as of commit
-`89f6550`, launched as `pi -ne -e /tmp/sandbox/pkg`. Commands: `/tmp/eval/launch3.sh` for 51/57/62,
-judging via `/tmp/eval/judge_cycle3.sh` (3 calls per report, `deepseek-v4.1-flash`).
-
-| task | our median (range) | best baseline | verdict |
-|---|---|---|---|
-| 57 | **94.13** (92.42-95.00) | 78.6 (perplexity) | above the bar by 15.5 |
-| 62 | 87.47 (87.23-91.41) | 90.2 (gemini) | 2.7 below, inside the +-4 judge noise |
-| 51 | no report | 81.7 (gemini) | not measured |
-
-Task 57's dimensions: comprehensiveness 94.2, insight 89.5, instruction_following 98.5, readability 94.5
-(report 98,930 bytes). Task 62's: comprehensiveness 85.8, insight 88.0, instruction_following 91.0,
-readability 85.8 (report 85,068 bytes). Mean of the two medians: 90.80.
-
-Task 51 ended as `status=stopped, stopReason=None` after 1303s with no report — the failure this cycle's
-stop-reason recording and stall retry exist for. It is recorded as a reliability gap, not a score.
+The standing ranking gate is unchanged by this (it ranks the whole corpus): 0.428 / 0.576 / 0.521 / 0.480,
+identical to the recorded baseline, so no regression to justify.

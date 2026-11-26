@@ -7,7 +7,10 @@
  * so a rerun is offline and free. Metrics follow riyaa42's scripts/evaluate.ts on the
  * earlier branch - MAP, R-Precision, BPref (Buckley & Voorhees, 2004) and nDCG@10.
  *
- * Usage: tsx scripts/retrieval-eval.ts <evidence.json|dir>...
+ * Usage: tsx scripts/retrieval-eval.ts [--limit N] [--per-source M] <evidence.json|dir>...
+ *
+ * Without flags every stored passage is ranked, which measures the ranking alone. With
+ * `--limit 6 --per-source 2` it measures the packet the report stage is handed instead.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -121,8 +124,23 @@ async function expand(args: string[]): Promise<string[]> {
 	return files;
 }
 
+/** `--limit N --per-source M` measure the packet the report stage actually sees, not every passage. */
+function flags(argv: string[]): { files: string[]; limit: number; perSource: number } {
+	let limit = 400;
+	let perSource = 400;
+	const files: string[] = [];
+	for (let index = 0; index < argv.length; index++) {
+		const arg = argv[index]!;
+		if (arg === "--limit") limit = Number(argv[++index]);
+		else if (arg === "--per-source") perSource = Number(argv[++index]);
+		else files.push(arg);
+	}
+	return { files, limit, perSource };
+}
+
 async function main(): Promise<void> {
-	const files = await expand(process.argv.slice(2));
+	const { files: given, limit, perSource } = flags(process.argv.slice(2));
+	const files = await expand(given);
 	if (!files.length) throw new Error("no evidence files given");
 	console.log("| evidence file | needs | passages | nDCG@10 | MAP | R-Prec | BPref |");
 	console.log("|---|---:|---:|---:|---:|---:|---:|");
@@ -137,7 +155,7 @@ async function main(): Promise<void> {
 		let dirty = false;
 		const rows: { ndcg: number; map: number; rPrec: number; bpref: number }[] = [];
 		for (const need of evidence.needs) {
-			const hits = library.retrieve(need.question, 400, 400);
+			const hits = library.retrieve(need.question, limit, perSource);
 			if (!hits.length) continue;
 			const passages = hits.map((hit) => ({ id: key(hit.passage.text), text: hit.passage.text }));
 			if (!cache[need.id]) {
