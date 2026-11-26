@@ -271,3 +271,23 @@ The consequence for testing is specific: "works without the subagents extension"
 in this environment. What can be verified is that the prompt no longer instructs a tool that is
 absent (unit-tested in `test/research-prompt.test.ts`) and that `/research` runs when a capability
 is missing.
+
+### Baseline coverage on all eight comparison tasks
+
+The four earlier tasks (52/77/85/88) had baseline articles; 51/57/62/97 did not, so an eight-task
+claim would have compared our numbers against nothing. The shipped articles for those four were
+extracted from `evaluation/{gemini-2.5-pro-deepresearch,openai-deepresearch,grok-deeper-search,perplexity-Research}.jsonl`
+and judged with the same judge, prompt and weights (`/tmp/eval/judge_baselines8.sh`, results in
+`/tmp/eval/baselines8.tsv`).
+
+| task | gemini | grok | openai | perplexity |
+|---|---|---|---|---|
+| 51 | 81.7 | 55.5 | 78.2 | 56.7 |
+| 57 | 73.7 | 77.2 | 67.7 | 78.6 |
+| 62 | 90.2 | 75.8 | 74.3 | 75.6 |
+| 97 | 90.3 | 60.5 | 73.8 | 55.4 |
+| **mean** | **84.0** | 67.2 | 73.5 | 66.6 |
+
+Per-task bar for "on par or better" is the bold number: 81.7 / 78.6 / 90.2 / 90.3. Single judge call
+per baseline article, so these carry the same ~4-point noise as everything else here; our own
+numbers are reported as medians of three.
