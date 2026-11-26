@@ -259,3 +259,15 @@ installed; that is fixed by gating the delegation paragraph on the tool existing
 Environment: `/tmp/sandbox3/agent`, credentials and settings only, this package installed with
 `pi install`, extension list is `research.ts` alone. Model deepseek-v4.1-flash, delegation bounded
 at 120s, fetch ladder enabled, archive fallback active.
+
+### Environment note: what the container can and cannot exclude
+
+`pi -ne -e /pkg` removes host extensions and configured packages, which is what the earlier host
+runs leaked. It does not remove tools that pi itself provides: inside the container the session
+still defines and calls `subagent` (`{"name":"subagent","description":"Laun...` followed by
+`toolCall ... "name":"subagent"`), so delegation is a pi capability, not an optional extra.
+
+The consequence for testing is specific: "works without the subagents extension" is not observable
+in this environment. What can be verified is that the prompt no longer instructs a tool that is
+absent (unit-tested in `test/research-prompt.test.ts`) and that `/research` runs when a capability
+is missing.
