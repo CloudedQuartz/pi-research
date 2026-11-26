@@ -473,3 +473,24 @@ Wall clock: 179 s, 415 s, 641 s, 1475 s (reverted arm) and 1521 s. Only the dele
 Task 51 remains the blocking defect: it ends without a report at all, and the silent-provider failure
 has now survived three separate attempts (retry budget, stall retry, stop-reason recording). Under the
 iteration policy that line stops here with measurements recorded rather than a fourth blind change.
+
+### Cycle 6: three tasks in parallel on the current build
+
+Container `pi-par`, package at `/tmp/bench/pkg-v3` from commit `8078345`, mounted read-only, agent dir
+with only credentials and a settings.json declaring no packages, delegation off, browser on.
+Launched 08:16:41, all three reports saved by 08:29 - **about 12 minutes for the cycle**, well inside
+the under-an-hour target.
+
+| task | wall | rounds | sources | reports | median (range) | bar | delta |
+|---|---|---|---|---|---|---|---|
+| 62 | 624 s | 4 | 23 | 69,486 B | 87.19 (86.67-87.62) | 90.2 | -3.0 |
+| 85 | 342 s | 1 | 8 | 70,319 B | 84.80 (79.44-85.97) | 91.1 | -6.3 |
+| 88 | 661 s | 7 | 43 | 64,215 B | **92.32** (91.40-93.37) | 94.3 | -2.0 |
+
+Task 88 improved from 90.80 to 92.32 on the wider packet. Task 85 remains the outlier: its score tracks
+corpus breadth across every arm measured - 8 sources gave 84.80, 17 gave 84.03, 45 gave 88.75 - and its
+comprehensiveness dimension moves with it (72.6-83.5 here against 89.5 in the 45-source arm). The
+run that scored worst was also the one that stopped after a single round.
+
+Eight-task mean of medians with this cycle's numbers: **89.09** against **88.63** for the best baseline
+on the same seven reporting tasks.
