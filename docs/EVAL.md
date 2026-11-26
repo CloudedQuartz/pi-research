@@ -383,3 +383,22 @@ never answered it).
 Per the iteration policy this line is now recorded rather than patched again: the reliability defect
 has resisted three attempts (retry budget, stall retry, stop-reason recording), so the evidence is
 reported instead of stacked with a fourth blind change.
+
+### Cycle 5: the gap-derived query fallback, measured and reverted
+
+The fallback was added because task 77 finished in one round with ten sources. Re-running the same
+task on the same container settings with the fallback in place:
+
+| task 77 | wall | rounds | sources | report | median (range) |
+|---|---|---|---|---|---|
+| without fallback | **179 s** | 1 | 10 | 79 KB | **83.61** (76.97-84.10) |
+| with fallback | 1475 s | 12 | 54 | 38 KB | 77.14 (76.49-83.52) |
+
+More searching made the report worse: 6.5 points down on the median, 8.2x the wall clock, and a
+report half the size (the corpus spread over 54 sources instead of a tight 10, so each need got
+thinner coverage). 26.3% of its sentences carried no citation against 38.9% before, which did not
+compensate for the quality loss.
+
+Reverted. The one thing kept from that change is a test repair it exposed: the "clip on a word
+boundary" case sat below the exit-code line in `test/research-corpus.test.ts`, so it had been failing
+while `npm test` still exited 0. That is fixed, and the suite now reports zero failures.

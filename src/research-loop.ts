@@ -66,9 +66,6 @@ export class ResearchLoop {
 		if (!this.needs.some((need) => need.essential)) throw new Error("The plan must contain an essential research need.");
 	}
 
-	/** Needs whose queries were derived from the question rather than proposed by the assessment. */
-	private readonly derivedQueries = new Set<number>();
-
 	pendingQueries(): string[] {
 		const pending = new Map<string, string>();
 		for (const need of this.needs) {
@@ -186,36 +183,13 @@ export class ResearchLoop {
 		else this.stalledRounds += 1;
 		if (this.needs.every((need) => !need.essential || need.answered)) this.stopReason = "The assessment found evidence for every essential research need.";
 		else if (this.stalledRounds >= 2) this.stopReason = "Two rounds added no new sources or passages; further searches were not producing evidence.";
-		else if (!this.pendingQueries().length) {
-			// An assessment can leave an essential need unanswered without offering a query for it.
-			// Ending there spends the run on the corpus it happens to have, which is how a task
-			// finished in one round with ten sources. Ask the need's own words once instead.
-			const unanswered = this.needs.filter((need) => need.essential && !need.answered && !this.derivedQueries.has(need.id));
-			for (const need of unanswered) {
-				need.queries.push(...deriveQueries(need));
-				this.derivedQueries.add(need.id);
-			}
-			if (!unanswered.length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
-		}
+		else if (!this.pendingQueries().length) this.stopReason = "No new search queries were proposed for the remaining gaps.";
 		else if (!continueSearching && (!gainedEvidence || this.checkingStop)) {
 			this.stopReason = typeof reason === "string" && reason.trim() ? reason.trim() : "Another search was unlikely to change the conclusions.";
 		}
 		this.checkingStop = !continueSearching;
 		return !this.stopReason;
 	}
-}
-
-/**
- * Turn an unanswered need back into searchable words. The assessment's own queries are better, so
- * this is only used once per need, when it offered none.
- */
-export function deriveQueries(need: { question: string; gap?: string }): string[] {
-	const words = need.question.replace(/\s+/g, " ").trim().split(" ");
-	const core = words.slice(0, 14).join(" ");
-	const queries = [core];
-	const gap = need.gap?.replace(/\s+/g, " ").trim();
-	if (gap && gap.split(" ").length <= 12) queries.push(`${gap} ${words.slice(0, 6).join(" ")}`);
-	return queries.map((query) => query.replace(/[?.!]+$/, "").trim()).filter((query) => query.split(" ").length >= 3);
 }
 
 /**

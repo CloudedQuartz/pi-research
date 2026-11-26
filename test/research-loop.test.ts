@@ -3,7 +3,7 @@
  * No network, no model calls: run with `npm test`.
  */
 import assert from "node:assert/strict";
-import { ResearchLoop, deriveQueries } from "../src/research-loop.js";
+import { ResearchLoop } from "../src/research-loop.js";
 
 const failures: string[] = [];
 const check = (label: string, run: () => void) => {
@@ -62,16 +62,10 @@ check("rounds that keep adding evidence are not cut off", () => {
 	assert.equal(loop.stopReason, "");
 });
 
-check("an assessment with no queries gets one derived round, then the loop stops", () => {
+check("no new queries stop the loop", () => {
 	const loop = new ResearchLoop();
 	loop.plan(plan(["alpha"]));
 	loop.markSearched(["alpha"]);
-	// First silence: the need is unanswered and offers nothing, so its own words become the query.
-	assert.equal(loop.assess(assessment([]), packet, true), true);
-	assert.equal(loop.stopReason, "");
-	assert.ok(loop.pendingQueries().length > 0);
-	// Second silence: that fallback has already been spent, so there is nothing left to ask.
-	loop.markSearched(loop.pendingQueries());
 	assert.equal(loop.assess(assessment([]), packet, true), false);
 	assert.match(loop.stopReason, /No new search queries/);
 });
@@ -92,15 +86,4 @@ check("a partial assessment leaves the unjudged needs unanswered instead of thro
 	assert.equal(typeof stopping, "boolean");
 	assert.equal(loop.needs[1]?.answered, false);
 	assert.match(loop.assessmentNotes.at(-1) ?? "", /judged 1 of 2 needs/);
-});
-
-check("an unanswered need with no proposed query gets a query derived from its words", () => {
-	const queries = deriveQueries({ question: "How does need for closure affect misinformation acceptance?", gap: "no evidence on urgency" });
-	assert.ok(queries.length >= 1);
-	assert.match(queries[0]!, /need for closure/);
-	assert.doesNotMatch(queries[0]!, /\?$/);
-});
-
-check("a need too short to search contributes nothing rather than a useless query", () => {
-	assert.deepEqual(deriveQueries({ question: "Why?" }), []);
 });
