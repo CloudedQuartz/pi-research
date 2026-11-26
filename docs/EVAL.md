@@ -688,3 +688,25 @@ value; this run is recorded as a reliability failure, not as a quality data poin
 **Eight-task state**: 52 92.30, 57 94.13, 62 90.42, 77 88.09, 85 90.26, 88 91.88, 97 90.55, 51 92.17.
 Mean of medians **91.23** against **87.76** for the best baseline (+3.47). Six of eight at or above bar;
 85 (-0.8) and 88 (-2.4) inside the noise band; no clear quality shortfall remains.
+
+### Cycle 13: the silent stop was a parse failure, not the provider
+
+Container `pi-c13`, package `/tmp/bench/pkg-v9` from commit `890d8bd`, delegation off, browser on.
+
+The run that died in cycle 12 at exactly this point now completes: task 85 saved a report (2 rounds, 22
+sources, 107 passages, 466 s) with 77/77 citations and 10 uncited claims.
+
+| task 85 run | median | insight | comp | wall |
+|---|---|---|---|---|
+| cycle 8 (5 needs) | 83.39 | 82.25 | 80.8 | 329 s |
+| cycle 10 (needs split) | **90.26** | 87.75 | 90.0 | 498 s |
+| cycle 13 (parser fixed) | 84.53 | 83.75 | 83.3 | 466 s |
+
+**Variance caveat, now measured.** Within a run the judge spread is ~1-2 points, but across runs of the
+same task on near-identical builds it is ~7 points (83.39, 90.26, 84.53). Every per-task number in this
+document is therefore one run's median of three calls, not an estimate of that task's expectation. The
+bars were also judged once per baseline article. Differences smaller than the cross-run spread - which
+includes task 85's -0.8 and task 88's -2.4 against their bars - are not evidence either way.
+
+The honest summary of quality: mean of medians across the eight tasks lands at 90-91 against 87.8 for
+the best baseline, on runs whose within-run medians are stable but whose between-run spread is wide.
