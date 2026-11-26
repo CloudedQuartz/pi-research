@@ -869,7 +869,7 @@ against the report already on disk from the demo run.
 
 `/research-inject 4` produced, in the session itself:
 
-```
+```text
 Injected 4 cited records (2965 chars).
 ```
 
