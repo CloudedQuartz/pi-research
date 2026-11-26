@@ -302,3 +302,23 @@ the provider is not refusing.
 
 Consequence for measurement: judging must not run at the same time as a cycle, since the judge uses
 the same key, and per-run wall clock has to be reported with the concurrency it ran at.
+
+### Cycle 2 measured (host sandbox, three tasks)
+
+Environment: `PI_CODING_AGENT_DIR=/tmp/sandbox3/agent` (only `auth.json`, `models.json`, `settings.json`
+— no `packages` key), package installed with `pi install /tmp/sandbox/pkg` from the tree as of commit
+`89f6550`, launched as `pi -ne -e /tmp/sandbox/pkg`. Commands: `/tmp/eval/launch3.sh` for 51/57/62,
+judging via `/tmp/eval/judge_cycle3.sh` (3 calls per report, `deepseek-v4.1-flash`).
+
+| task | our median (range) | best baseline | verdict |
+|---|---|---|---|
+| 57 | **94.13** (92.42-95.00) | 78.6 (perplexity) | above the bar by 15.5 |
+| 62 | 87.47 (87.23-91.41) | 90.2 (gemini) | 2.7 below, inside the +-4 judge noise |
+| 51 | no report | 81.7 (gemini) | not measured |
+
+Task 57's dimensions: comprehensiveness 94.2, insight 89.5, instruction_following 98.5, readability 94.5
+(report 98,930 bytes). Task 62's: comprehensiveness 85.8, insight 88.0, instruction_following 91.0,
+readability 85.8 (report 85,068 bytes). Mean of the two medians: 90.80.
+
+Task 51 ended as `status=stopped, stopReason=None` after 1303s with no report — the failure this cycle's
+stop-reason recording and stall retry exist for. It is recorded as a reliability gap, not a score.
