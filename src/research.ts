@@ -1066,10 +1066,17 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			return;
 		}
 		if (!ownsSession(ctx)) return;
-		// A delegated agent runs its own tools; only this run's own calls are restricted.
-		if (run.stage !== "research") return { block: true, reason: "Only the evidence collection tool is used during /research." };
-		if (![ROUND_TOOL, INSPECT_TOOL, ADD_URLS_TOOL, ...DELEGATE_TOOLS].includes(event.toolName)) {
-			return { block: true, reason: "Only the evidence collection and delegation tools are used during /research." };
+		// A delegated agent runs its own tools; only this run's own calls are restricted. Each stage
+		// admits the tools that stage is for, and the report stage admits none, so it cannot fetch.
+		const stageTools = run.stage === "brief"
+			? [BRIEF_TOOL]
+			: run.stage === "research"
+				? [ROUND_TOOL, INSPECT_TOOL, ADD_URLS_TOOL, ASSESS_TOOL, ...DELEGATE_TOOLS]
+				: [];
+		if (!stageTools.includes(event.toolName)) {
+			return { block: true, reason: stageTools.length
+				? "Only the evidence collection, judgment and delegation tools are used during /research."
+				: "Only the evidence collection tool is used during /research." };
 		}
 		// A poll that returns "still running" invites the model to give up on its own subagent.
 		// Make the call wait for the outcome instead, and drop any timeout it asked for.
