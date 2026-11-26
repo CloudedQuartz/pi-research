@@ -567,3 +567,41 @@ report, which is its largest body of any run this session.
 Mean of the seven reporting medians **89.81** against **88.63** for the best baseline on the same
 tasks. Four of the seven are at or above their bar (52, 57, 77, 97), two are 1.6-2.0 below inside the
 noise band (62, 88), task 85 is 7.7 below, and task 51 still produces no report.
+
+### Cycle 9: the round bound turns task 51 from nothing into 92.17
+
+Container `pi-r51`, package `/tmp/bench/pkg-v6` from commit `df2b994`, delegation off, browser on, same
+agent-dir construction as the other cycles.
+
+| task 51 | result |
+|---|---|
+| before (3 attempts) | **no report**, 11 rounds, 57 sources, ~1598 s |
+| now | **report saved**, 10 rounds, 144 sources, 107 passages, 1870 s, 107,833 B |
+| median (range) | **92.17** (89.18-92.76) |
+| dimensions | insight 91.5, comprehensiveness 90.0, instruction_following 99.25 |
+| citations | 61/61 links and anchors, zero dangling, unused or unresolved, 20 uncited claims |
+| bar | 81.7 (gemini) -> **+10.5** |
+
+The bound ends searching while the corpus is in hand, so the report stage always gets its turn. Every
+other run this session finished in 1-8 rounds, so nothing else was affected.
+
+**Eight-task table, complete for the first time:**
+
+| task | ours (median) | best baseline | delta |
+|---|---|---|---|
+| 52 | 92.30 | 90.2 | **+2.1** |
+| 57 | 94.13 | 78.6 | **+15.5** |
+| 62 | 88.59 | 90.2 | -1.6 |
+| 77 | 87.42 | 85.7 | **+1.7** |
+| 85 | 83.39 | 91.1 | -7.7 |
+| 88 | 92.32 | 94.3 | -2.0 |
+| 97 | 90.55 | 90.3 | **+0.3** |
+| 51 | 92.17 | 81.7 | **+10.5** |
+
+Mean of medians **90.11** against **87.76** for the best baseline on the same eight tasks. Five tasks
+meet or beat their bar; two sit inside the +-4 noise band below it (62, 88); task 85 is the one clear
+shortfall at -7.7.
+
+Speed caveat, recorded because it is a regression risk: task 51 now takes 1870 s (31 minutes), above
+the 20-minute worst case, because the round bound let it collect 144 sources. Its passage yield was
+poor (107 passages from 144 sources), so the fetch volume is out of proportion to the evidence won.
