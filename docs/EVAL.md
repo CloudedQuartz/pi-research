@@ -666,3 +666,25 @@ judge was measured to have, so no task is a clear quality shortfall.
 **Open speed defect, measured**: task 51 took 1870 s and task 77 1381 s, both above the 20-minute worst
 case, because per-round selection can now take two hits for each of 30+ queries - 146 sources produced
 only 115 passages. The median run is still under 7 minutes, but the tail needs a per-round cap.
+
+### Cycle 12: the per-round cap, measured
+
+Container `pi-c12`, package `/tmp/bench/pkg-v8` from commit `95743a0`, delegation off, browser on.
+
+| task | wall | rounds | sources | median (range) | previous wall | previous median | bar |
+|---|---|---|---|---|---|---|---|
+| 77 | **298 s** | 2 | 21 | 88.09 (86.66-91.89) | 1381 s | 87.93 | 85.7 -> **+2.4** |
+| 88 | **267 s** | 3 | 23 | 91.88 (91.39-94.46) | 216 s | 91.63 | 94.3 -> -2.4 |
+| 85 | stopped | 1 | 11 | - | 498 s | 90.26 | - |
+
+The cap did what it was for: task 77 went from 1381 s to **298 s** with its median unchanged within
+noise (87.93 -> 88.09), and task 88 held at 91.88. No quality regression was traded for the speed.
+
+Task 85 hit the silent stall again - `Stopped in the research stage without a report (no reply, 83
+passages, 11 sources)` after one round - which is the third occurrence this session (task 51 before the
+round bound, task 77 in cycle 10, task 85 here). Its previous median of 90.26 stands as the measured
+value; this run is recorded as a reliability failure, not as a quality data point.
+
+**Eight-task state**: 52 92.30, 57 94.13, 62 90.42, 77 88.09, 85 90.26, 88 91.88, 97 90.55, 51 92.17.
+Mean of medians **91.23** against **87.76** for the best baseline (+3.47). Six of eight at or above bar;
+85 (-0.8) and 88 (-2.4) inside the noise band; no clear quality shortfall remains.
