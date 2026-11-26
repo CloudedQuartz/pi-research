@@ -64,6 +64,12 @@ Collection stops when every essential need is answered, when no new queries are 
 
 `/research-view` opens the last run's journal in a scrollable pager: the question, round by round queries with the sources each one added and the failures it hit, each assessment's coverage and its own reply, the inspections, the stop reason and where the report and child session live. The journal is written as the run goes (`research/<stamp>-<slug>.journal.json`), so it also works after a restart. `/research-stop` ends a hosted run and the child saves the evidence it already collected.
 
+`/research-inject` (optionally `/research-inject 12`) puts the last report's cited evidence into this
+conversation so it can be discussed: the question, why the run stopped, and each cited record as a
+numbered entry with its source, retrieval date, offsets and a quoted excerpt. Records are numbered by the
+report's own evidence numbering, quotes are clipped and the whole bundle is capped, because an injected
+message is context every later turn pays for.
+
 ## Output and save condition
 
 The report with resolved citations is saved as:

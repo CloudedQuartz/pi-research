@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { renderReport } from "./research-evidence.js";
+import { injectBundle, renderReport } from "./research-evidence.js";
 import { ResearchLoop, type EvidencePacket, type SearchGroup, providerRetryDelay, pickAssistantReply, stageTimeoutMs } from "./research-loop.js";
 import { AcquisitionService, checkPublicTarget, classifyFetchFailure, findArchivedCopy } from "./research-acquisition.js";
 import { BROWSER_USER_AGENT, browserEnabled, readWithBrowser, usableBrowserText } from "./research-browser.js";
@@ -885,21 +885,23 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		}
 	};
 
-	const viewJournal = async (ctx: ExtensionContext) => {
-		// Prefer the journal of the run this session hosted; otherwise use the newest one on disk,
-		// so the view still works after a restart or for a run started before this session.
-		let path = lastJournal && existsSync(lastJournal) ? lastJournal : undefined;
-		if (!path) {
-			try {
-				const dir = join(ctx.cwd, "research");
-				const found = (await readdir(dir)).filter((name) => name.endsWith(".journal.json"));
-				const stamps = await Promise.all(found.map(async (name) => ({ name, at: (await stat(join(dir, name))).mtimeMs })));
-				stamps.sort((a, b) => b.at - a.at);
-				path = stamps.length ? join(dir, stamps[0]!.name) : undefined;
-			} catch {
-				path = undefined;
-			}
+	// Prefer the journal of the run this session hosted; otherwise use the newest one on disk,
+	// so both /research-view and /research-inject still work after a restart.
+	const latestJournalPath = async (ctx: ExtensionContext): Promise<string | undefined> => {
+		if (lastJournal && existsSync(lastJournal)) return lastJournal;
+		try {
+			const dir = join(ctx.cwd, "research");
+			const found = (await readdir(dir)).filter((name) => name.endsWith(".journal.json"));
+			const stamps = await Promise.all(found.map(async (name) => ({ name, at: (await stat(join(dir, name))).mtimeMs })));
+			stamps.sort((a, b) => b.at - a.at);
+			return stamps.length ? join(dir, stamps[0]!.name) : undefined;
+		} catch {
+			return undefined;
 		}
+	};
+
+	const viewJournal = async (ctx: ExtensionContext) => {
+		const path = await latestJournalPath(ctx);
 		if (!path) {
 			notify(ctx, "No research journal yet; run /research first.", "info");
 			return;
@@ -1270,6 +1272,34 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		description: "Open the last research run's journal: rounds, queries, sources, failures",
 		handler: async (_args, ctx) => {
 			await viewJournal(ctx);
+		},
+	});
+
+	pi.registerCommand("research-inject", {
+		description: "Inject the last run's cited evidence into this chat (optional: number of records, default 40)",
+		handler: async (args, ctx) => {
+			const limit = Math.max(1, Math.min(200, Number.parseInt(args?.trim() || "40", 10) || 40));
+			const path = await latestJournalPath(ctx);
+			if (!path) {
+				notify(ctx, "No finished research run to inject; run /research first.", "info");
+				return;
+			}
+			let journal: { question?: string; status?: string; stopReason?: string; rounds?: unknown[]; reportPath?: string };
+			try {
+				journal = JSON.parse(await readFile(path, "utf8")) as typeof journal;
+			} catch {
+				notify(ctx, `Could not read the research journal at ${path}.`, "error");
+				return;
+			}
+			const reportPath = journal.reportPath && existsSync(journal.reportPath) ? journal.reportPath : undefined;
+			const report = reportPath ? await readFile(reportPath, "utf8") : undefined;
+			const bundle = injectBundle(journal, report, limit);
+			lastJournal = path;
+			// Sent as a message rather than a widget: it has to be part of the conversation for the next
+			// turns to use it, and it is what the user gets to scroll back through.
+			pi.sendMessage({ customType: "research-inject", content: bundle, display: true });
+			const count = (bundle.match(/^\[\d+\] /gm) ?? []).length;
+			notify(ctx, `Injected ${count} cited record${count === 1 ? "" : "s"} (${bundle.length} chars)${reportPath ? "" : "; the last run saved no report"}.`, "info");
 		},
 	});
 

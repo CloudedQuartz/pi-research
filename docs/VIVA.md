@@ -176,6 +176,12 @@ research session, not by the Pi binary — a parent session's `/tools` listing d
   resolution count.
 - **After**: `/research-view` pages the journal — question, status, rounds with their queries, failures,
   assessments, delegations — inside the session, so the run stays auditable without leaving Pi.
+- **To discuss the result**: `/research-inject` (or `/research-inject 12`) appends the run's cited
+  evidence to the conversation as a message: the question, why it stopped, and each evidence record
+  numbered with its source, retrieval date, offsets and a quoted excerpt. The numbering is the report's
+  own, so a follow-up question can cite `[3]` and mean the same record the report meant. Quotes are
+  clipped to 400 characters and the bundle to 60,000, because injected text is paid for on every later
+  turn.
 
 The journal (`*.journal.json`) is the audit trail: every round, its queries, what each fetch did, the
 per-need judgment, and the stop reason.
