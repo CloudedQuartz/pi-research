@@ -32,7 +32,8 @@
     "ipaddr.js": "2.5.0",
     "linkedom": "0.16.11",
     "pi-web-access": "^0.10.7",
-    "unpdf": "1.6.2"
+    "unpdf": "1.6.2",
+    "@gotgenes/pi-subagents": "^25.1.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
