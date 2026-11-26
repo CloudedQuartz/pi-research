@@ -1,8 +1,8 @@
 #!/bin/bash
 # Start a pristine demo container and open /research in tmux.
 #
-#   scripts/demo.sh                                  # asks for a question, then attaches
-#   QUESTION="..." scripts/demo.sh                   # run one question
+#   scripts/demo.sh                                  # opens pi interactively in the container
+#   QUESTION="..." scripts/demo.sh                   # starts that run, then attaches
 #   QUESTION="..." DETACH=1 scripts/demo.sh          # start it, do not attach
 #   CONTAINER=pi-demo2 scripts/demo.sh               # a second container alongside the first
 #
@@ -70,16 +70,15 @@ for _ in $(seq 1 90); do
 	sleep 1
 done
 
-# 6. The question
-if [ -z "$QUESTION" ] && [ -t 0 ]; then
-	printf '\nQuestion for the demo run (blank for the default): '
-	read -r QUESTION || true
+# 6. The question, when one was given. Without it the session is left interactive.
+if [ -n "$QUESTION" ]; then
+	say "Running: $QUESTION"
+	docker exec "$CONTAINER" tmux send-keys -t "$SESSION" -l "/research $QUESTION"
+	sleep 1
+	docker exec "$CONTAINER" tmux send-keys -t "$SESSION" Enter
+else
+	say "Interactive: type /research <question> to start, /research-view after it finishes"
 fi
-QUESTION=${QUESTION:-What are the most promising approaches to scaling trapped-ion quantum computers, and what limits each one?}
-say "Running: $QUESTION"
-docker exec "$CONTAINER" tmux send-keys -t "$SESSION" -l "/research $QUESTION"
-sleep 1
-docker exec "$CONTAINER" tmux send-keys -t "$SESSION" Enter
 
 cat <<EOF
 
@@ -89,4 +88,9 @@ $(say "Journal:")      ls $DEMO_WORK/demo/research/*.journal.json
 $(say "Stop:")         docker rm -f $CONTAINER
 EOF
 
-[ -n "$DETACH" ] || exec docker exec -it "$CONTAINER" tmux attach -t "$SESSION"
+# Attaching needs a terminal; piped or non-interactive callers get the command instead of a hang.
+if [ -z "$DETACH" ] && [ -t 0 ] && [ -t 1 ]; then
+	exec docker exec -it "$CONTAINER" tmux attach -t "$SESSION"
+else
+	[ -n "$DETACH" ] || say "No terminal to attach to; run: docker exec -it $CONTAINER tmux attach -t $SESSION"
+fi
