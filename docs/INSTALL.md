@@ -22,9 +22,12 @@ pi install "$PWD"               # adds this package to Pi's settings
 
 `pi install` records the package and Pi loads its `pi.extensions` entry
 (`./src/research.ts`). Runtime dependencies come from `package.json`, so a fresh
-install pulls `pi-web-access` (search and page reads) and `@aloth/cred1` (the source
-prior) without any extra steps. Development dependencies (TypeScript, tsx) are not
-needed to run.
+install pulls `pi-web-access` (search and page reads), `@aloth/cred1` (the source
+prior) and `@gotgenes/pi-subagents` (delegation) without any extra steps. Pi loads
+extensions from a package's own manifest and not from its dependencies, so the
+subagents extension is imported by `/research` itself when the session has no
+`subagent` tool — the same way `pi-web-access` is. Development dependencies
+(TypeScript, tsx) are not needed to run.
 
 To keep this off your everyday Pi configuration, isolate the agent directory:
 
