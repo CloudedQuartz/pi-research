@@ -767,6 +767,12 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			if (current.stage !== "report" && current.loop.library.sources.size) await saveEvidence(current);
 				if (aborted || current.stage !== "report" || candidate?.stopReason !== "stop") {
 				const saved = current.loop.library.sources.size || current.stage === "report";
+				// Name the state the run was in, so a stop like this one is diagnosable from the journal
+				// alone instead of needing a session transcript dig.
+				if (!current.loop.stopReason) {
+					const reply = candidate ? `reply ${candidate.text.length} chars, stop=${candidate.stopReason}` : "no reply";
+					current.loop.stopReason = `Stopped in the ${current.stage} stage without a report (${reply}, ${current.packet?.passages.length ?? 0} passages, ${current.loop.library.sources.size} sources${aborted ? ", aborted" : ""}).`;
+				}
 				await writeJournal(current, "stopped");
 				if (REPORT_SIGNAL) await writeFile(REPORT_SIGNAL, `${JSON.stringify({ detail: saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", journal: journalPathFor(current.path) })}\n`, "utf8");
 				notify(ctx, saved ? `No completed report. Evidence saved: ${evidencePath}` : "No completed report or source text.", "warning");
