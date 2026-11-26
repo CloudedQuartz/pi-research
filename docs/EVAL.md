@@ -297,3 +297,23 @@ Per task (nDCG@10): 77 0.282 -> 0.395, 85 0.336 -> 0.457, 88 0.311 -> 0.387.
 
 The standing ranking gate is unchanged by this (it ranks the whole corpus): 0.428 / 0.576 / 0.521 / 0.480,
 identical to the recorded baseline, so no regression to justify.
+
+### Correction: delegation is absent in a truly pristine environment
+
+An earlier note here said `subagent` was a pi core tool that `-ne` cannot remove. That was wrong, and
+the cause was the environment: `/tmp/pi-docker/agent` had accumulated `pi-web-access`, `sessions`,
+`bin`, `models-store.json` and `web-search-cache` from earlier runs, so the container inherited a
+stale tool inventory. In that session five `subagent` calls were made and **none returned a result**;
+the model then reported success it did not have and the run spent a batch of its budget on it.
+
+With a fresh agent directory containing only `auth.json`, `models.json` and a minimal `settings.json`:
+
+```
+23:23 docker run --rm -w /work -v /tmp/sandbox/pkg2:/pkg:ro -v /tmp/pi-docker/agent2:/agent \
+  -e PI_CODING_AGENT_DIR=/agent pi-research-sandbox:browser pi -ne -e /pkg -p "/tools"
+  1 research_round        # no subagent, no fetch_content: the extension supplies its own tools
+```
+
+So the pristine environment genuinely has no delegation, the prompt takes its documented
+"collect every piece of evidence yourself" branch, and the phantom-tool patience above is a property
+of a dirty agent directory rather than of the installation. Cycles from here use `/tmp/pi-docker/agent2`.
