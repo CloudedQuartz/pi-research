@@ -308,7 +308,7 @@ the model then reported success it did not have and the run spent a batch of its
 
 With a fresh agent directory containing only `auth.json`, `models.json` and a minimal `settings.json`:
 
-```
+```text
 23:23 docker run --rm -w /work -v /tmp/sandbox/pkg2:/pkg:ro -v /tmp/pi-docker/agent2:/agent \
   -e PI_CODING_AGENT_DIR=/agent pi-research-sandbox:browser pi -ne -e /pkg -p "/tools"
   1 research_round        # no subagent, no fetch_content: the extension supplies its own tools
