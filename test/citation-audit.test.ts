@@ -38,3 +38,19 @@ test("unresolved passage ids left in the body are counted", () => {
 	const audit = auditReport("r.md", report.replace("by a source", "by [P9] and [I3]"));
 	assert.equal(audit.unresolvedMarkers, 2);
 });
+
+test("any uncited sentence carrying a figure or an attribution counts as an uncited claim", () => {
+	const text = [
+		"# T",
+		"The coefficient was 3.78e-7 per passenger [1](#evidence-1).",
+		"That specification implies roughly 21% more employment at this scale.",
+		"Airports raise regional GDP by 1.3%.",
+		"## Evidence",
+		'#### <a id="evidence-1"></a>[1] Src',
+	].join("\n");
+	const audit = auditReport("r.md", text);
+	// Both uncited sentences state a figure, so under this definition both are claims. Being derived
+	// from a cited figure does not let a number into a report without saying where it came from.
+	assert.equal(audit.uncitedClaims, 2);
+	assert.equal(audit.uncitedReasoning, 0);
+});

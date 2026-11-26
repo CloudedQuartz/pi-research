@@ -25,7 +25,18 @@ export interface CitationAudit {
 	uncitedSentences: number;
 	uncitedShare: number;
 	unresolvedMarkers: number;
+	/** Uncited sentences that state a finding rather than reason over one. These are the real gaps. */
+	uncitedClaims: number;
+	uncitedReasoning: number;
 }
+
+/**
+ * An uncited sentence is only a defect if it asserts something the corpus is supposed to carry: a
+ * figure, a finding, or an attribution. Reasoning over a figure cited in the previous sentence
+ * ("that specification implies roughly +21%") does not need its own citation, and counting it as a
+ * gap made every report look a third unbounded.
+ */
+const CLAIM_SIGNALS = /\b\d|according to|reported|found that|shows? that|studies|study|survey|data|percent|%|et al/i;
 
 /** The evidence appendix starts here; prose before it is what the reader actually reads. */
 const EVIDENCE_HEADING = /^##+\s+Evidence\b/im;
@@ -49,6 +60,7 @@ export function auditReport(file: string, text: string): CitationAudit {
 		.map((sentence) => sentence.trim())
 		.filter((sentence) => sentence.split(/\s+/).length >= 4);
 	const cited = sentences.filter((sentence) => /\]\(#evidence-\d+\)|\[\d+\]/.test(sentence));
+	const uncited = sentences.filter((sentence) => !cited.includes(sentence));
 
 	return {
 		file,
@@ -61,6 +73,8 @@ export function auditReport(file: string, text: string): CitationAudit {
 		uncitedSentences: sentences.length - cited.length,
 		uncitedShare: sentences.length ? (sentences.length - cited.length) / sentences.length : 0,
 		unresolvedMarkers: (body.match(/\[(?:P|I)\d+\]/g) ?? []).length,
+		uncitedClaims: uncited.filter((sentence) => CLAIM_SIGNALS.test(sentence)).length,
+		uncitedReasoning: uncited.filter((sentence) => !CLAIM_SIGNALS.test(sentence)).length,
 	};
 }
 
