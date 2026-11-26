@@ -632,3 +632,37 @@ stage or the run was not in `awaitingSettle` when it fired.
 Mean of medians **90.88** against **87.76** for the best baseline on the same tasks (+3.12).
 Five tasks are at or above their bar; 62 (-1.6), 88 (-2.7) and 85 (-0.8) are below but inside the
 +-4 noise band, so no task is a clear quality shortfall any more.
+
+### Cycle 11: the eight-task table on the current build
+
+Container `pi-c11`, package `/tmp/bench/pkg-v7` from commit `0738c56`, delegation off, browser on.
+
+| task | wall | rounds | sources | median (range) | bar | delta |
+|---|---|---|---|---|---|---|
+| 62 | 389 s | 2 | 51 | **90.42** (85.93-91.06) | 90.2 | **+0.2** |
+| 77 | 1381 s | 10 | 146 | **87.93** (86.11-88.88) | 85.7 | **+2.2** |
+
+Task 62 crossed its bar (+1.8 on the cycle), and task 77 held above its own while its round bound fired
+(`Reached the 10-round limit; writing from the corpus collected`), with 55/55 citations and 2 uncited
+claims.
+
+**Final eight-task table on the current build:**
+
+| task | ours (median) | best baseline | delta |
+|---|---|---|---|
+| 52 | 92.30 | 90.2 | +2.1 |
+| 57 | 94.13 | 78.6 | +15.5 |
+| 62 | 90.42 | 90.2 | +0.2 |
+| 77 | 87.93 | 85.7 | +2.2 |
+| 85 | 90.26 | 91.1 | -0.8 |
+| 88 | 91.63 | 94.3 | -2.7 |
+| 97 | 90.55 | 90.3 | +0.3 |
+| 51 | 92.17 | 81.7 | +10.5 |
+
+Mean of medians **91.17** against **87.76** for the best baseline on the same eight tasks (+3.41).
+Six of eight meet or beat their bar; 85 (-0.8) and 88 (-2.7) are below it but inside the +-4 band the
+judge was measured to have, so no task is a clear quality shortfall.
+
+**Open speed defect, measured**: task 51 took 1870 s and task 77 1381 s, both above the 20-minute worst
+case, because per-round selection can now take two hits for each of 30+ queries - 146 sources produced
+only 115 passages. The median run is still under 7 minutes, but the tail needs a per-round cap.
