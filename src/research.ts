@@ -38,6 +38,8 @@ const ROUND_ENTRY = "research/round";
 const SEARCH_TOOL = "web_search";
 const FETCH_TOOL = "fetch_content";
 const ROUND_TOOL = "research_round";
+const BRIEF_TOOL = "research_brief";
+const ASSESS_TOOL = "research_assess";
 const INSPECT_TOOL = "research_inspect";
 /** Lets a delegated agent hand back the pages it found so they enter the citation library. */
 const ADD_URLS_TOOL = "research_add_urls";
@@ -171,6 +173,10 @@ interface ResearchRun {
 	stagePrompt?: string;
 	stallRetries?: number;
 	finishRequested?: boolean;
+	/** Plan delivered as research_brief arguments, which arrive already parsed. */
+	briefData?: Record<string, unknown>;
+	/** Judgment delivered as research_assess arguments. */
+	assessData?: Record<string, unknown>;
 }
 
 const slugify = (question: string): string => {
@@ -185,7 +191,7 @@ const slugify = (question: string): string => {
 
 const briefPrompt = (question: string) => `Deep research question: ${question}
 
-Plan for the question actually asked. Combine closely related needs and distinguish what could change the answer (essential) from helpful context (optional). When the question itself names several components, dimensions or stages, give each its own need instead of merging them: a named part with no need is a part of the answer nobody ever searches for. Do not turn a definition into an audit unless asked. Give each need targeted search queries, with alternate wording only when useful. Do not call tools. Return only JSON: {"needs":[{"question":"What evidence would settle this need?","essential":true,"queries":["first search", "alternate wording"]}]}.`;
+Plan for the question actually asked. Combine closely related needs and distinguish what could change the answer (essential) from helpful context (optional). When the question itself names several components, dimensions or stages, give each its own need instead of merging them: a named part with no need is a part of the answer nobody ever searches for. Do not turn a definition into an audit unless asked. Give each need targeted search queries, with alternate wording only when useful. Call ${BRIEF_TOOL} once with the plan; it takes a needs array and no other arguments. Do not write the plan as a JSON reply - the plan only counts if it arrives as that call's arguments. Do not search yet.`;
 
 export const researchPrompt = (run: Pick<ResearchRun, "question">, delegation = false) => `Question: ${run.question}
 
@@ -193,8 +199,7 @@ Call ${ROUND_TOOL} exactly once with {} to collect the queued evidence. Then use
 
 ${delegation ? `Delegation: if the question names three or more distinct approaches, methods or subtopics, delegate each one before searching yourself: call ${SUBAGENT_TOOL} with subagent_type "Explore" once per approach. Run them in the foreground - do not pass run_in_background - so the call returns that agent's findings directly. Background agents report later, and a run that polls them spends its turns waiting and loses the findings; retrieving with ${SUBAGENT_RESULT_TOOL} waits for the agent to finish, so call it once rather than polling. A subagent cannot write to this library and its summary is not evidence, so its reply must name the exact page URLs that carry the finding: pass those URLs to ${ADD_URLS_TOOL} so they become citable passages here. Do not delegate the whole question, do not delegate a need one or two searches can settle, and never cite a subagent's prose.` : "Delegation is not available in this installation, so collect every piece of evidence yourself with searches, reads and inspections."}
 
-Judge each need against actual evidence, not mere mentions. Cite ranked passages [P…] or inspection records [I…] by ID in the passages array. If the library has only summaries of a work central to the answer, search the exact title or known identifier for the original before expanding into related topics. Propose new web searches only for unresolved essential needs that the library cannot answer and that could change the requested answer. Return only JSON after using the tools:
-{"needs":[{"id":1,"answered":false,"passages":["P1"],"gap":"what is missing","queries":["new targeted search"]}],"continueSearching":true,"reason":"why another round might or might not change the report"}`;
+Judge each need against actual evidence, not mere mentions. Cite ranked passages [P…] or inspection records [I…] by ID in the passages array. If the library has only summaries of a work central to the answer, search the exact title or known identifier for the original before expanding into related topics. Propose new web searches only for unresolved essential needs that the library cannot answer and that could change the requested answer. When you have judged the needs, call ${ASSESS_TOOL} with your verdict - one entry per need, plus continueSearching and a reason. Do not write the verdict as a JSON reply; only the call records it.`;
 
 const reportPrompt = (run: ResearchRun) => `Write the final standalone deep-research report on: ${run.question}
 
@@ -526,6 +531,49 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		progressTimer = setInterval(render, 1000);
 		progressTimer.unref();
 	};
+
+	// The plan and the per-round judgment are structured data, not prose. Delivering them as tool
+	// arguments means the provider validates the shape before we ever see it: a stray brace or a
+	// missing field comes back to the model as an error it can fix, instead of ending the run.
+	pi.registerTool({
+		name: BRIEF_TOOL,
+		label: "Record the research plan",
+		description: "Record the plan for this question: one need per named part, each with targeted search queries. Call exactly once, before any searching.",
+		parameters: Type.Object({
+			needs: Type.Array(Type.Object({
+				question: Type.String({ minLength: 1 }),
+				essential: Type.Optional(Type.Boolean()),
+				queries: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 6 }),
+			}), { minItems: 1, maxItems: 12 }),
+		}),
+		async execute(_id, args) {
+			if (run?.stage !== "brief") throw new Error("The plan is already recorded for this run.");
+			run.briefData = args as Record<string, unknown>;
+			return { content: [{ type: "text", text: `Recorded ${args.needs.length} need(s). Evidence collection starts with the next turn.` }], details: {} };
+		},
+	});
+
+	pi.registerTool({
+		name: ASSESS_TOOL,
+		label: "Judge the round",
+		description: "Judge each research need against the ranked passages, then say whether another round could change the report. Call once per round, after inspecting.",
+		parameters: Type.Object({
+			needs: Type.Array(Type.Object({
+				id: Type.Optional(Type.Number()),
+				answered: Type.Optional(Type.Boolean()),
+				passages: Type.Optional(Type.Array(Type.String())),
+				gap: Type.Optional(Type.String()),
+				queries: Type.Optional(Type.Array(Type.String())),
+			})),
+			continueSearching: Type.Boolean(),
+			reason: Type.Optional(Type.String()),
+		}),
+		async execute(_id, args) {
+			if (run?.stage !== "research") throw new Error("There is no evidence round to judge.");
+			run.assessData = args as Record<string, unknown>;
+			return { content: [{ type: "text", text: args.continueSearching ? "Judgment recorded. Another round starts with the next turn." : "Judgment recorded. Writing the report from the corpus." }], details: {} };
+		},
+	});
 
 	pi.registerTool({
 		name: ROUND_TOOL,
@@ -1096,18 +1144,22 @@ export default function researchExtension(pi: ExtensionAPI): void {
 		current.finalResponse = undefined;
 		try {
 			if (current.stage === "brief") {
-				current.loop.plan(response.text);
+				const planText = current.briefData ? JSON.stringify(current.briefData) : response.text;
+				current.briefData = undefined;
+				current.loop.plan(planText);
 			} else {
 				if (!current.packet) throw new Error("The model did not run the queued evidence collection.");
 				if (current.finishRequested) current.loop.stopReason = "The user requested synthesis after the current research turn.";
-				const stopping = current.finishRequested || !current.loop.assess(response.text, current.packet, current.gainedEvidence, current.round);
+				const verdict = current.assessData ? JSON.stringify(current.assessData) : response.text;
+				current.assessData = undefined;
+				const stopping = current.finishRequested || !current.loop.assess(verdict, current.packet, current.gainedEvidence, current.round);
 				journalAssessments.push({
 					round: current.round,
 					answered: current.loop.needs.filter((need) => need.answered).length,
 					total: current.loop.needs.length,
 					continueSearching: !stopping,
 					...(current.loop.stopReason ? { reason: current.loop.stopReason } : {}),
-					reply: response.text.slice(0, 1200),
+					reply: (current.assessData ? JSON.stringify(current.assessData) : response.text).slice(0, 1200),
 				});
 				await writeJournal(current, "running");
 				if (stopping) {
