@@ -84,7 +84,10 @@ export class ResearchLoop {
 
 	selectUrls(groups: SearchGroup[]): string[] {
 		const urls: string[] = [];
-		// Pick one unread hit per query so broad queries cannot take over a round.
+		// Two unread hits per query: one per query let a nine-query wave add at most nine sources, which
+		// is how a task ended a round with eight and scored worst on comprehensiveness. Two keeps a
+		// broad query from taking over the round while giving every need a second candidate.
+		const PER_QUERY = 2;
 		for (const group of groups) {
 			this.searches.push({ query: group.query, hits: group.results?.length ?? 0, error: group.error });
 			if (group.error) this.failures.add(`Search “${group.query}”: ${group.error}`);
@@ -92,12 +95,14 @@ export class ResearchLoop {
 			const ranked = (group.results ?? []).filter((hit) => typeof hit.url === "string" && /^https?:\/\//i.test(hit.url))
 				.map((hit) => ({ url: hit.url, score: [...words(`${hit.title ?? ""} ${hit.snippet ?? ""}`)].filter((term) => query.has(term)).length }))
 				.sort((left, right) => right.score - left.score);
+			let taken = 0;
 			for (const hit of ranked) {
+				if (taken >= PER_QUERY) break;
 				const key = normalizeUrl(hit.url);
 				if (!key || this.attempted.has(key) || shouldSkipCandidateUrl(hit.url).skip) continue;
 				this.attempted.add(key);
 				urls.push(hit.url);
-				break;
+				taken++;
 			}
 		}
 		return urls;
