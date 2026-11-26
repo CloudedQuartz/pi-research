@@ -185,7 +185,7 @@ const slugify = (question: string): string => {
 
 const briefPrompt = (question: string) => `Deep research question: ${question}
 
-Plan for the question actually asked. Combine closely related needs and distinguish what could change the answer (essential) from helpful context (optional). Do not turn a definition into an audit unless asked. Give each need targeted search queries, with alternate wording only when useful. Do not call tools. Return only JSON: {"needs":[{"question":"What evidence would settle this need?","essential":true,"queries":["first search", "alternate wording"]}]}.`;
+Plan for the question actually asked. Combine closely related needs and distinguish what could change the answer (essential) from helpful context (optional). When the question itself names several components, dimensions or stages, give each its own need instead of merging them: a named part with no need is a part of the answer nobody ever searches for. Do not turn a definition into an audit unless asked. Give each need targeted search queries, with alternate wording only when useful. Do not call tools. Return only JSON: {"needs":[{"question":"What evidence would settle this need?","essential":true,"queries":["first search", "alternate wording"]}]}.`;
 
 export const researchPrompt = (run: Pick<ResearchRun, "question">, delegation = false) => `Question: ${run.question}
 
