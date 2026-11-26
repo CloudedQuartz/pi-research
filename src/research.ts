@@ -56,6 +56,13 @@ const INSPECTIONS_PER_ROUND = 8;
  * PI_RESEARCH_STAGE_TIMEOUT_MS to bring back a bound on a stage that never replies.
  */
 const STAGE_TIMEOUT_MS = stageTimeoutMs(process.env.PI_RESEARCH_STAGE_TIMEOUT_MS);
+/**
+ * A provider request can hang: no reply, no error, nothing appended to the session. That is not a
+ * slow turn - a slow turn keeps emitting tool calls - so waiting longer never helps. This asks again
+ * instead of ending the run, and stays off unless asked for, because a default clock is exactly what
+ * used to discard long runs.
+ */
+const STALL_RETRY_MS = stageTimeoutMs(process.env.PI_RESEARCH_STALL_RETRY_MS);
 
 /** Package that supplies the search and read tools; installed as a dependency of this package. */
 const WEB_ACCESS_PACKAGE = "pi-web-access";
@@ -160,6 +167,9 @@ interface ResearchRun {
 	lastError?: string;
 	/** When the current stage prompt was sent, so a transcript read cannot pick up an older turn. */
 	stageSentAt?: number;
+	lastActivityAt?: number;
+	stagePrompt?: string;
+	stallRetries?: number;
 	finishRequested?: boolean;
 }
 
@@ -270,6 +280,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 
 	let run: ResearchRun | undefined;
 	let stageWatchdog: ReturnType<typeof setTimeout> | undefined;
+	let stallWatchdog: ReturnType<typeof setTimeout> | undefined;
 	let stageContext: ExtensionContext | undefined;
 	/** Child session hosting a run in parent mode, if one is live. */
 	let hosted: HostedRun | undefined;
@@ -283,8 +294,31 @@ export default function researchExtension(pi: ExtensionAPI): void {
 	// of the transcript, where they used to be the bulk of what the user scrolled past.
 	const sendStage = (content: string, stage: ResearchRun["stage"], followUp = false) => {
 		if (run) run.awaitingSettle = true;
-		if (run) run.stageSentAt = Date.now();
+		if (run) {
+			run.stageSentAt = Date.now();
+			run.lastActivityAt = Date.now();
+			run.stagePrompt = content;
+		}
 		clearTimeout(stageWatchdog);
+		clearTimeout(stallWatchdog);
+		if (STALL_RETRY_MS > 0 && run) {
+			stallWatchdog = setTimeout(() => {
+				const active = run;
+				if (!active?.awaitingSettle || !stageContext) return;
+				const idle = Date.now() - (active.lastActivityAt ?? active.stageSentAt ?? Date.now());
+				if (idle < STALL_RETRY_MS) return;
+				active.stallRetries = (active.stallRetries ?? 0) + 1;
+				const minutes = Math.round(idle / 60_000);
+				if (active.stallRetries > 3) {
+					active.loop.stopReason = `The provider went silent for ${minutes} minutes; stopped after ${active.stallRetries - 1} retries.`;
+					void finish(stageContext, false);
+					return;
+				}
+				showProgress(stageContext, `No response for ${minutes} min; asking again (${active.stallRetries}/3)…`);
+				sendStage(active.stagePrompt ?? content, active.stage);
+			}, STALL_RETRY_MS);
+			stallWatchdog.unref?.();
+		}
 		if (STAGE_TIMEOUT_MS > 0) {
 			stageWatchdog = setTimeout(() => {
 				// Only reachable when the bound is asked for: still say why, in the journal and the notice.
@@ -753,6 +787,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 
 	const finish = async (ctx: ExtensionContext, aborted: boolean) => {
 		clearTimeout(stageWatchdog);
+		clearTimeout(stallWatchdog);
 		const current = run;
 		run = undefined;
 		if (!current) return;
@@ -961,6 +996,7 @@ export default function researchExtension(pi: ExtensionAPI): void {
 			.map((part) => part.text)
 			.join("\n")
 			.trim();
+		current.lastActivityAt = Date.now();
 		current.finalResponse = text ? { text, stopReason: event.message.stopReason } : undefined;
 		const failure = (event.message as { errorMessage?: string }).errorMessage;
 		current.lastError = event.message.stopReason === "error" ? failure ?? "provider error" : undefined;
