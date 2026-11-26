@@ -769,3 +769,58 @@ The child is spawned by `src/research-host.ts` as `pi -ne -e <self> -e npm:pi-we
 parent-only listing shows no `document_parse`: the capability lives one level down, where the research
 stage runs. `document_parse` is used by `parseDocument()`, which downloads the bytes and hands the
 parser a file with the right suffix, falling back to the fetch tool when a direct GET is refused.
+
+### Cycles 15-16: replicate runs, and what they say about the two sub-bar tasks
+
+Container `pi-r85` and `pi-r88`, package `/tmp/bench/pkg-v9` (`890d8bd`), three sequential runs each,
+judged three times per report.
+
+| task | run medians (3 calls each) | median of runs | bar | delta |
+|---|---|---|---|---|
+| 88 | 93.72, 92.35, 92.40 | **92.40** | 94.3 | **-1.9** |
+| 85 | 86.17, 86.78 (plus 83.39, 84.53, 90.26 earlier) | **86.17** | 91.1 | **-4.9** |
+
+Replication changes the two conclusions in opposite directions. Task 88 is a ~2-point miss: three runs
+land within 1.4 points of each other, so it is stable and consistently just under its bar. Task 85 is a
+~5-point miss and is not noise - five runs span 83.39 to 90.26, and its best run is still below 91.1.
+The honest reading is that task 85 is a genuine quality shortfall, not judge variance, and that the
+"within noise" framing I used earlier was wrong for it.
+
+**Eight-task table, medians of runs**: 52 92.30, 57 94.13, 62 90.42, 77 88.09, 85 86.17, 88 92.40,
+97 90.55, 51 92.17. Mean **90.78** against **87.76** for the best baseline on the same tasks (+3.02).
+Six of eight meet or beat their bar; 88 misses by 1.9 and 85 by 4.9.
+
+**Acceptance.** The project owner reviewed these numbers and judged the objective met at this level,
+with 85 and 88 recorded as shortfalls rather than as parity. That acceptance is a decision, not a
+measurement, and is recorded here as such so the tables above are not read as eight clean wins.
+
+### Cycle 14: the plan and the judgment become tool calls
+
+Container `pi-smoke2`, package `/tmp/bench/pkg-v11` (`2596eda`), delegation off, browser on, task 62.
+
+Two changes landed together, because the first exposed the second:
+
+1. `research_brief` and `research_assess` carry the two structured payloads as tool arguments. Both
+   were accepted in the live run - the session shows `research_brief` first, then `research_round`,
+   eight `research_inspect` calls, two `web_search` calls, `research_add_urls`, four more inspections,
+   then `research_assess`.
+2. The stage guard refused both new tools (`Only the evidence collection tool is used during
+   /research.`) because its allowlist predated them. The smoke run sat at "Planning the investigation"
+   with nothing collected. Each stage now admits its own tools, and the report stage still admits none.
+
+| check | result |
+|---|---|
+| progress widget / round lines | `Research · 20 sources · 6m01s`, `✓ Round 1 · 21 queries · 16 new · 73 passages · 4 failed` |
+| Report saved notice | `Report saved (1 round · 20 sources · 79 passages · 385s)` |
+| citations | links 52, anchors 52, dangling 0, unused 0, uncited claims 0 |
+| `/research-view` paging | question, `Status: complete · 1 round · 16 sources · 385s`, per-round query list, paging works |
+| post-run hand-written report | no report file produced by the run; a later ordinary user turn *can* use tools - the guard holds only the turn that just ended, which is the documented design |
+
+Captures: `/tmp/eval/shots/cycle14-run.txt`, `cycle14-view.txt`, `cycle14-after-run.txt`,
+`cycle14-blocked.txt`, `cycle14-report.md`.
+
+Two defects fell out of the smoke run and are recorded rather than fixed mid-flight:
+- The completion notice said 20 sources while `/research-view` said 16: the notice counts the final
+  library, the view reports the round's search results. Same word, two meanings.
+- `handmade.md` was written when a *new* turn asked for it. That is normal tool use in a new turn, not
+  the extension writing a report without a corpus, but the earlier phrasing of this check was wrong.
