@@ -454,3 +454,22 @@ zero unresolved ids. Uncited-sentence share: 18.0% and 18.9% (task 85), 38.9% (t
 
 Wall clock: 179 s, 415 s, 641 s, 1475 s (reverted arm) and 1521 s. Only the delegation arm exceeds the
 20-minute worst-case bar; the median run is under 7 minutes.
+
+### Status against the objective (not complete)
+
+| requirement | evidence | state |
+|---|---|---|
+| report stage has no tools | `src/research.ts:1022` blocks every call outside the research stage | met |
+| citations resolve per report | 84/84, 80/80, 36/36, 26/26, 48/48 links == anchors; zero dangling, unused, unresolved | met |
+| uncited-claim count per cycle | `npm run eval:citations`, 18.0-38.9% recorded per report | met |
+| *every* claim carries a citation | 18-39% of body sentences carry none | **not met** |
+| median >= best baseline on 8 tasks | 2 above (52, 57); 4 within noise below (62, 77, 88, 97); 85 fast arm -7.1; 51 no report | **not met** |
+| retrieval re-run on corpus changes | packet 0.310 -> 0.413; whole-corpus 0.428/0.576/0.521/0.480 unchanged | met |
+| wall clock per cycle | 179 s, 415 s, 641 s, 1475 s, 1521 s | met |
+| 3-task parallel cycle under an hour | not measured with three concurrent runs this session | **not met** |
+| live UX + screenshots | `cycle5-view-head.png`, `cycle5-view.png`, capture text beside them | met |
+| gates | `tsc --noEmit` 0 and `npm test` 0, with a previously hidden failing test repaired | met |
+
+Task 51 remains the blocking defect: it ends without a report at all, and the silent-provider failure
+has now survived three separate attempts (retry budget, stall retry, stop-reason recording). Under the
+iteration policy that line stops here with measurements recorded rather than a fourth blind change.
