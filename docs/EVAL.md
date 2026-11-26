@@ -338,3 +338,23 @@ is part of the environment, not of the source tree.
 | built-in extensions in the image | `codemode`, `llama`, `mcp`, `tool-search` only |
 | `pi -e /pkg -p "/tools"`, clean agent dir, package with dependency | `research_round` only (no run, so the cache is not built) |
 | same, after one `/research` start | `subagent` present, from `tmp/extensions/npm/<hash>` |
+
+### Cycle 4: delegation on vs off, same task, same build
+
+Controlled comparison on task 85 in the container, one package (`/tmp/bench/pkg-del`), the only
+difference being `PI_RESEARCH_NO_DELEGATION=1`. Prompt branches verified in each session:
+`delegate-prompt=1/self-prompt=0` versus `delegate-prompt=0/self-prompt=1`.
+
+| arm | wall | rounds | sources | passages | report | median (range) |
+|---|---|---|---|---|---|---|
+| delegation on | 1521 s | 2 | 45 | 106 | 110,149 B | **88.75** (85.74-91.39) |
+| delegation off | 641 s | 5 | 17 | 114 | 114,980 B | **84.03** (83.83-86.45) |
+
+Both runs completed. The delegation arm's three `subagent` calls returned **no results at all** -
+the tool registers from pi's extension cache but does not answer here - so its 45 sources came from
+the URLs harvested around the dead calls, and its 4.7-point edge is inside the +-4 judge noise while
+costing 2.4x the wall clock (1521 s is also above the 20-minute worst-case bar).
+
+Recorded conclusion: delegation is available, works as extra search breadth at best, and is not
+worth its cost as a default in this environment. Cycles that measure quality use the off switch;
+the capability stays shipped because it costs nothing when the model is told not to use it.
