@@ -91,7 +91,11 @@ export class ResearchLoop {
 		// is how a task ended a round with eight and scored worst on comprehensiveness. Two keeps a
 		// broad query from taking over the round while giving every need a second candidate.
 		const PER_QUERY = 2;
+		// Two per query over thirty-plus queries fetched 146 pages for 115 passages on task 77 and 144 for
+		// 107 on task 51, both of which then ran past twenty minutes. Breadth still comes from rounds.
+		const PER_ROUND = 20;
 		for (const group of groups) {
+			if (urls.length >= PER_ROUND) break;
 			this.searches.push({ query: group.query, hits: group.results?.length ?? 0, error: group.error });
 			if (group.error) this.failures.add(`Search “${group.query}”: ${group.error}`);
 			const query = words(group.query);
