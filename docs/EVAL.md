@@ -544,3 +544,26 @@ Blocking defects, with the attempts each has survived:
 
 Per the blocked stop condition these two are reported with their measurements rather than patched
 blind a fourth time.
+
+### Cycle 8: the report prompt asks for analysis
+
+Container `pi-par3`, package `/tmp/bench/pkg-v5` from commit `b6867e9`, delegation off, browser on.
+Started 09:01:11, last report 09:20 - about 19 minutes for three tasks.
+
+| task | wall | rounds | sources | median (range) | insight | previous | delta | bar |
+|---|---|---|---|---|---|---|---|---|
+| 62 | 894 s | 8 | 54 | 88.59 (86.37-90.55) | 90.75 | 87.33 | +1.3 | 90.2 |
+| 85 | 329 s | 1 | 16 | 83.39 (83.14-83.45) | 82.25 | 84.59 | -1.2 | 91.1 |
+| 97 | 344 s | 1 | 24 | **90.55** (90.18-92.66) | 91.5 | 89.27 | **+1.3** | 90.3 |
+
+The targeted dimension moved on all three (insight 87.0 -> 90.75, 81.0 -> 82.25, and 91.5 retained at
+the high end), and task 97 crossed its bar. Totals are two up and one down, all inside the +-4 noise
+band, so this is kept as a neutral-to-positive prompt clarification rather than a proven gain.
+
+Citation integrity: 83/83 with zero dangling, unused or unresolved; 6 uncited claims in the task-62
+report, which is its largest body of any run this session.
+
+**Eight-task state now**: 52 92.30, 57 94.13, 62 88.59, 77 87.42, 85 83.39, 88 92.32, 97 90.55, 51 none.
+Mean of the seven reporting medians **89.81** against **88.63** for the best baseline on the same
+tasks. Four of the seven are at or above their bar (52, 57, 77, 97), two are 1.6-2.0 below inside the
+noise band (62, 88), task 85 is 7.7 below, and task 51 still produces no report.
